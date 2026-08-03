@@ -42,7 +42,10 @@ local ControlId = graph.ControlId
 --                row vtable's bindings.
 --   key          stable prefix for default ids (default "hybrid")
 --   label        announcement context wrapped around the entries
---   id           function(index) -> ControlId; default structural key:index
+--   id           function(index) -> ControlId; default structural key:index.
+--                TAINTED MODE REQUIRES this to return the SAME id the emit
+--                callback gives addItem for that index -- the page-scroll
+--                focus snap looks rows up by it
 --   rowHeight    pixels per row; defaults to the frame's buttonHeight, else
 --                the first pooled button's height
 --   buttons      function -> the button pool, for frames whose pool is not
@@ -231,25 +234,34 @@ function nodes.hybridScrollList(builder, config)
         return scrollBar.scrollStep or (scrollBar:GetHeight() / 2)
     end
 
-    -- After a page scroll, land focus on the nearest newly-visible row.
+    -- After a page scroll, land focus on the nearest newly-visible row:
+    -- page down continues forward from the top of the new view, page up
+    -- backward from its bottom. Some indices have no node (dividers), so
+    -- walk the candidates until one focuses.
     local function focusNearestVisible(topmost)
-        local best = nil
+        local candidates = {}
         for _, button in ipairs(buttonsOf()) do
             if button ~= nil and button:IsShown() then
                 local ok, buttonIndex = pcall(indexOfButton, button)
                 if ok and buttonIndex ~= nil and buttonIndex >= 1 and buttonIndex <= total then
-                    if best == nil or (topmost and buttonIndex < best) or (not topmost and buttonIndex > best) then
-                        best = buttonIndex
-                    end
+                    tinsert(candidates, buttonIndex)
                 end
             end
         end
-        if best == nil then
+        table.sort(candidates, function(a, b)
+            if topmost then
+                return a < b
+            end
+            return a > b
+        end)
+        local screen = WowVision.graphHost:focusedScreen()
+        if screen == nil then
             return
         end
-        local screen = WowVision.graphHost:focusedScreen()
-        if screen ~= nil then
-            screen.keyGraph:focus(idOf(best))
+        for _, buttonIndex in ipairs(candidates) do
+            if screen.keyGraph:focus(idOf(buttonIndex)) then
+                return
+            end
         end
     end
 
@@ -286,8 +298,8 @@ function nodes.hybridScrollList(builder, config)
 
     local pageUpSpec, pageDownSpec, eatHome, eatEnd
     if secure then
-        pageUpSpec = pageSpec("ScrollUpButton", "scrollUp", true)
-        pageDownSpec = pageSpec("ScrollDownButton", "scrollDown", false)
+        pageUpSpec = pageSpec("ScrollUpButton", "scrollUp", false)
+        pageDownSpec = pageSpec("ScrollDownButton", "scrollDown", true)
         local noop = function() end
         eatHome = { binding = "home", type = "Function", func = noop }
         eatEnd = { binding = "end", type = "Function", func = noop }

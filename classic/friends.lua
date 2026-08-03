@@ -311,6 +311,24 @@ local function renderFriendsList(builder, screen)
             return offsets[index]
         end,
         tainted = true,
+        -- Must mirror the ids emit assigns: the page-scroll focus snap
+        -- looks rows up by this.
+        id = function(index)
+            local entry = entries[index]
+            if entry == nil then
+                return ControlId.structural("friends:" .. index)
+            end
+            if entry.buttonType == FRIENDS_BUTTON_TYPE_INVITE_HEADER then
+                return ControlId.structural("friend:inviteHeader")
+            end
+            if entry.buttonType == FRIENDS_BUTTON_TYPE_INVITE then
+                return ControlId.structural("friend:invite:" .. entry.id)
+            end
+            if entry.buttonType == FRIENDS_BUTTON_TYPE_DIVIDER then
+                return ControlId.structural("friends:divider:" .. index)
+            end
+            return friendRowId(entry)
+        end,
         emit = function(b, index, helpers)
             local entry = entries[index]
             if entry == nil or entry.buttonType == FRIENDS_BUTTON_TYPE_DIVIDER then
@@ -465,6 +483,22 @@ local function renderIgnoreList(builder)
         key = "ignore",
         label = IGNORE_LIST,
         tainted = true,
+        id = function(index)
+            if index == ignoredHeader and ignoredHeader == 1 then
+                return ControlId.structural("ignore:header")
+            end
+            if blockedHeader == 1 and index == lastIgnoredIndex + 1 then
+                return ControlId.structural("ignore:blockedHeader")
+            end
+            local name
+            if index <= lastIgnoredIndex then
+                name = C_FriendList.GetIgnoreName(index - ignoredHeader)
+            else
+                local _, blockName = BNGetBlockedInfo(index - lastIgnoredIndex - blockedHeader)
+                name = blockName
+            end
+            return ControlId.structural("ignore:" .. tostring(name or UNKNOWN))
+        end,
         rowHeight = FRIENDS_FRAME_IGNORE_HEIGHT,
         count = function()
             return numEntries
@@ -551,6 +585,10 @@ local function renderWho(builder)
         key = "who",
         label = WHO_LIST,
         tainted = true,
+        id = function(index)
+            local info = C_FriendList.GetWhoInfo(index)
+            return ControlId.structural("who:" .. tostring(info ~= nil and info.fullName or index))
+        end,
         count = function()
             return numWhos
         end,
