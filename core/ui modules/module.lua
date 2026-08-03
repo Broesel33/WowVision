@@ -122,6 +122,22 @@ module:registerBindings({
         emulatedKey = "\\",
     },
     {
+        type = "Flexible",
+        key = "scrollUp",
+        vital = true,
+        dorment = true,
+        label = L["Scroll Up"],
+        inputs = { "PAGEUP" },
+    },
+    {
+        type = "Flexible",
+        key = "scrollDown",
+        vital = true,
+        dorment = true,
+        label = L["Scroll Down"],
+        inputs = { "PAGEDOWN" },
+    },
+    {
         type = "Virtual",
         key = "home",
         dorment = true,

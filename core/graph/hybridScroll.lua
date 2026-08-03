@@ -1,39 +1,36 @@
 local graph = WowVision.graph
 local nodes = graph.nodes
 local ControlId = graph.ControlId
-local kinds = graph.kinds
 
 -- The button-pool scroll adapter (HybridScrollFrame and kin): a fixed pool of
--- row buttons over an API-enumerable list, like the quest log. Focusing an
--- entry scrolls it to a calibrated position, which re-stamps the button pool
--- synchronously; the landing is then VERIFIED by finding the button whose
--- index matches, and the scroll rolls back if none does. Buttons rebind as
--- the pool scrolls, so an index-to-button mapping is only ever trusted
--- immediately after verifying it.
+-- row buttons over an API-enumerable list, like the quest log.
 --
--- TAINT: our SetValue runs the frame's update handler (which stamps row
--- fields like button.index) inside OUR insecure stack, so every scroll
--- taints the pool's stamps until Blizzard's own code re-runs the update --
--- and the tainted OFFSET field then re-taints even Blizzard's own secure
--- refreshes, persistently. Defenses, in order:
---   1. An already-visible verified target skips the scroll write entirely
---      (findButton IS the verification, so the mapping guarantee holds).
---   2. Rows at the visible edge shadow the arrow key with a SECURE click
---      of the scrollbar's real arrow button (helpers.edgeBindings): the
---      hardware keypress scrolls through Blizzard's own handler, keeping
---      the offset and every re-stamped field clean -- and HEALING any
---      prior taint, since the secure write re-blesses the slots. The
---      postClick then moves focus normally; the target row is visible by
---      then, so defense 1 skips the insecure write.
---   3. Home/End jumps fire ONE macrotext of repeated secure arrow clicks
---      (the slider clamps at its ends, so slack clicks are free) when the
---      whole distance fits the macro budget.
---   4. When an insecure SetValue was unavoidable (a jump too far for the
---      macro budget), the list is marked poisoned and EVERY row's arrows
---      go secure until the next arrow press heals the offset, whatever
---      row it happens on.
---   5. onScrolled lets callers trigger a secure re-stamp (an event that
---      makes Blizzard refresh the list itself) after a fallback scroll.
+-- DEFAULT MODE replicates the old ProxyScrollFrame discipline exactly:
+-- focusing an entry ALWAYS scrolls it to a calibrated position (never only
+-- when it looks offscreen), which re-stamps the button pool synchronously;
+-- the landing is then VERIFIED by finding the button whose index matches,
+-- and the scroll rolls back if none does. Buttons rebind as the pool
+-- scrolls, so an index-to-button mapping is only ever trusted immediately
+-- after scrolling to that index.
+--
+-- TAINTED MODE (config.tainted = true) is for panels where addon-driven
+-- scrolling breaks protected actions: our SetValue runs the frame's update
+-- handler inside OUR insecure stack, tainting the pool's stamped fields
+-- (button.id and kin) AND the offset field -- which then re-taints even
+-- Blizzard's own secure refreshes, persistently. (Symptom: Copy Character
+-- Name blocked after scrolling the friends list.) In this mode the adapter
+-- NEVER writes the scrollbar; the hardware keys scroll through Blizzard's
+-- own arrow buttons instead, whose handlers keep everything secure:
+--   - up/down at the visible edge: one secure click of the real arrow
+--     ("/click name LeftButton 1" for hybrid arrows, which only scroll on
+--     the down press; plain click for Faux-era bars), then focus moves on
+--     the same keypress via postClick.
+--   - scrollUp/scrollDown (Page Up/Down): a macrotext of enough arrow
+--     clicks to cover one viewport, then focus snaps to the nearest
+--     newly-visible row.
+--   - home/end are eaten: an unscrolled jump would detach focus from the
+--     viewport, and a secure jump of arbitrary distance cannot fit one
+--     keypress.
 --
 -- config:
 --   scrollFrame  the scroll frame (required; needs a scrollBar and a pool in
@@ -42,7 +39,7 @@ local kinds = graph.kinds
 --   emit         function(builder, index, helpers) -- emit the entry's nodes
 --                (required). helpers = { onFocus, onFocusTick, target, id,
 --                edgeBindings }. Concat edgeBindings (may be nil) into the
---                row vtable's bindings so edge rows scroll securely.
+--                row vtable's bindings.
 --   key          stable prefix for default ids (default "hybrid")
 --   label        announcement context wrapped around the entries
 --   id           function(index) -> ControlId; default structural key:index
@@ -56,9 +53,7 @@ local kinds = graph.kinds
 --   offsetOf     function(index) -> the entry's pixel offset from the top,
 --                for variable-height lists (the friends list mixes 34px
 --                rows with 16px dividers); overrides the rowHeight math
---   onScrolled   function() called after this adapter actually moved the
---                scrollbar (tainting the pool's stamps -- see above); use
---                it to request a secure refresh of the list
+--   tainted      true -> tainted mode (see above)
 function nodes.hybridScrollList(builder, config)
     local scrollFrame = config.scrollFrame
     if scrollFrame == nil then
@@ -144,12 +139,16 @@ function nodes.hybridScrollList(builder, config)
         return nil
     end
 
-    local function scrollToIndex(index)
-        -- Already visible and verified: skip the scroll write (and the
-        -- taint it would plant).
-        if findButton(index) ~= nil then
-            return
+    local function idOf(index)
+        if config.id ~= nil then
+            return config.id(index)
         end
+        return ControlId.structural(keyPrefix .. ":" .. index)
+    end
+
+    -- Default-mode scroll: always write, verify the landing, roll back a
+    -- miss.
+    local function scrollToIndex(index)
         local scrollBar = scrollBarOf()
         if scrollBar == nil then
             return
@@ -180,40 +179,32 @@ function nodes.hybridScrollList(builder, config)
             pixels = rowHeight() * (index - 1)
         end
         scrollBar:SetValue(baseline + pixels)
-        local landed = findButton(index) ~= nil
-        if not landed then
-            scrollBar:SetValue(original)
+        if findButton(index) ~= nil then
+            return
         end
-        -- The pool was re-stamped in our stack: the offset and row fields
-        -- are tainted until a secure arrow click rewrites them. Flag it so
-        -- rows force secure arrows until then, and give the caller its
-        -- chance to schedule a secure re-stamp.
-        scrollFrame.__wvScrollTainted = true
-        if config.onScrolled ~= nil then
-            pcall(config.onScrolled)
-        end
+        scrollBar:SetValue(original)
     end
 
-    if config.label ~= nil then
-        builder:pushContext(keyPrefix, config.label)
-    end
+    -- ---- tainted-mode secure key machinery ----
 
-    -- Which logical indices are visible right now, computed once per render
-    -- for the edge-binding checks below.
+    local secure = config.tainted == true
+    local scrollBar = scrollBarOf()
+
+    -- Which logical indices are visible right now, for the edge checks.
     local visible = {}
-    for _, button in ipairs(buttonsOf()) do
-        if button ~= nil and button:IsShown() then
-            local ok, buttonIndex = pcall(indexOfButton, button)
-            if ok and buttonIndex ~= nil then
-                visible[buttonIndex] = true
+    if secure then
+        for _, button in ipairs(buttonsOf()) do
+            if button ~= nil and button:IsShown() then
+                local ok, buttonIndex = pcall(indexOfButton, button)
+                if ok and buttonIndex ~= nil then
+                    visible[buttonIndex] = true
+                end
             end
         end
     end
 
-    -- The scrollbar's real arrow buttons, for secure edge scrolling.
     -- Hybrid arrows only scroll on the DOWN press ("/click name btn 1");
     -- Faux-era arrows respond to a plain click.
-    local scrollBar = scrollBarOf()
     local clickSuffix = scrollFrame.buttons ~= nil and " LeftButton 1" or " LeftButton"
     local function arrowScript(which)
         if scrollBar == nil then
@@ -229,11 +220,7 @@ function nodes.hybridScrollList(builder, config)
         return "/click " .. arrow:GetName() .. clickSuffix
     end
 
-    -- An insecure scroll happened and no secure arrow click has run since:
-    -- force secure arrows on every row until one heals the offset.
-    local poisoned = scrollFrame.__wvScrollTainted == true
-
-    -- Pixels one arrow click covers, for sizing Home/End macros.
+    -- Pixels one arrow click covers.
     local function stepPixels()
         if scrollFrame.buttons ~= nil then
             return scrollFrame.stepSize or scrollFrame.buttonHeight or rowHeight()
@@ -244,70 +231,90 @@ function nodes.hybridScrollList(builder, config)
         return scrollBar.scrollStep or (scrollBar:GetHeight() / 2)
     end
 
-    -- Home/End as ONE secure keypress: enough arrow clicks to cover the
-    -- whole distance, plus slack -- the slider clamps at its ends, so
-    -- overshooting lands exactly. Returns nil when already there, when the
-    -- macro budget cannot fit the trip (the insecure fallback then runs
-    -- and poison mode takes over), or when the bar is unusable.
-    local function jumpSpec(which, keymap)
+    -- After a page scroll, land focus on the nearest newly-visible row.
+    local function focusNearestVisible(topmost)
+        local best = nil
+        for _, button in ipairs(buttonsOf()) do
+            if button ~= nil and button:IsShown() then
+                local ok, buttonIndex = pcall(indexOfButton, button)
+                if ok and buttonIndex ~= nil and buttonIndex >= 1 and buttonIndex <= total then
+                    if best == nil or (topmost and buttonIndex < best) or (not topmost and buttonIndex > best) then
+                        best = buttonIndex
+                    end
+                end
+            end
+        end
+        if best == nil then
+            return
+        end
+        local screen = WowVision.graphHost:focusedScreen()
+        if screen ~= nil then
+            screen.keyGraph:focus(idOf(best))
+        end
+    end
+
+    -- Page Up/Down: one keypress, enough secure arrow clicks to cover a
+    -- viewport (the slider clamps at its ends, so extra clicks are safe).
+    local function pageSpec(which, keymap, topmost)
         local line = arrowScript(which)
-        if line == nil or scrollBar == nil or scrollBar.GetValue == nil then
-            return nil
-        end
-        local value = scrollBar:GetValue()
-        local minValue, maxValue = scrollBar:GetMinMaxValues()
-        local distance
-        if which == "ScrollUpButton" then
-            distance = value - (minValue or 0)
-        else
-            distance = (maxValue or 0) - value
-        end
-        if distance <= 0 then
+        if line == nil then
             return nil
         end
         local step = stepPixels()
-        if step == nil or step <= 0 then
-            return nil
+        local viewport = scrollFrame.GetHeight ~= nil and scrollFrame:GetHeight() or 0
+        local clicks = 1
+        if step ~= nil and step > 0 and viewport > 0 then
+            clicks = math.ceil(viewport / step)
         end
-        local clicks = math.ceil(distance / step) + 2
-        local text = string.rep(line .. "\n", clicks)
-        if #text > 1000 then
-            return nil
+        local maxClicks = math.floor(1000 / (#line + 1))
+        if clicks > maxClicks then
+            clicks = maxClicks
+        end
+        if clicks < 1 then
+            clicks = 1
         end
         return {
             binding = keymap,
             type = "Script",
-            script = text,
+            script = string.rep(line .. "\n", clicks),
             postClick = function()
-                scrollFrame.__wvScrollTainted = nil
-                WowVision.graphHost:onKey(keymap)
+                WowVision.base.speech:uiStop()
+                focusNearestVisible(topmost)
             end,
         }
     end
 
-    local homeSpec = not visible[1] and jumpSpec("ScrollUpButton", "home") or nil
-    local endSpec = not visible[total] and jumpSpec("ScrollDownButton", "end") or nil
+    local pageUpSpec, pageDownSpec, eatHome, eatEnd
+    if secure then
+        pageUpSpec = pageSpec("ScrollUpButton", "scrollUp", true)
+        pageDownSpec = pageSpec("ScrollDownButton", "scrollDown", false)
+        local noop = function() end
+        eatHome = { binding = "home", type = "Function", func = noop }
+        eatEnd = { binding = "end", type = "Function", func = noop }
+    end
+
+    if config.label ~= nil then
+        builder:pushContext(keyPrefix, config.label)
+    end
 
     for index = 1, total do
         local capturedIndex = index
+        local id = idOf(capturedIndex)
 
-        local id
-        if config.id ~= nil then
-            id = config.id(capturedIndex)
+        local onFocus, onFocusTick
+        if secure then
+            -- Never write the scrollbar; the keys below move the viewport.
+            onFocus = function() end
         else
-            id = ControlId.structural(keyPrefix .. ":" .. capturedIndex)
-        end
-
-        local onFocus = function()
-            pcall(scrollToIndex, capturedIndex)
-        end
-
-        -- Stateless per-tick re-align: if the entry scrolled out from under
-        -- focus, pull it back. The host's click-drift watch handles
-        -- re-engaging bindings when the frame mapping shifts.
-        local onFocusTick = function()
-            if findButton(capturedIndex) == nil then
+            onFocus = function()
                 pcall(scrollToIndex, capturedIndex)
+            end
+            -- Stateless per-tick re-align: if the entry scrolled out from
+            -- under focus, pull it back.
+            onFocusTick = function()
+                if findButton(capturedIndex) == nil then
+                    pcall(scrollToIndex, capturedIndex)
+                end
             end
         end
 
@@ -315,47 +322,43 @@ function nodes.hybridScrollList(builder, config)
             return findButton(capturedIndex)
         end
 
-        -- Edge rows (and every row while poisoned) shadow the arrow keys
-        -- with a secure click of the real scroll arrow; postClick then
-        -- moves focus on the same keypress.
         local edgeBindings = nil
-        if index > 1 and (poisoned or not visible[index - 1]) then
-            local script = arrowScript("ScrollUpButton")
-            if script ~= nil then
-                edgeBindings = edgeBindings or {}
-                tinsert(edgeBindings, {
-                    binding = "up",
-                    type = "Script",
-                    script = script,
-                    postClick = function()
-                        scrollFrame.__wvScrollTainted = nil
-                        WowVision.graphHost:onKey("up")
-                    end,
-                })
+        if secure then
+            edgeBindings = {}
+            if index > 1 and not visible[index - 1] then
+                local script = arrowScript("ScrollUpButton")
+                if script ~= nil then
+                    tinsert(edgeBindings, {
+                        binding = "up",
+                        type = "Script",
+                        script = script,
+                        postClick = function()
+                            WowVision.graphHost:onKey("up")
+                        end,
+                    })
+                end
             end
-        end
-        if index < total and (poisoned or not visible[index + 1]) then
-            local script = arrowScript("ScrollDownButton")
-            if script ~= nil then
-                edgeBindings = edgeBindings or {}
-                tinsert(edgeBindings, {
-                    binding = "down",
-                    type = "Script",
-                    script = script,
-                    postClick = function()
-                        scrollFrame.__wvScrollTainted = nil
-                        WowVision.graphHost:onKey("down")
-                    end,
-                })
+            if index < total and not visible[index + 1] then
+                local script = arrowScript("ScrollDownButton")
+                if script ~= nil then
+                    tinsert(edgeBindings, {
+                        binding = "down",
+                        type = "Script",
+                        script = script,
+                        postClick = function()
+                            WowVision.graphHost:onKey("down")
+                        end,
+                    })
+                end
             end
-        end
-        if homeSpec ~= nil then
-            edgeBindings = edgeBindings or {}
-            tinsert(edgeBindings, homeSpec)
-        end
-        if endSpec ~= nil then
-            edgeBindings = edgeBindings or {}
-            tinsert(edgeBindings, endSpec)
+            if pageUpSpec ~= nil then
+                tinsert(edgeBindings, pageUpSpec)
+            end
+            if pageDownSpec ~= nil then
+                tinsert(edgeBindings, pageDownSpec)
+            end
+            tinsert(edgeBindings, eatHome)
+            tinsert(edgeBindings, eatEnd)
         end
 
         config.emit(builder, capturedIndex, {
