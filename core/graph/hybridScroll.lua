@@ -208,8 +208,9 @@ function nodes.hybridScrollList(builder, config)
 
     -- Hybrid arrows only scroll on the DOWN press ("/click name btn 1");
     -- Faux-era arrows respond to a plain click.
-    local clickSuffix = scrollFrame.buttons ~= nil and " LeftButton 1" or " LeftButton"
-    local function arrowScript(which)
+    local hybridArrows = scrollFrame.buttons ~= nil
+    local clickSuffix = hybridArrows and " LeftButton 1" or " LeftButton"
+    local function arrowName(which)
         if scrollBar == nil then
             return nil
         end
@@ -217,10 +218,17 @@ function nodes.hybridScrollList(builder, config)
         if arrow == nil and scrollBar.GetName ~= nil and scrollBar:GetName() ~= nil then
             arrow = _G[scrollBar:GetName() .. which]
         end
-        if arrow == nil or arrow.GetName == nil or arrow:GetName() == nil then
+        if arrow == nil or arrow.GetName == nil then
             return nil
         end
-        return "/click " .. arrow:GetName() .. clickSuffix
+        return arrow:GetName()
+    end
+    local function arrowScript(which)
+        local name = arrowName(which)
+        if name == nil then
+            return nil
+        end
+        return "/click " .. name .. clickSuffix
     end
 
     -- Pixels one arrow click covers.
@@ -267,10 +275,20 @@ function nodes.hybridScrollList(builder, config)
 
     -- Page Up/Down: one keypress, enough secure arrow clicks to cover a
     -- viewport (the slider clamps at its ends, so extra clicks are safe).
+    -- A down-flagged click leaves the button logically pressed, and a
+    -- second down-click on a pressed button is swallowed -- press state
+    -- only resets between hardware events. So each hybrid click is a
+    -- press-RELEASE pair, making every repetition a full click cycle.
     local function pageSpec(which, keymap, topmost)
-        local line = arrowScript(which)
-        if line == nil then
+        local name = arrowName(which)
+        if name == nil then
             return nil
+        end
+        local unit
+        if hybridArrows then
+            unit = "/click " .. name .. " LeftButton 1\n/click " .. name .. " LeftButton\n"
+        else
+            unit = "/click " .. name .. " LeftButton\n"
         end
         local step = stepPixels()
         local viewport = scrollFrame.GetHeight ~= nil and scrollFrame:GetHeight() or 0
@@ -278,7 +296,7 @@ function nodes.hybridScrollList(builder, config)
         if step ~= nil and step > 0 and viewport > 0 then
             clicks = math.ceil(viewport / step)
         end
-        local maxClicks = math.floor(1000 / (#line + 1))
+        local maxClicks = math.floor(1000 / #unit)
         if clicks > maxClicks then
             clicks = maxClicks
         end
@@ -288,7 +306,7 @@ function nodes.hybridScrollList(builder, config)
         return {
             binding = keymap,
             type = "Script",
-            script = string.rep(line .. "\n", clicks),
+            script = string.rep(unit, clicks),
             postClick = function()
                 WowVision.base.speech:uiStop()
                 focusNearestVisible(topmost)
