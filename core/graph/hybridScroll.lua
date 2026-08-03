@@ -4,13 +4,20 @@ local ControlId = graph.ControlId
 local kinds = graph.kinds
 
 -- The button-pool scroll adapter (HybridScrollFrame and kin): a fixed pool of
--- row buttons over an API-enumerable list, like the quest log. Replicates the
--- old ProxyScrollFrame discipline exactly: focusing an entry ALWAYS scrolls
--- it to a calibrated position (never only when it looks offscreen), which
--- re-stamps the button pool synchronously; the landing is then VERIFIED by
--- finding the button whose index matches, and the scroll rolls back if none
--- does. Buttons rebind as the pool scrolls, so an index-to-button mapping is
--- only ever trusted immediately after scrolling to that index.
+-- row buttons over an API-enumerable list, like the quest log. Focusing an
+-- entry scrolls it to a calibrated position, which re-stamps the button pool
+-- synchronously; the landing is then VERIFIED by finding the button whose
+-- index matches, and the scroll rolls back if none does. Buttons rebind as
+-- the pool scrolls, so an index-to-button mapping is only ever trusted
+-- immediately after verifying it.
+--
+-- TAINT: our SetValue runs the frame's update handler (which stamps row
+-- fields like button.index) inside OUR insecure stack, so every scroll
+-- taints the pool's stamps until Blizzard's own code re-runs the update.
+-- Two defenses: an already-visible verified target skips the scroll write
+-- entirely (findButton IS the verification, so the mapping guarantee
+-- holds), and onScrolled lets callers trigger a secure re-stamp (an event
+-- that makes Blizzard refresh the list itself) after a real scroll.
 --
 -- config:
 --   scrollFrame  the scroll frame (required; needs a scrollBar and a pool in
@@ -31,6 +38,9 @@ local kinds = graph.kinds
 --   offsetOf     function(index) -> the entry's pixel offset from the top,
 --                for variable-height lists (the friends list mixes 34px
 --                rows with 16px dividers); overrides the rowHeight math
+--   onScrolled   function() called after this adapter actually moved the
+--                scrollbar (tainting the pool's stamps -- see above); use
+--                it to request a secure refresh of the list
 function nodes.hybridScrollList(builder, config)
     local scrollFrame = config.scrollFrame
     if scrollFrame == nil then
@@ -117,6 +127,11 @@ function nodes.hybridScrollList(builder, config)
     end
 
     local function scrollToIndex(index)
+        -- Already visible and verified: skip the scroll write (and the
+        -- taint it would plant).
+        if findButton(index) ~= nil then
+            return
+        end
         local scrollBar = scrollBarOf()
         if scrollBar == nil then
             return
@@ -147,10 +162,15 @@ function nodes.hybridScrollList(builder, config)
             pixels = rowHeight() * (index - 1)
         end
         scrollBar:SetValue(baseline + pixels)
-        if findButton(index) ~= nil then
-            return
+        local landed = findButton(index) ~= nil
+        if not landed then
+            scrollBar:SetValue(original)
         end
-        scrollBar:SetValue(original)
+        -- Whether it landed or rolled back, the pool was re-stamped in our
+        -- stack: give the caller its chance to schedule a secure re-stamp.
+        if config.onScrolled ~= nil then
+            pcall(config.onScrolled)
+        end
     end
 
     if config.label ~= nil then

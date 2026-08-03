@@ -205,6 +205,21 @@ local function inviteFrame(inviteIndex)
     return nil
 end
 
+-- Any scroll we perform runs Blizzard's row-stamping inside our insecure
+-- stack, tainting button.id and friends -- which a later click reads,
+-- tainting the selection and blocking protected menu actions (Copy
+-- Character Name). ShowFriends makes the server answer with
+-- FRIENDLIST_UPDATE, whose SECURE handler re-stamps every row clean.
+local lastCleanse = 0
+local function requestSecureRestamp()
+    local now = GetTime()
+    if now - lastCleanse < 2 then
+        return
+    end
+    lastCleanse = now
+    C_FriendList.ShowFriends()
+end
+
 -- A friend row: Enter selects (Blizzard's left click), Backspace opens the
 -- row's own dropdown menu (right click). Focusing any friend row clears
 -- the contextual invite stops.
@@ -299,6 +314,7 @@ local function renderFriendsList(builder, screen)
         offsetOf = function(index)
             return offsets[index]
         end,
+        onScrolled = requestSecureRestamp,
         emit = function(b, index, helpers)
             local entry = entries[index]
             if entry == nil or entry.buttonType == FRIENDS_BUTTON_TYPE_DIVIDER then
