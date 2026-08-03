@@ -188,9 +188,27 @@ local function bnetFriendNote(id)
     return table.concat(parts, ", ")
 end
 
+-- The pending-invite frames live in a released-and-reacquired pool; find
+-- the active frame for an invite so its REAL buttons can be clicked
+-- (proxied clicks run Blizzard's secure handlers -- calling the APIs
+-- ourselves risks "addon action blocked").
+local function inviteFrame(inviteIndex)
+    local pool = FriendsFrameFriendsScrollFrame.invitePool
+    if pool == nil then
+        return nil
+    end
+    for frame in pool:EnumerateActive() do
+        if frame.inviteIndex == inviteIndex then
+            return frame
+        end
+    end
+    return nil
+end
+
 -- A friend row: Enter selects (Blizzard's left click), Backspace opens the
--- row's own dropdown menu (right click).
-local function friendRow(entry, helpers)
+-- row's own dropdown menu (right click). Focusing any friend row clears
+-- the contextual invite stops.
+local function friendRow(entry, helpers, screen)
     local buttonType = entry.buttonType
     local id = entry.id
     local label, status, info, note
@@ -242,7 +260,10 @@ local function friendRow(entry, helpers)
             { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
             { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = helpers.target },
         },
-        onFocus = helpers.onFocus,
+        onFocus = function()
+            screen.focusedInvite = nil
+            helpers.onFocus()
+        end,
         onFocusTick = helpers.onFocusTick,
     }
 end
@@ -258,8 +279,15 @@ local function friendRowId(entry)
     return ControlId.structural("friend:bnet:" .. tostring(battleTag or accountName or entry.id))
 end
 
-local function renderFriendsList(builder)
+local function renderFriendsList(builder, screen)
     local entries, offsets = friendEntries()
+
+    -- Drop the contextual invite stops when their invite is gone.
+    local numInvites = BNGetNumFriendInvites ~= nil and BNGetNumFriendInvites() or 0
+    if screen.focusedInvite ~= nil and screen.focusedInvite > numInvites then
+        screen.focusedInvite = nil
+    end
+
     builder:beginStop("list")
     nodes.hybridScrollList(builder, {
         scrollFrame = FriendsFrameFriendsScrollFrame,
@@ -277,51 +305,112 @@ local function renderFriendsList(builder)
                 return
             end
             if entry.buttonType == FRIENDS_BUTTON_TYPE_INVITE_HEADER then
-                -- The collapsible "Friend Requests (N)" header.
-                b:addItem(
-                    ControlId.structural("friend:inviteHeader"),
-                    nodes.button({
-                        label = function()
-                            local count = BNGetNumFriendInvites ~= nil and BNGetNumFriendInvites() or 0
-                            return string.format(FRIEND_REQUESTS, count)
-                        end,
-                        onActivate = function()
-                            SetCVar("friendInvitesCollapsed", not GetCVarBool("friendInvitesCollapsed") and "1" or "0")
-                            FriendsList_Update(true)
-                        end,
-                    })
-                )
+                -- The collapsible "Friend Requests (N)" header: Enter clicks
+                -- Blizzard's real header button, which owns the toggle.
+                b:addItem(ControlId.structural("friend:inviteHeader"), {
+                    controlType = graph.controlTypes.button,
+                    announcements = {
+                        {
+                            text = function()
+                                local count = BNGetNumFriendInvites ~= nil and BNGetNumFriendInvites() or 0
+                                return string.format(FRIEND_REQUESTS, count)
+                            end,
+                            kind = kinds.label,
+                        },
+                    },
+                    bindings = {
+                        {
+                            binding = "leftClick",
+                            type = "Click",
+                            emulatedKey = "LeftButton",
+                            target = function()
+                                return FriendsFrameFriendsScrollFrame.PendingInvitesHeaderButton
+                            end,
+                        },
+                    },
+                    onFocus = function()
+                        screen.focusedInvite = nil
+                        helpers.onFocus()
+                    end,
+                    onFocusTick = helpers.onFocusTick,
+                })
                 return
             end
             if entry.buttonType == FRIENDS_BUTTON_TYPE_INVITE then
+                -- Focusing a request swaps the contextual stops to Accept
+                -- and Decline (rendered after the list).
                 local inviteIndex = entry.id
-                b:addItem(
-                    ControlId.structural("friend:invite:" .. inviteIndex),
-                    nodes.button({
-                        label = function()
-                            local inviteID, accountName = BNGetFriendInviteInfo(inviteIndex)
-                            return L["Friend request"] .. " " .. tostring(accountName or inviteID or "")
-                        end,
-                        value = L["Enter to accept, Backspace to decline"],
-                        onActivate = function()
-                            local inviteID = BNGetFriendInviteInfo(inviteIndex)
-                            if inviteID ~= nil then
-                                BNAcceptFriendInvite(inviteID)
-                            end
-                        end,
-                        onSecondary = function()
-                            local inviteID = BNGetFriendInviteInfo(inviteIndex)
-                            if inviteID ~= nil then
-                                BNDeclineFriendInvite(inviteID)
-                            end
-                        end,
-                    })
-                )
+                b:addItem(ControlId.structural("friend:invite:" .. inviteIndex), {
+                    controlType = graph.controlTypes.text,
+                    announcements = {
+                        {
+                            text = function()
+                                local inviteID, accountName = BNGetFriendInviteInfo(inviteIndex)
+                                return L["Friend request"] .. " " .. tostring(accountName or inviteID or "")
+                            end,
+                            kind = kinds.label,
+                        },
+                    },
+                    onFocus = function()
+                        screen.focusedInvite = inviteIndex
+                        helpers.onFocus()
+                    end,
+                    onFocusTick = helpers.onFocusTick,
+                })
                 return
             end
-            b:addItem(friendRowId(entry), friendRow(entry, helpers))
+            b:addItem(friendRowId(entry), friendRow(entry, helpers, screen))
         end,
     })
+
+    -- Contextual stops for the focused friend request: Tab reaches Accept,
+    -- Tab again the Decline dropdown (decline, block, report). Both click
+    -- the invite frame's REAL buttons.
+    if screen.focusedInvite ~= nil then
+        local inviteIndex = screen.focusedInvite
+        local inviteName = function()
+            local _, accountName = BNGetFriendInviteInfo(inviteIndex)
+            return accountName
+        end
+        builder:beginStop("inviteAccept")
+        builder:addItem(ControlId.structural("invite:accept"), {
+            controlType = graph.controlTypes.button,
+            announcements = {
+                { text = ACCEPT, kind = kinds.label },
+                { text = inviteName, kind = kinds.value },
+            },
+            bindings = {
+                {
+                    binding = "leftClick",
+                    type = "Click",
+                    emulatedKey = "LeftButton",
+                    target = function()
+                        local frame = inviteFrame(inviteIndex)
+                        return frame ~= nil and frame.AcceptButton or nil
+                    end,
+                },
+            },
+        })
+        builder:beginStop("inviteDecline")
+        builder:addItem(ControlId.structural("invite:decline"), {
+            controlType = graph.controlTypes.dropdown,
+            announcements = {
+                { text = DECLINE, kind = kinds.label },
+                { text = inviteName, kind = kinds.value },
+            },
+            bindings = {
+                {
+                    binding = "leftClick",
+                    type = "Click",
+                    emulatedKey = "LeftButton",
+                    target = function()
+                        local frame = inviteFrame(inviteIndex)
+                        return frame ~= nil and frame.DeclineButton or nil
+                    end,
+                },
+            },
+        })
+    end
 
     builder:beginStop("controls")
     builder:pushContext("controls", L["Controls"])
@@ -568,7 +657,7 @@ local function render(builder, screen)
     builder:pushContext("friends", L["Friends"])
 
     if FriendsListFrame ~= nil and FriendsListFrame:IsShown() then
-        renderFriendsList(builder)
+        renderFriendsList(builder, screen)
     elseif IgnoreListFrame ~= nil and IgnoreListFrame:IsShown() then
         renderIgnoreList(builder)
     elseif WhoFrame ~= nil and WhoFrame:IsShown() then
