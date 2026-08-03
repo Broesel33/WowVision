@@ -25,9 +25,15 @@ local kinds = graph.kinds
 --      prior taint, since the secure write re-blesses the slots. The
 --      postClick then moves focus normally; the target row is visible by
 --      then, so defense 1 skips the insecure write.
---   3. onScrolled lets callers trigger a secure re-stamp (an event that
---      makes Blizzard refresh the list itself) after a fallback scroll
---      (big jumps, home/end) that did go through SetValue.
+--   3. Home/End jumps fire ONE macrotext of repeated secure arrow clicks
+--      (the slider clamps at its ends, so slack clicks are free) when the
+--      whole distance fits the macro budget.
+--   4. When an insecure SetValue was unavoidable (a jump too far for the
+--      macro budget), the list is marked poisoned and EVERY row's arrows
+--      go secure until the next arrow press heals the offset, whatever
+--      row it happens on.
+--   5. onScrolled lets callers trigger a secure re-stamp (an event that
+--      makes Blizzard refresh the list itself) after a fallback scroll.
 --
 -- config:
 --   scrollFrame  the scroll frame (required; needs a scrollBar and a pool in
@@ -178,8 +184,11 @@ function nodes.hybridScrollList(builder, config)
         if not landed then
             scrollBar:SetValue(original)
         end
-        -- Whether it landed or rolled back, the pool was re-stamped in our
-        -- stack: give the caller its chance to schedule a secure re-stamp.
+        -- The pool was re-stamped in our stack: the offset and row fields
+        -- are tainted until a secure arrow click rewrites them. Flag it so
+        -- rows force secure arrows until then, and give the caller its
+        -- chance to schedule a secure re-stamp.
+        scrollFrame.__wvScrollTainted = true
         if config.onScrolled ~= nil then
             pcall(config.onScrolled)
         end
@@ -220,6 +229,65 @@ function nodes.hybridScrollList(builder, config)
         return "/click " .. arrow:GetName() .. clickSuffix
     end
 
+    -- An insecure scroll happened and no secure arrow click has run since:
+    -- force secure arrows on every row until one heals the offset.
+    local poisoned = scrollFrame.__wvScrollTainted == true
+
+    -- Pixels one arrow click covers, for sizing Home/End macros.
+    local function stepPixels()
+        if scrollFrame.buttons ~= nil then
+            return scrollFrame.stepSize or scrollFrame.buttonHeight or rowHeight()
+        end
+        if scrollBar == nil then
+            return rowHeight()
+        end
+        return scrollBar.scrollStep or (scrollBar:GetHeight() / 2)
+    end
+
+    -- Home/End as ONE secure keypress: enough arrow clicks to cover the
+    -- whole distance, plus slack -- the slider clamps at its ends, so
+    -- overshooting lands exactly. Returns nil when already there, when the
+    -- macro budget cannot fit the trip (the insecure fallback then runs
+    -- and poison mode takes over), or when the bar is unusable.
+    local function jumpSpec(which, keymap)
+        local line = arrowScript(which)
+        if line == nil or scrollBar == nil or scrollBar.GetValue == nil then
+            return nil
+        end
+        local value = scrollBar:GetValue()
+        local minValue, maxValue = scrollBar:GetMinMaxValues()
+        local distance
+        if which == "ScrollUpButton" then
+            distance = value - (minValue or 0)
+        else
+            distance = (maxValue or 0) - value
+        end
+        if distance <= 0 then
+            return nil
+        end
+        local step = stepPixels()
+        if step == nil or step <= 0 then
+            return nil
+        end
+        local clicks = math.ceil(distance / step) + 2
+        local text = string.rep(line .. "\n", clicks)
+        if #text > 1000 then
+            return nil
+        end
+        return {
+            binding = keymap,
+            type = "Script",
+            script = text,
+            postClick = function()
+                scrollFrame.__wvScrollTainted = nil
+                WowVision.graphHost:onKey(keymap)
+            end,
+        }
+    end
+
+    local homeSpec = not visible[1] and jumpSpec("ScrollUpButton", "home") or nil
+    local endSpec = not visible[total] and jumpSpec("ScrollDownButton", "end") or nil
+
     for index = 1, total do
         local capturedIndex = index
 
@@ -247,10 +315,11 @@ function nodes.hybridScrollList(builder, config)
             return findButton(capturedIndex)
         end
 
-        -- Edge rows shadow the arrow keys with a secure click of the real
-        -- scroll arrow; postClick then moves focus on the same keypress.
+        -- Edge rows (and every row while poisoned) shadow the arrow keys
+        -- with a secure click of the real scroll arrow; postClick then
+        -- moves focus on the same keypress.
         local edgeBindings = nil
-        if index > 1 and not visible[index - 1] then
+        if index > 1 and (poisoned or not visible[index - 1]) then
             local script = arrowScript("ScrollUpButton")
             if script ~= nil then
                 edgeBindings = edgeBindings or {}
@@ -259,12 +328,13 @@ function nodes.hybridScrollList(builder, config)
                     type = "Script",
                     script = script,
                     postClick = function()
+                        scrollFrame.__wvScrollTainted = nil
                         WowVision.graphHost:onKey("up")
                     end,
                 })
             end
         end
-        if index < total and not visible[index + 1] then
+        if index < total and (poisoned or not visible[index + 1]) then
             local script = arrowScript("ScrollDownButton")
             if script ~= nil then
                 edgeBindings = edgeBindings or {}
@@ -273,10 +343,19 @@ function nodes.hybridScrollList(builder, config)
                     type = "Script",
                     script = script,
                     postClick = function()
+                        scrollFrame.__wvScrollTainted = nil
                         WowVision.graphHost:onKey("down")
                     end,
                 })
             end
+        end
+        if homeSpec ~= nil then
+            edgeBindings = edgeBindings or {}
+            tinsert(edgeBindings, homeSpec)
+        end
+        if endSpec ~= nil then
+            edgeBindings = edgeBindings or {}
+            tinsert(edgeBindings, endSpec)
         end
 
         config.emit(builder, capturedIndex, {
