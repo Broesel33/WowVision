@@ -220,6 +220,17 @@ local function requestSecureRestamp()
     C_FriendList.ShowFriends()
 end
 
+-- Edge rows carry secure scroll bindings from the adapter (see
+-- hybridScroll.lua's taint notes); every row splices them in.
+local function withEdgeBindings(bindings, helpers)
+    if helpers.edgeBindings ~= nil then
+        for _, spec in ipairs(helpers.edgeBindings) do
+            tinsert(bindings, spec)
+        end
+    end
+    return bindings
+end
+
 -- A friend row: Enter selects (Blizzard's left click), Backspace opens the
 -- row's own dropdown menu (right click). Focusing any friend row clears
 -- the contextual invite stops.
@@ -271,10 +282,10 @@ local function friendRow(entry, helpers, screen)
                 kind = kinds.selected,
             },
         },
-        bindings = {
+        bindings = withEdgeBindings({
             { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
             { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = helpers.target },
-        },
+        }, helpers),
         onFocus = function()
             screen.focusedInvite = nil
             helpers.onFocus()
@@ -334,7 +345,7 @@ local function renderFriendsList(builder, screen)
                             kind = kinds.label,
                         },
                     },
-                    bindings = {
+                    bindings = withEdgeBindings({
                         {
                             binding = "leftClick",
                             type = "Click",
@@ -343,7 +354,7 @@ local function renderFriendsList(builder, screen)
                                 return FriendsFrameFriendsScrollFrame.PendingInvitesHeaderButton
                             end,
                         },
-                    },
+                    }, helpers),
                     onFocus = function()
                         screen.focusedInvite = nil
                         helpers.onFocus()
@@ -367,6 +378,7 @@ local function renderFriendsList(builder, screen)
                             kind = kinds.label,
                         },
                     },
+                    bindings = withEdgeBindings({}, helpers),
                     onFocus = function()
                         screen.focusedInvite = inviteIndex
                         helpers.onFocus()
@@ -510,10 +522,10 @@ local function renderIgnoreList(builder)
                 announcements = {
                     { text = label, kind = kinds.label },
                 },
-                bindings = {
+                bindings = withEdgeBindings({
                     { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
                     { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = helpers.target },
-                },
+                }, helpers),
                 onFocus = helpers.onFocus,
                 onFocusTick = helpers.onFocusTick,
             })
@@ -599,10 +611,10 @@ local function renderWho(builder)
                         kind = kinds.selected,
                     },
                 },
-                bindings = {
+                bindings = withEdgeBindings({
                     { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
                     { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = helpers.target },
-                },
+                }, helpers),
                 onFocus = helpers.onFocus,
                 onFocusTick = helpers.onFocusTick,
             })

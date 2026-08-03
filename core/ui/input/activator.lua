@@ -27,6 +27,18 @@ function Handle:_engage(inputs, emulatedKey)
     for _, input in ipairs(inputs) do
         local frame = self.inputManager:acquireFrame()
         self.action.configure(frame, self.spec, emulatedKey)
+        -- spec.postClick: insecure follow-up on the SAME keypress, run after
+        -- the secure action completes (focus bookkeeping behind a secure
+        -- scroll, for example). Running after, it cannot taint the action.
+        if self.spec.postClick ~= nil then
+            local postClick = self.spec.postClick
+            frame:SetScript("PostClick", function()
+                local ok, err = pcall(postClick)
+                if not ok then
+                    geterrorhandler()(err)
+                end
+            end)
+        end
         SetOverrideBindingClick(frame, true, input, frame:GetName(), emulatedKey)
         tinsert(self.frames, frame)
     end
@@ -39,6 +51,7 @@ function Handle:release()
     end
     for _, frame in ipairs(self.frames) do
         self.action.clear(frame, self.spec)
+        frame:SetScript("PostClick", nil)
         self.inputManager:releaseFrame(frame)
     end
     self.frames = {}

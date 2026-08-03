@@ -13,18 +13,30 @@ local kinds = graph.kinds
 --
 -- TAINT: our SetValue runs the frame's update handler (which stamps row
 -- fields like button.index) inside OUR insecure stack, so every scroll
--- taints the pool's stamps until Blizzard's own code re-runs the update.
--- Two defenses: an already-visible verified target skips the scroll write
--- entirely (findButton IS the verification, so the mapping guarantee
--- holds), and onScrolled lets callers trigger a secure re-stamp (an event
--- that makes Blizzard refresh the list itself) after a real scroll.
+-- taints the pool's stamps until Blizzard's own code re-runs the update --
+-- and the tainted OFFSET field then re-taints even Blizzard's own secure
+-- refreshes, persistently. Defenses, in order:
+--   1. An already-visible verified target skips the scroll write entirely
+--      (findButton IS the verification, so the mapping guarantee holds).
+--   2. Rows at the visible edge shadow the arrow key with a SECURE click
+--      of the scrollbar's real arrow button (helpers.edgeBindings): the
+--      hardware keypress scrolls through Blizzard's own handler, keeping
+--      the offset and every re-stamped field clean -- and HEALING any
+--      prior taint, since the secure write re-blesses the slots. The
+--      postClick then moves focus normally; the target row is visible by
+--      then, so defense 1 skips the insecure write.
+--   3. onScrolled lets callers trigger a secure re-stamp (an event that
+--      makes Blizzard refresh the list itself) after a fallback scroll
+--      (big jumps, home/end) that did go through SetValue.
 --
 -- config:
 --   scrollFrame  the scroll frame (required; needs a scrollBar and a pool in
 --                .buttons, else the scroll child's children)
 --   count        function -> number of logical entries (required)
 --   emit         function(builder, index, helpers) -- emit the entry's nodes
---                (required). helpers = { onFocus, target, id }.
+--                (required). helpers = { onFocus, onFocusTick, target, id,
+--                edgeBindings }. Concat edgeBindings (may be nil) into the
+--                row vtable's bindings so edge rows scroll securely.
 --   key          stable prefix for default ids (default "hybrid")
 --   label        announcement context wrapped around the entries
 --   id           function(index) -> ControlId; default structural key:index
@@ -177,6 +189,37 @@ function nodes.hybridScrollList(builder, config)
         builder:pushContext(keyPrefix, config.label)
     end
 
+    -- Which logical indices are visible right now, computed once per render
+    -- for the edge-binding checks below.
+    local visible = {}
+    for _, button in ipairs(buttonsOf()) do
+        if button ~= nil and button:IsShown() then
+            local ok, buttonIndex = pcall(indexOfButton, button)
+            if ok and buttonIndex ~= nil then
+                visible[buttonIndex] = true
+            end
+        end
+    end
+
+    -- The scrollbar's real arrow buttons, for secure edge scrolling.
+    -- Hybrid arrows only scroll on the DOWN press ("/click name btn 1");
+    -- Faux-era arrows respond to a plain click.
+    local scrollBar = scrollBarOf()
+    local clickSuffix = scrollFrame.buttons ~= nil and " LeftButton 1" or " LeftButton"
+    local function arrowScript(which)
+        if scrollBar == nil then
+            return nil
+        end
+        local arrow = scrollBar[which]
+        if arrow == nil and scrollBar.GetName ~= nil and scrollBar:GetName() ~= nil then
+            arrow = _G[scrollBar:GetName() .. which]
+        end
+        if arrow == nil or arrow.GetName == nil or arrow:GetName() == nil then
+            return nil
+        end
+        return "/click " .. arrow:GetName() .. clickSuffix
+    end
+
     for index = 1, total do
         local capturedIndex = index
 
@@ -204,11 +247,44 @@ function nodes.hybridScrollList(builder, config)
             return findButton(capturedIndex)
         end
 
+        -- Edge rows shadow the arrow keys with a secure click of the real
+        -- scroll arrow; postClick then moves focus on the same keypress.
+        local edgeBindings = nil
+        if index > 1 and not visible[index - 1] then
+            local script = arrowScript("ScrollUpButton")
+            if script ~= nil then
+                edgeBindings = edgeBindings or {}
+                tinsert(edgeBindings, {
+                    binding = "up",
+                    type = "Script",
+                    script = script,
+                    postClick = function()
+                        WowVision.graphHost:onKey("up")
+                    end,
+                })
+            end
+        end
+        if index < total and not visible[index + 1] then
+            local script = arrowScript("ScrollDownButton")
+            if script ~= nil then
+                edgeBindings = edgeBindings or {}
+                tinsert(edgeBindings, {
+                    binding = "down",
+                    type = "Script",
+                    script = script,
+                    postClick = function()
+                        WowVision.graphHost:onKey("down")
+                    end,
+                })
+            end
+        end
+
         config.emit(builder, capturedIndex, {
             onFocus = onFocus,
             onFocusTick = onFocusTick,
             target = target,
             id = id,
+            edgeBindings = edgeBindings,
         })
     end
 
