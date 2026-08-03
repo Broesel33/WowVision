@@ -226,6 +226,7 @@ local parseOnly = {
     "core/windows/taxi.lua",
     "core/windows/mail.lua",
     "classic/mail.lua",
+    "classic/friends.lua",
     "core/windows/Macros.lua",
     "core/windows/itemText.lua",
     "core/windows/RolePoll.lua",

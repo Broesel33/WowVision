@@ -28,6 +28,9 @@ local kinds = graph.kinds
 --   indexOf      function(button) -> the button's LOGICAL index, for pools
 --                whose IDs are pool-relative (TBC-era Faux rows carry slot
 --                ids; logical index is id plus the frame's scroll offset)
+--   offsetOf     function(index) -> the entry's pixel offset from the top,
+--                for variable-height lists (the friends list mixes 34px
+--                rows with 16px dividers); overrides the rowHeight math
 function nodes.hybridScrollList(builder, config)
     local scrollFrame = config.scrollFrame
     if scrollFrame == nil then
@@ -137,7 +140,13 @@ function nodes.hybridScrollList(builder, config)
         if buttons[1]:GetParent() ~= scrollChild then
             baseline = baseline + original
         end
-        scrollBar:SetValue(baseline + rowHeight() * (index - 1))
+        local pixels
+        if config.offsetOf ~= nil then
+            pixels = config.offsetOf(index)
+        else
+            pixels = rowHeight() * (index - 1)
+        end
+        scrollBar:SetValue(baseline + pixels)
         if findButton(index) ~= nil then
             return
         end
