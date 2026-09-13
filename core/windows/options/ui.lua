@@ -77,13 +77,13 @@ local function settingValue(setting)
     return nil
 end
 
--- Normalized { value, label } entries from a dropdown initializer's options
--- (a list, or a function returning a container with GetData).
-local function optionsList(elementData)
+-- Normalized { value, label } entries from a dropdown's options (a list, or
+-- a function returning a container with GetData). Plain dropdown rows keep
+-- them at data.options; compound rows at data.dropdownOptions -- the caller
+-- passes whichever.
+local function optionsList(options)
     local result = {}
     pcall(function()
-        local d = dataOf(elementData)
-        local options = d.options
         if type(options) == "function" then
             options = options()
         end
@@ -198,6 +198,71 @@ local function unimplementedRow(builder, id, template)
     builder:addItem(id, nodes.text({ label = "Setting type " .. tostring(template) .. " not implemented" }))
 end
 
+-- Whether a row is enabled, per Blizzard's own rule (SettingsControlMixin:
+-- IsEnabled): the initializer's modify predicates all hold -- a child
+-- setting greys out while its parent checkbox is off. Rows without
+-- predicates are always enabled.
+local function rowEnabled(elementData)
+    if elementData == nil or elementData.EvaluateModifyPredicates == nil then
+        return true
+    end
+    local ok, enabled = pcall(elementData.EvaluateModifyPredicates, elementData)
+    return not ok or enabled ~= false
+end
+
+-- Disabled controls are still emitted -- a greyed-out row is still a row
+-- the user should find -- and announce their state, live, so toggling the
+-- parent speaks the change. `extra` adds a control-specific condition (the
+-- compound rows disable their second control while the checkbox is off).
+local function disabledPart(elementData, extra)
+    return {
+        text = function()
+            if not rowEnabled(elementData) or (extra ~= nil and not extra()) then
+                return L["Disabled"]
+            end
+            return nil
+        end,
+        kind = kinds.enabled,
+    }
+end
+
+-- Disabled synthetic controls refuse interaction, as Blizzard's greyed
+-- sliders and dropdowns do, and answer the attempt with "Disabled" so the
+-- keypress is not silent; real buttons already ignore clicks while
+-- disabled.
+local function guardDisabled(vtable, elementData, extra)
+    local function enabled()
+        return rowEnabled(elementData) and (extra == nil or extra())
+    end
+    local stateText = vtable.stateText
+    vtable.stateText = function(...)
+        if not enabled() then
+            return L["Disabled"]
+        end
+        if stateText ~= nil then
+            return stateText(...)
+        end
+        return nil
+    end
+    local onActivate = vtable.onActivate
+    if onActivate ~= nil then
+        vtable.onActivate = function(...)
+            if enabled() then
+                return onActivate(...)
+            end
+        end
+    end
+    local onAdjust = vtable.onAdjust
+    if onAdjust ~= nil then
+        vtable.onAdjust = function(...)
+            if enabled() then
+                return onAdjust(...)
+            end
+        end
+    end
+    return vtable
+end
+
 -- A checkbox backed by a Setting: value speaks from the setting, Enter
 -- genuinely clicks the row's real Checkbox button.
 local function checkboxNode(elementData, helpers, label, setting, childKey)
@@ -216,6 +281,7 @@ local function checkboxNode(elementData, helpers, label, setting, childKey)
         announcements = {
             { text = label, kind = kinds.label },
             { text = valueText, kind = kinds.value, live = "focus" },
+            disabledPart(elementData),
         },
         bindings = {
             {
@@ -243,7 +309,7 @@ end
 local function rowButtonNode(elementData, helpers, label, childKey)
     return {
         controlType = graph.controlTypes.button,
-        announcements = { { text = label, kind = kinds.label } },
+        announcements = { { text = label, kind = kinds.label }, disabledPart(elementData) },
         bindings = {
             {
                 binding = "leftClick",
@@ -268,7 +334,9 @@ local function rowButtonNode(elementData, helpers, label, childKey)
     }
 end
 
-local function sliderNode(elementData, helpers, label, setting, options)
+-- `extraEnabled` is a control-specific enable condition on top of the row's
+-- own (a compound row's checkbox), for the slider and dropdown builders.
+local function sliderNode(elementData, helpers, label, setting, options, extraEnabled)
     options = options or {}
     local minValue = options.minValue
     local maxValue = options.maxValue
@@ -292,6 +360,8 @@ local function sliderNode(elementData, helpers, label, setting, options)
         end,
         step = step,
     })
+    tinsert(vtable.announcements, disabledPart(elementData, extraEnabled))
+    guardDisabled(vtable, elementData, extraEnabled)
     vtable.onFocus = helpers.onFocus
     vtable.onUnfocus = helpers.onUnfocus
     vtable.tooltipFrame = helpers.target
@@ -299,7 +369,19 @@ local function sliderNode(elementData, helpers, label, setting, options)
     return vtable
 end
 
-local function dropdownNode(elementData, helpers, label, setting)
+-- A dropdown row: the label and current pick read from the row DATA (the
+-- setting and its options), since the row frame may be offscreen at
+-- announce time; Enter opens the row's REAL dropdown menu (the focus
+-- lifecycle has scrolled the row into view, so its frame exists), and the
+-- dropdown watcher turns the open menu into a navigable screen -- the same
+-- path every other dropdown in the game takes. The synthetic choice list
+-- remains only as a fallback when no frame is available.
+local function dropdownNode(elementData, helpers, label, setting, options, extraEnabled)
+    if label == nil and type(setting.GetName) == "function" then
+        label = function()
+            return setting:GetName()
+        end
+    end
     local vtable = nodes.choice({
         label = label,
         get = function()
@@ -309,9 +391,21 @@ local function dropdownNode(elementData, helpers, label, setting)
             setting:SetValue(value)
         end,
         choices = function()
-            return optionsList(elementData)
+            return optionsList(options)
         end,
     })
+    local openChoiceList = vtable.onActivate
+    vtable.onActivate = function()
+        local rowFrame = helpers.target()
+        local dropdown = rowFrame ~= nil and rowFrame.Control ~= nil and rowFrame.Control.Dropdown or nil
+        if dropdown ~= nil and dropdown.OpenMenu ~= nil then
+            dropdown:OpenMenu()
+            return
+        end
+        openChoiceList()
+    end
+    tinsert(vtable.announcements, disabledPart(elementData, extraEnabled))
+    guardDisabled(vtable, elementData, extraEnabled)
     vtable.onFocus = helpers.onFocus
     vtable.onUnfocus = helpers.onUnfocus
     vtable.tooltipFrame = helpers.target
@@ -379,17 +473,31 @@ settingEmitters["SettingsCheckboxControlTemplate"] = function(builder, elementDa
     builder:addItem(helpers.id, checkboxNode(elementData, helpers, label, settingObject(elementData)))
 end
 
+-- Rows holding two controls announce as a bar named for the row, so
+-- entering one says there is something to the right: "Click to Move, bar,
+-- checkbox, unchecked, 1 of 2". (The announcer drops the leading control's
+-- own label when the bar already spoke it.)
+local function beginBar(builder, helpers, label)
+    builder:pushContext(tostring(helpers.id.key) .. ":bar", label)
+    builder:startRow()
+end
+
+local function endBar(builder)
+    builder:endRow()
+    builder:popContext()
+end
+
 settingEmitters["SettingsCheckboxWithButtonControlTemplate"] = function(builder, elementData, index, helpers)
     local label = function()
         return settingName(elementData)
     end
-    builder:startRow()
+    beginBar(builder, helpers, label)
     builder:addItem(helpers.id, checkboxNode(elementData, helpers, label, settingObject(elementData)))
     builder:addItem(
         ControlId.structural("srow:" .. index .. ":button"),
         rowButtonNode(elementData, helpers, frameChildText(helpers, "Button"), "Button")
     )
-    builder:endRow()
+    endBar(builder)
 end
 
 settingEmitters["SettingsSliderControlTemplate"] = function(builder, elementData, index, helpers)
@@ -413,11 +521,12 @@ settingEmitters["SettingsDropdownControlTemplate"] = function(builder, elementDa
         unimplementedRow(builder, helpers.id, elementData.frameTemplate)
         return
     end
+    local d = dataOf(elementData)
     builder:addItem(
         helpers.id,
         dropdownNode(elementData, helpers, function()
             return settingName(elementData)
-        end, setting)
+        end, setting, d.options)
     )
 end
 
@@ -462,32 +571,49 @@ end
 settingEmitters["SettingsCheckboxSliderControlTemplate"] = function(builder, elementData, index, helpers)
     local d = dataOf(elementData)
     local cbSetting = d.setting or d.cbSetting
-    builder:startRow()
-    local cbNode = checkboxNode(elementData, helpers, d.cbLabel or settingName(elementData), cbSetting)
+    local cbLabel = d.cbLabel or settingName(elementData)
+    beginBar(builder, helpers, cbLabel)
+    local cbNode = checkboxNode(elementData, helpers, cbLabel, cbSetting)
     cbNode.tooltip = textTooltip(d.cbTooltip) or cbNode.tooltip
     builder:addItem(helpers.id, cbNode)
-    if cbSetting ~= nil and settingValue(cbSetting) and d.sliderSetting ~= nil then
-        local slider = sliderNode(elementData, helpers, d.sliderLabel, d.sliderSetting, d.sliderOptions)
+    -- The second control always emits; it reads Disabled while the checkbox
+    -- is off, as Blizzard greys it out.
+    if d.sliderSetting ~= nil then
+        local checked = function()
+            return cbSetting ~= nil and settingValue(cbSetting) == true
+        end
+        local slider = sliderNode(elementData, helpers, d.sliderLabel, d.sliderSetting, d.sliderOptions, checked)
         slider.tooltip = textTooltip(d.sliderTooltip) or slider.tooltip
         builder:addItem(ControlId.structural("srow:" .. index .. ":slider"), slider)
     end
-    builder:endRow()
+    endBar(builder)
 end
 
 settingEmitters["SettingsCheckboxDropdownControlTemplate"] = function(builder, elementData, index, helpers)
     local d = dataOf(elementData)
     local cbSetting = d.setting or d.cbSetting
-    builder:startRow()
-    local cbNode = checkboxNode(elementData, helpers, d.cbLabel or settingName(elementData), cbSetting)
+    local cbLabel = d.cbLabel or settingName(elementData)
+    beginBar(builder, helpers, cbLabel)
+    local cbNode = checkboxNode(elementData, helpers, cbLabel, cbSetting)
     cbNode.tooltip = textTooltip(d.cbTooltip) or cbNode.tooltip
     builder:addItem(helpers.id, cbNode)
     local dropdownSetting = d.dropdownSetting or d.dropDownSetting
-    if cbSetting ~= nil and settingValue(cbSetting) and dropdownSetting ~= nil then
-        local vtable = dropdownNode(elementData, helpers, d.dropDownLabel or d.dropdownLabel, dropdownSetting)
+    if dropdownSetting ~= nil then
+        local checked = function()
+            return cbSetting ~= nil and settingValue(cbSetting) == true
+        end
+        local vtable = dropdownNode(
+            elementData,
+            helpers,
+            d.dropDownLabel or d.dropdownLabel,
+            dropdownSetting,
+            d.dropdownOptions or d.dropDownOptions,
+            checked
+        )
         vtable.tooltip = textTooltip(d.tooltip or d.dropDownTooltip) or vtable.tooltip
         builder:addItem(ControlId.structural("srow:" .. index .. ":dropdown"), vtable)
     end
-    builder:endRow()
+    endBar(builder)
 end
 
 -- ---- keybindings (structure per Blizzard_SettingsDefinitions_Frame/Keybindings.lua) ----
@@ -499,9 +625,21 @@ end
 -- toggles data.expanded. Provider-level KeyBindingFrameBindingTemplate
 -- elements exist only in search results.
 
--- Two slot buttons for one binding: labels read live from the binding API,
--- Enter starts the rebind, Backspace unbinds (the template's right-click).
+-- Two slot buttons for one binding, as a bar named for the binding: the
+-- slots read their key live from the binding API ("Jump, bar, Space,
+-- button, 1 of 2"), Enter starts the rebind, Backspace unbinds (the
+-- template's right-click).
 local function emitBindingSlots(builder, helpers, idPrefix, bindingIndex, action, resolveRow)
+    local bindingName = function()
+        if action ~= nil then
+            local ok, resolved = pcall(GetBindingName, action)
+            if ok and resolved ~= nil and resolved ~= "" then
+                return resolved
+            end
+        end
+        return action or tostring(bindingIndex)
+    end
+    builder:pushContext(idPrefix .. ":bar", bindingName)
     builder:startRow()
     for slot = 1, 2 do
         local slotIndex = slot
@@ -523,28 +661,15 @@ local function emitBindingSlots(builder, helpers, idPrefix, bindingIndex, action
             announcements = {
                 {
                     text = function()
-                        local name = nil
-                        if action ~= nil then
-                            local ok, resolved = pcall(GetBindingName, action)
-                            if ok then
-                                name = resolved
-                            end
-                        end
                         local slotKey = nil
                         local ok = pcall(function()
                             local _, _, key1, key2 = GetBinding(bindingIndex)
                             slotKey = slotIndex == 1 and key1 or key2
                         end)
-                        local keyText = nil
                         if ok and slotKey ~= nil then
-                            keyText = GetBindingText(slotKey)
-                        else
-                            keyText = NOT_BOUND
+                            return GetBindingText(slotKey)
                         end
-                        if name ~= nil and keyText ~= nil then
-                            return name .. ", " .. keyText
-                        end
-                        return name or keyText
+                        return NOT_BOUND
                     end,
                     kind = kinds.label,
                     live = "focus",
@@ -560,6 +685,7 @@ local function emitBindingSlots(builder, helpers, idPrefix, bindingIndex, action
         })
     end
     builder:endRow()
+    builder:popContext()
 end
 
 settingEmitters["SettingsKeybindingSectionTemplate"] = function(builder, elementData, index, helpers)
