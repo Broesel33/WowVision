@@ -705,6 +705,8 @@ testRunner:addSuite("GraphAnnouncer", {
     end,
 
     ["duplicate level labels dedupe"] = function(t)
+        -- A level named for the control beneath it says the name once and
+        -- keeps its structure word; the control drops its label.
         local kg = makeGraph(function(b)
             b:pushContext("options", "Options")
             b:addLabel(sid("options"), "Options")
@@ -712,7 +714,45 @@ testRunner:addSuite("GraphAnnouncer", {
             return b:build()
         end)
         kg:rerender()
-        t:assertEqual(announcer.composeFull(kg:currentNode()), "Options")
+        t:assertEqual(announcer.composeFull(kg:currentNode()), "Options, List")
+    end,
+
+    ["bar named for its leading control keeps the bar word"] = function(t)
+        local kg = makeGraph(function(b)
+            b:pushContext("ctm", "Click to Move")
+            b:startRow()
+            b:addItem(sid("cb"), {
+                announcements = {
+                    { text = "Click to Move", kind = graph.kinds.label },
+                    { text = "Unchecked", kind = graph.kinds.value },
+                },
+            })
+            b:addLabel(sid("style"), "Camera Following Style")
+            b:endRow()
+            b:popContext()
+            return b:build()
+        end)
+        kg:rerender()
+        withAnnouncerHooks({
+            positionText = function(i, n)
+                return i .. " of " .. n
+            end,
+        }, function()
+            t:assertEqual(announcer.composeFull(kg:currentNode()), "Click to Move, Bar, Unchecked, 1 of 2")
+            local move = kg:move("right")
+            t:assertEqual(announcer.compose(move.from, move.to), "Camera Following Style, 2 of 2")
+        end)
+    end,
+
+    ["level prefixing a compound label stays silent"] = function(t)
+        local kg = makeGraph(function(b)
+            b:pushContext("jump", "Jump")
+            b:addLabel(sid("slot"), "Jump, Space")
+            b:popContext()
+            return b:build()
+        end)
+        kg:rerender()
+        t:assertEqual(announcer.composeFull(kg:currentNode()), "Jump, Space")
     end,
 
     ["control types add role words in speak order"] = function(t)

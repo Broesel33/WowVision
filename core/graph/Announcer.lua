@@ -107,17 +107,22 @@ end
 
 -- A node's own readout: its effective parts resolved live, non-empty ones
 -- joined -- plus a group's expanded/collapsed state word and the auto-stamped
--- sibling position (unless the node carries its own).
-function announcer.leafText(node)
+-- sibling position (unless the node carries its own). omitLabel drops the
+-- node's first declared part (its label) -- for a control whose enclosing
+-- level just spoke the same name.
+function announcer.leafText(node, omitLabel)
     if node == nil then
         return nil
     end
     local parts = announcer.effectiveAnnouncements(node)
+    local label = omitLabel and node.vtable.announcements and node.vtable.announcements[1] or nil
     local out = {}
     for _, part in ipairs(parts) do
-        local text = resolveText(part)
-        if text ~= nil and text ~= "" then
-            tinsert(out, text)
+        if not (label ~= nil and rawequal(part, label)) then
+            local text = resolveText(part)
+            if text ~= nil and text ~= "" then
+                tinsert(out, text)
+            end
         end
     end
 
@@ -156,16 +161,25 @@ function announcer.firstPartText(node)
     return resolveText(parts[1])
 end
 
--- The next path level's readout starts as this label: equal, or its first
--- comma-separated segment is the label (a readout leads with its label).
+-- How the next path level's label relates to this one: "same" when equal (a
+-- bar named for the control it leads with -- the level speaks, the control
+-- drops its label), "prefix" when the label is the readout's first
+-- comma-separated segment (a compound label like "Jump, Space" -- the level
+-- is redundant and stays silent), else nil.
 local function duplicatesNext(label, nextText)
     if type(label) ~= "string" or type(nextText) ~= "string" then
-        return false
+        return nil
     end
     if nextText:sub(1, #label) ~= label then
-        return false
+        return nil
     end
-    return #nextText == #label or nextText:sub(#label + 1, #label + 1) == ","
+    if #nextText == #label then
+        return "same"
+    end
+    if nextText:sub(#label + 1, #label + 1) == "," then
+        return "prefix"
+    end
+    return nil
 end
 
 -- The node's path: ancestors outermost-first, then the node itself.
@@ -209,22 +223,27 @@ function announcer.compose(from, to, transitionLabel)
             tinsert(parts, text)
         end
     else
+        local omitLabel = false
         for j = i, #toPath do
-            local text = announcer.leafText(toPath[j])
-            if text ~= nil then
-                local skip = false
-                if j < #toPath then
-                    -- Skip a level whose label just duplicates the next level
-                    -- down (a section wrapping a control of the same name).
-                    local label = announcer.firstPartText(toPath[j])
-                    local nextLabel = announcer.firstPartText(toPath[j + 1])
-                    if label ~= nil and nextLabel ~= nil and duplicatesNext(label, nextLabel) then
-                        skip = true
-                    end
+            local text = announcer.leafText(toPath[j], omitLabel)
+            local skip = false
+            omitLabel = false
+            if j < #toPath then
+                -- A level named for the control beneath it says the name
+                -- once: the level keeps it (with its structure word, so a
+                -- bar still announces as one) and the control drops it. A
+                -- level that merely prefixes a compound label stays silent.
+                local label = announcer.firstPartText(toPath[j])
+                local nextLabel = announcer.firstPartText(toPath[j + 1])
+                local relation = label ~= nil and nextLabel ~= nil and duplicatesNext(label, nextLabel) or nil
+                if relation == "same" then
+                    omitLabel = true
+                elseif relation == "prefix" then
+                    skip = true
                 end
-                if not skip then
-                    tinsert(parts, text)
-                end
+            end
+            if text ~= nil and not skip then
+                tinsert(parts, text)
             end
         end
     end

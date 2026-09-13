@@ -336,7 +336,13 @@ function nodes.choice(config)
             label = label()
         end
         builder:pushContext("choices", label or "")
-        for _, choice in ipairs(choicesOf()) do
+        local choices = choicesOf()
+        if #choices == 0 then
+            -- An empty list is still a place to land; a render with no
+            -- nodes would close the screen the instant it opened.
+            builder:addItem(ControlId.structural("choice:empty"), nodes.text({ label = L["Empty"] }))
+        end
+        for _, choice in ipairs(choices) do
             local value = choice.value
             builder:addItem(ControlId.structural("choice:" .. tostring(value)), {
                 controlType = graph.controlTypes.button,
