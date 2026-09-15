@@ -128,7 +128,7 @@ A node's `bindings` list declares what keys do while it is focused. Each entry n
 
 Action types (in `core/ui/input/actions.lua`): `Click` (secure click-through to a protected frame, with the emulated mouse button passed through — this is how Enter is a true left click), `Function` (Lua callback with speech-interrupt and TTS-delay handling), `Target`, `Script`. `emulatedKey` may be set per declaration; the keymap's default applies otherwise. Bindings swap only when the focused identity changes, never on mere rebuilds, and everything releases during combat lockdown and re-engages after.
 
-Navigation keys (arrows, tab, ctrl-tab, home/end) are held by the host while any graph screen is open. Escape is never intercepted: the game closes its own frames with its own sounds. Do not override any hotkey the game already handles in the current context without asking the project owner first.
+Navigation keys (arrows, tab, ctrl-tab, home/end) are held by the host while any graph screen is open. Home and End jump to the first and last sibling inside a tree, to the ends of the row when the focused node sits in a horizontal row (a bar), and otherwise to the top and bottom of the column. Escape is never intercepted: the game closes its own frames with its own sounds. Do not override any hotkey the game already handles in the current context without asking the project owner first.
 
 ## The host and window stacks
 
