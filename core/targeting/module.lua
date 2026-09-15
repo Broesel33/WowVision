@@ -279,6 +279,17 @@ function module:updateHardTarget()
     end
     local targetHealth = UnitHealth("target")
     local targetHealthMax = UnitHealthMax("target")
+    -- Retail keeps some units' health secret from addons: no math is
+    -- possible on it, so the health monitor sits out for those targets.
+    if
+        WowVision.isSecret(targetHealth)
+        or WowVision.isSecret(targetHealthMax)
+        or targetHealthMax == nil
+        or targetHealthMax == 0
+    then
+        self.targetHealthInterval = nil
+        return
+    end
     --Note 100/5 = 20, otherwise the calculation would be math.ceil((targetHealth / targetHealthMax) * 100 / 5)*5 which is a bit pointless
     --we only want the percent interval for the report, hence the math.ceil
     local targetHealthInterval = math.ceil((targetHealth / targetHealthMax) * 20) * 5

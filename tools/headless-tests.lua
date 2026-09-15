@@ -54,6 +54,8 @@ loadAddonFile("core/navigation/atlas/MapDataset.lua")
 loadAddonFile("core/navigation/atlas/datasetTests.lua")
 loadAddonFile("core/navigation/stuckMath.lua")
 loadAddonFile("core/navigation/stuckTests.lua")
+loadAddonFile("classic/quests/Adapter.lua")
+loadAddonFile("classic/quests/tests.lua")
 loadAddonFile("core/ClassTests.lua")
 
 -- The component registry and the systems above it, all on the class library.
@@ -221,12 +223,22 @@ local parseOnly = {
     "core/windows/containers.lua",
     "classic/containers/Bag.lua",
     "classic/containers/Bank.lua",
+    "retail/containers/containers.lua",
+    "retail/containers/Bags.lua",
     "core/windows/training.lua",
     "core/windows/ready.lua",
     "core/windows/taxi.lua",
     "core/windows/mail.lua",
     "classic/mail.lua",
     "classic/friends.lua",
+    "classic/quests/questie.lua",
+    "classic/quests/module.lua",
+    "classic/quests/scanner.lua",
+    "core/scanner/module.lua",
+    "core/scanner/ui.lua",
+    "core/scanner/providers.lua",
+    "core/navigation/maps/module.lua",
+    "core/navigation/maps/ui.lua",
     "core/windows/Macros.lua",
     "core/windows/itemText.lua",
     "core/windows/RolePoll.lua",

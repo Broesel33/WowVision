@@ -21,46 +21,11 @@ local kinds = graph.kinds
 
 local ENTRY_COUNT = 20
 
--- Relative direction words from the player to (x, y), using Beacon's
--- verified bearing math: 0 = dead ahead, positive = to the right.
-local function directionTo(x, y)
-    local px, py = UnitPosition("player")
-    local facing = GetPlayerFacing()
-    if px == nil or facing == nil then
-        return nil
-    end
-    local bearing = -math.deg(math.atan2(y - py, x - px))
-    local facingDeg = math.deg(facing)
-    if facingDeg > 180 then
-        facingDeg = facingDeg - 360
-    end
-    local relative = bearing + facingDeg
-    if relative > 180 then
-        relative = relative - 360
-    elseif relative <= -180 then
-        relative = relative + 360
-    end
-
-    local absolute = math.abs(relative)
-    if absolute <= 30 then
-        return L["ahead"]
-    elseif absolute >= 150 then
-        return L["behind"]
-    end
-    local side = relative > 0 and L["right"] or L["left"]
-    if absolute < 75 then
-        return L["ahead"] .. " " .. side
-    elseif absolute > 105 then
-        return L["behind"] .. " " .. side
-    end
-    return side
-end
-
 local function entryLabel(entry)
     local wp = entry.waypoint
     local parts = { wp.n or wp.id }
     tinsert(parts, string.format("%d %s", entry.distance, L["yards"]))
-    local direction = directionTo(wp.x, wp.y)
+    local direction = module:directionTo(wp.x, wp.y)
     if direction ~= nil then
         tinsert(parts, direction)
     end

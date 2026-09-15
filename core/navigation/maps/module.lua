@@ -97,6 +97,66 @@ module:registerBinding({
     script = "/run WowVision.base.navigation.maps:cycleArrivalDistance()",
 })
 
+-- Distance in yards from the player to a world position, nil without a
+-- position (loading screens, instances the API cannot place).
+function module:distanceTo(x, y)
+    local px, py = UnitPosition("player")
+    if px == nil or x == nil then
+        return nil
+    end
+    local dx, dy = x - px, y - py
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Relative direction words from the player to (x, y), using Beacon's
+-- verified bearing math: 0 = dead ahead, positive = to the right.
+function module:directionTo(x, y)
+    local px, py = UnitPosition("player")
+    local facing = GetPlayerFacing()
+    if px == nil or facing == nil or x == nil then
+        return nil
+    end
+    local bearing = -math.deg(math.atan2(y - py, x - px))
+    local facingDeg = math.deg(facing)
+    if facingDeg > 180 then
+        facingDeg = facingDeg - 360
+    end
+    local relative = bearing + facingDeg
+    if relative > 180 then
+        relative = relative - 360
+    elseif relative <= -180 then
+        relative = relative + 360
+    end
+
+    local absolute = math.abs(relative)
+    if absolute <= 30 then
+        return L["ahead"]
+    elseif absolute >= 150 then
+        return L["behind"]
+    end
+    local side = relative > 0 and L["right"] or L["left"]
+    if absolute < 75 then
+        return L["ahead"] .. " " .. side
+    elseif absolute > 105 then
+        return L["behind"] .. " " .. side
+    end
+    return side
+end
+
+-- "120 yards, ahead left" for a world position, or nil without a position.
+function module:whereText(x, y)
+    local distance = self:distanceTo(x, y)
+    if distance == nil then
+        return nil
+    end
+    local text = string.format("%d %s", distance, L["yards"])
+    local direction = self:directionTo(x, y)
+    if direction ~= nil then
+        text = text .. ", " .. direction
+    end
+    return text
+end
+
 function module:newDataset(key)
     local data = WowVision.Dataset:new()
     self.datasets:register(key, data)

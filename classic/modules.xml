@@ -4,7 +4,7 @@
   <Include file="gameDB/modules.xml" />
   <Include file="monitors/modules.xml" />
   <Include file="containers/modules.xml" />
-  <Include file="targeting/modules.xml" />
+  <Include file="quests/modules.xml" />
   <Script file="mail.lua" />
   <Script file="friends.lua" />
 

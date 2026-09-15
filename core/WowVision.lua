@@ -126,6 +126,17 @@ function WowVision:getLocale()
     return self.L or LibStub("AceLocale-3.0"):GetLocale("WowVision")
 end
 
+-- Retail (Midnight onward) hands addons SECRET values for some unit data
+-- (enemy health among them): any arithmetic, comparison, or concatenation
+-- on one throws. Classic clients have no such thing, so this reads false
+-- there and every guard collapses to a plain check.
+function WowVision.isSecret(value)
+    if issecretvalue == nil then
+        return false
+    end
+    return issecretvalue(value) == true
+end
+
 function WowVision:recursiveComp(a, b, level)
     if level == 0 then
         return nil, "level"
