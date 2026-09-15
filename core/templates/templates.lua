@@ -12,6 +12,24 @@ local templates = {
 --
 -- Example: "[XP]: {percent}% ({current} [of] {maximum})"
 
+-- Punctuation the TTS engine chokes on when it runs straight into a value:
+-- a slash glued to numbers ("80/100") can stop speech dead after it. The
+-- fix is applied to LITERAL text at parse time, never to the rendered
+-- string -- rendered values may be secret (retail unit health), and any
+-- string operation on a secret throws, while concatenation does not.
+templates.punctuation = {
+    ["/"] = " / ",
+}
+
+-- Space out punctuation in plain literal text. Collapses any spacing the
+-- template already had around the mark so nothing doubles up.
+function templates.speakable(text)
+    for mark, spoken in pairs(templates.punctuation) do
+        text = string.gsub(text, "%s*" .. mark:gsub("%p", "%%%0") .. "%s*", spoken)
+    end
+    return text
+end
+
 -- Parse a template string into an AST (array of nodes) and a set of required field keys.
 -- Locale values are resolved at parse time into literal nodes.
 -- Node types:
@@ -31,14 +49,19 @@ function templates.parse(template, locale)
         local nextCloseBrace = string.find(template, "}", pos, true)
         local nextCloseBracket = string.find(template, "]", pos, true)
 
-        -- Find the earliest special character
+        -- Find the earliest special character. Checked one by one: a list
+        -- with nil holes cannot be walked with ipairs (it stops at the first
+        -- hole, which used to hide every "[" once no "{" remained).
         local nextSpecial = nil
-        local specials = { nextBrace, nextBracket, nextCloseBrace, nextCloseBracket }
-        for _, v in ipairs(specials) do
-            if v and (not nextSpecial or v < nextSpecial) then
-                nextSpecial = v
+        local function consider(position)
+            if position ~= nil and (nextSpecial == nil or position < nextSpecial) then
+                nextSpecial = position
             end
         end
+        consider(nextBrace)
+        consider(nextBracket)
+        consider(nextCloseBrace)
+        consider(nextCloseBracket)
 
         if not nextSpecial then
             -- No more special chars, append rest of string
@@ -65,7 +88,7 @@ function templates.parse(template, locale)
                 if closePos then
                     -- Flush accumulated literal before field node
                     if #literal > 0 then
-                        tinsert(nodes, { type = "literal", value = literal })
+                        tinsert(nodes, { type = "literal", value = templates.speakable(literal) })
                         literal = ""
                     end
                     local fieldKey = string.sub(template, nextSpecial + 1, closePos - 1)
@@ -127,7 +150,7 @@ function templates.parse(template, locale)
 
     -- Flush remaining literal
     if #literal > 0 then
-        tinsert(nodes, { type = "literal", value = literal })
+        tinsert(nodes, { type = "literal", value = templates.speakable(literal) })
     end
 
     return nodes, fields
