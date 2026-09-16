@@ -785,6 +785,7 @@ local QUALITY_CONTROLS = {
     "EnvironmentDetail",
     "GroundClutter",
 }
+local QUALITY_SLIDERS = { ViewDistance = true, EnvironmentDetail = true, GroundClutter = true }
 
 -- The quality slider runs 0 to 9 and the game labels it 1 to 10.
 local function qualitySliderNode(elementData, helpers, label, setting, resolve)
@@ -884,18 +885,30 @@ settingEmitters["SettingsAdvancedQualitySectionTemplate"] = function(builder, el
     end
     for _, key in ipairs(QUALITY_CONTROLS) do
         local setting = settings[settingPrefix .. key]
-        if setting ~= nil then
-            local resolve = childResolver(helpers, function(frame)
-                local child = control(key)(frame)
-                return child ~= nil and child.Control ~= nil and child.Control.Dropdown or nil
-            end)
-            builder:addItem(
-                ControlId.structural(prefix .. ":" .. settingPrefix .. key),
-                lazyDropdownNode(elementData, helpers, function()
-                    local ok, name = pcall(setting.GetName, setting)
-                    return ok and name or key
-                end, setting, resolve)
-            )
+        -- A control the game hides (spell density on clients without that
+        -- system) is not offered.
+        local child = rowFrame ~= nil and control(key)(rowFrame) or nil
+        local hidden = child ~= nil and child.IsShown ~= nil and not child:IsShown()
+        if setting ~= nil and not hidden then
+            local label = function()
+                local ok, name = pcall(setting.GetName, setting)
+                return ok and name or key
+            end
+            local id = ControlId.structural(prefix .. ":" .. settingPrefix .. key)
+            if QUALITY_SLIDERS[key] then
+                -- View distance, environment detail, and ground clutter are
+                -- sliders on the same 0 to 9 scale as the quality slider.
+                builder:addItem(
+                    id,
+                    qualitySliderNode(elementData, helpers, label, setting, childResolver(helpers, control(key)))
+                )
+            else
+                local resolve = childResolver(helpers, function(frame)
+                    local dropdownHost = control(key)(frame)
+                    return dropdownHost ~= nil and dropdownHost.Control ~= nil and dropdownHost.Control.Dropdown or nil
+                end)
+                builder:addItem(id, lazyDropdownNode(elementData, helpers, label, setting, resolve))
+            end
         end
     end
     builder:popContext()
