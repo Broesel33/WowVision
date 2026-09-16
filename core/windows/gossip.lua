@@ -50,20 +50,28 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("GOSSIP_SHOW")
 eventFrame:RegisterEvent("GOSSIP_CLOSED")
--- Not present on every client; the fallbacks carry those.
-local hasRefreshEvent = pcall(eventFrame.RegisterEvent, eventFrame, "GOSSIP_OPTIONS_REFRESHED")
-eventFrame:SetScript("OnEvent", function(frame, event)
+-- Not present on every client; GOSSIP_SHOW and the timeout carry those.
+pcall(eventFrame.RegisterEvent, eventFrame, "GOSSIP_OPTIONS_REFRESHED")
+-- Page changes arrive as a fresh GOSSIP_SHOW on every client (retail
+-- included -- GOSSIP_OPTIONS_REFRESHED there only covers options changing
+-- in place), so a show while a transition is pending always refreshes;
+-- gating it on the refresh event's absence left retail waiting out the
+-- timeout on every page. A close flagged as continuing (retail, between
+-- pages of one conversation) keeps the snapshot and the pending state.
+eventFrame:SetScript("OnEvent", function(frame, event, interactionIsContinuing)
     if event == "GOSSIP_CLOSED" then
-        state.snapshot = nil
-        state.waiting = false
-        state.screen = nil
+        if interactionIsContinuing then
+            state.waiting = true
+        else
+            state.snapshot = nil
+            state.waiting = false
+            state.screen = nil
+        end
     elseif event == "GOSSIP_OPTIONS_REFRESHED" then
         refresh()
     elseif event == "GOSSIP_SHOW" then
-        if state.waiting and not hasRefreshEvent then
+        if state.waiting or state.snapshot == nil then
             refresh()
-        elseif state.snapshot == nil then
-            takeSnapshot()
         end
     end
 end)
@@ -159,5 +167,10 @@ module:registerWindow({
     conflictingAddons = { "Sku" },
     openEvent = "GOSSIP_SHOW",
     closeEvent = "GOSSIP_CLOSED",
+    -- Retail closes and reshows between pages of one conversation; the
+    -- window stays open across that so the page change reads as a refresh.
+    shouldClose = function(interactionIsContinuing)
+        return not interactionIsContinuing
+    end,
     graphScreen = { render = render },
 })

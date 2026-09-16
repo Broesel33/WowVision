@@ -277,6 +277,10 @@ local EventWindow, _ = WowVision.WindowManager:CreateWindowType("EventWindow", "
 EventWindow:addFields({
     { key = "openEvent", required = true },
     { key = "closeEvent", required = true },
+    -- Optional: function(...) receiving the close event's arguments; a
+    -- false return keeps the window open (a close the game flags as part
+    -- of a continuing interaction).
+    { key = "shouldClose" },
 })
 
 function EventWindow:initialize(config)
@@ -296,6 +300,9 @@ function EventWindow:onEvent(event, ...)
         self._isCurrentlyOpen = true
         self:open(WowVision.UIHost.windowManager)
     elseif event == self.closeEvent then
+        if self.shouldClose ~= nil and self.shouldClose(...) == false then
+            return
+        end
         self._isCurrentlyOpen = false
         self:close(WowVision.UIHost.windowManager)
     end
