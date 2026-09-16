@@ -219,6 +219,7 @@ local parseOnly = {
     "core/windows/gossip.lua",
     "core/windows/questWindow.lua",
     "core/windows/popups.lua",
+    "core/windows/colorPicker.lua",
     "core/graph/hybridScroll.lua",
     "mists/QuestLog.lua",
     "core/windows/merchant.lua",

@@ -717,6 +717,31 @@ testRunner:addSuite("GraphAnnouncer", {
         t:assertEqual(announcer.composeFull(kg:currentNode()), "Options, List")
     end,
 
+    ["a row can also be wired vertically through its cells"] = function(t)
+        -- A settings bar: checkbox then dropdown to its right, followed by
+        -- the next setting. connect adds down/up between the cells, so
+        -- plain down walks checkbox -> dropdown -> next row.
+        local kg = makeGraph(function(b)
+            b:pushContext("ctm", "Click to Move")
+            b:startRow()
+            b:addLabel(sid("cb"), "Click to Move")
+            b:addLabel(sid("dd"), "Camera Following Style")
+            b:endRow()
+            b:popContext()
+            b:addLabel(sid("next"), "Next Setting")
+            b:connect(sid("cb"), "down", sid("dd"))
+            b:connect(sid("dd"), "up", sid("cb"))
+            return b:build()
+        end)
+        kg:rerender()
+        t:assertEqual(kg:currentNode().id.key, "cb")
+        t:assertEqual(kg:move("down").to.id.key, "dd")
+        t:assertEqual(kg:move("down").to.id.key, "next")
+        t:assertEqual(kg:move("up").to.id.key, "cb")
+        t:assertEqual(kg:move("right").to.id.key, "dd")
+        t:assertEqual(kg:move("up").to.id.key, "cb")
+    end,
+
     ["bar named for its leading control keeps the bar word"] = function(t)
         local kg = makeGraph(function(b)
             b:pushContext("ctm", "Click to Move")
