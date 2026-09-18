@@ -1232,13 +1232,18 @@ local function render(builder, screen)
         return
     end
 
-    builder:beginStop("tabs")
-    builder:pushContext("tabs", L["Tabs"])
-    builder:startRow()
-    builder:addItem(ControlId.forObject(frame.GameTab), nodes.proxyButton({ target = frame.GameTab }))
-    builder:addItem(ControlId.forObject(frame.AddOnsTab), nodes.proxyButton({ target = frame.AddOnsTab }))
-    builder:endRow()
-    builder:popContext()
+    -- The panel hides both tabs when no addon has registered a settings
+    -- category (a fresh Forever install), and hidden proxies emit nothing,
+    -- so the row only exists while a tab is showing.
+    if (frame.GameTab ~= nil and frame.GameTab:IsShown()) or (frame.AddOnsTab ~= nil and frame.AddOnsTab:IsShown()) then
+        builder:beginStop("tabs")
+        builder:pushContext("tabs", L["Tabs"])
+        builder:startRow()
+        builder:addItem(ControlId.forObject(frame.GameTab), nodes.proxyButton({ target = frame.GameTab }))
+        builder:addItem(ControlId.forObject(frame.AddOnsTab), nodes.proxyButton({ target = frame.AddOnsTab }))
+        builder:endRow()
+        builder:popContext()
+    end
 
     if frame.SearchBox ~= nil then
         builder:beginStop("search")
