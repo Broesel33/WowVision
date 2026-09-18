@@ -101,70 +101,20 @@ local function renderBag(builder, frame, bagID, buttons)
             module.itemSlotNode(slotButton, L["Bag Slot"] .. " " .. label)
         )
     end
-    for _, itemButton in ipairs(buttons) do
-        builder:addItem(
-            ControlId.forObject(itemButton),
-            module.itemSlotNode(itemButton, function()
-                return module.getBagItemLabel(itemButton)
-            end)
-        )
-    end
+    module.renderSlots(builder, buttons)
     builder:popContext()
 end
 
--- The frame's shown item buttons in visual order: rows top to bottom by
--- screen position, left to right within a row.
-local function visualRows(frame)
-    local buttons = {}
-    for _, itemButton in ipairs(frame.Items or {}) do
-        if itemButton:IsShown() and itemButton:GetTop() ~= nil then
-            tinsert(buttons, itemButton)
-        end
-    end
-    table.sort(buttons, function(a, b)
-        local at, bt = a:GetTop(), b:GetTop()
-        if math.abs(at - bt) > 1 then
-            return at > bt
-        end
-        return a:GetLeft() < b:GetLeft()
-    end)
-    local rows = {}
-    local current = nil
-    local currentTop = nil
-    for _, itemButton in ipairs(buttons) do
-        local top = itemButton:GetTop()
-        if current == nil or math.abs(top - currentTop) > 1 then
-            current = {}
-            currentTop = top
-            tinsert(rows, current)
-        end
-        tinsert(current, itemButton)
-    end
-    return rows
-end
-
 -- One grid for a combined frame: plain rows, no bag boundaries, exactly
--- as drawn. Which physical bag a slot belongs to is not part of the
--- picture, so it is not spoken either; individual mode is the view for
--- that.
+-- as drawn (or one flat list under the list shape). Which physical bag a
+-- slot belongs to is not part of the picture, so it is not spoken
+-- either; individual mode is the view for that.
 local function renderGrid(builder, frame, frameKey, separateBags)
-    local rows = visualRows(frame)
     builder:beginStop(frameKey .. ":grid")
     builder:pushContext(frameKey .. ":grid", L["Bags"])
-    if #rows == 0 then
+    local rows = module.renderSlots(builder, frame.Items or {})
+    if rows == 0 then
         builder:addItem(ControlId.structural(frameKey .. ":empty"), nodes.text({ label = L["Empty"] }))
-    end
-    for _, row in ipairs(rows) do
-        builder:startRow("grid")
-        for _, itemButton in ipairs(row) do
-            builder:addItem(
-                ControlId.forObject(itemButton),
-                module.itemSlotNode(itemButton, function()
-                    return module.getBagItemLabel(itemButton)
-                end)
-            )
-        end
-        builder:endRow()
     end
     builder:popContext()
 

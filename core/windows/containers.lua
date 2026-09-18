@@ -55,6 +55,86 @@ function module.itemSlotNode(itemButton, label)
     return vtable
 end
 
+-- Bag shape: item slots read as the grid the frame draws (rows, with
+-- up/down moving between them) or as one flat list per bag.
+local settings = module:hasSettings()
+settings:add({
+    type = "Choice",
+    key = "shape",
+    label = L["Bag Shape"],
+    default = "list",
+    choices = {
+        { label = L["Grid"], value = "grid" },
+        { label = L["List"], value = "list" },
+    },
+})
+
+-- Shown item buttons in visual order: rows top to bottom by screen
+-- position, left to right within a row. Buttons the client has not laid
+-- out yet trail as one final row in their given order.
+function module.visualRows(buttons)
+    local placed = {}
+    local unplaced = {}
+    for _, itemButton in ipairs(buttons) do
+        if itemButton:IsShown() then
+            if itemButton:GetTop() ~= nil then
+                tinsert(placed, itemButton)
+            else
+                tinsert(unplaced, itemButton)
+            end
+        end
+    end
+    table.sort(placed, function(a, b)
+        local at, bt = a:GetTop(), b:GetTop()
+        if math.abs(at - bt) > 1 then
+            return at > bt
+        end
+        return a:GetLeft() < b:GetLeft()
+    end)
+    local rows = {}
+    local current = nil
+    local currentTop = nil
+    for _, itemButton in ipairs(placed) do
+        local top = itemButton:GetTop()
+        if current == nil or math.abs(top - currentTop) > 1 then
+            current = {}
+            currentTop = top
+            tinsert(rows, current)
+        end
+        tinsert(current, itemButton)
+    end
+    if #unplaced > 0 then
+        tinsert(rows, unplaced)
+    end
+    return rows
+end
+
+-- Emit a bag's item slots in the configured shape. Grid rows share the
+-- "grid" row key, so up and down follow POSITION in the row rather than
+-- the screen column: the combined bag fills from the bottom-right and a
+-- short top row would otherwise strand its cells. Returns the row count.
+function module.renderSlots(builder, buttons)
+    local rows = module.visualRows(buttons)
+    local grid = module.settings.shape == "grid"
+    for _, row in ipairs(rows) do
+        if grid then
+            builder:startRow("grid")
+        end
+        for _, itemButton in ipairs(row) do
+            builder:addItem(
+                ControlId.forObject(itemButton),
+                module.itemSlotNode(itemButton, function()
+                    return module.getBagItemLabel(itemButton)
+                end)
+            )
+        end
+        if grid then
+            builder:endRow()
+        end
+    end
+    return #rows
+end
+
 local function render(builder, screen)
     builder:pushContext("bags", L["Bags"])
     containers:forEachComponent(function(container)
