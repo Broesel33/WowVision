@@ -11,20 +11,27 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added support for fall detection. It can be configured to speak when you  begin to fall. It will also play an ascending series of tones as you fall (this works identically to how Sku's did and uses the same sounds.)
 * Added propper support for Feaux Hybrid Scroll frames (aka my arch enemy.) Frames that would cause errors when scrolled will no longer do so. Unfortunately however I cannot implement the home and end keys to jump to the first or last item within these. These frames include the who list and the glyph frames for various versions of the game.
 * Fixed a bug where home and end would sometimes act unexpectedly, particularly within nested containers.
-* Added support for the rest of the settings screen.
-* Fixed a bug where certain popups in the settings screen would softlock the game.
+* Added support for the rest of the options screen.
+* Fixed a bug where certain popups in the options screen would softlock the game.
+
+### Modern
+* Added support for the bags window.
+
+#### Forever
+* fixed a number of issues with the options window introduced in WoW Forever.
+* Added support for the character pane, including the equipment manager.
+
+#### Retail
+* Added support for the bags window.
 
 ### Classic
 * Fixed a bug where edit fields for spell IDs (for example in monitors) would behave extremely inconsistently and often not actually set the spell ID correctly.
 * Added initial support for the social tab, including friends, ignore, and the who list.
 * Added scanner (todo: explain.)
 
-### The Burning Crusade Classic
+#### The Burning Crusade Classic
 * Updated the TBC speech module to use the retail speech module. Speech output for TBC works again.
 
-### Mists of Pandaria Classic
+#### Mists of Pandaria Classic
 * Fixed a number of issues with the mounts tab of the collections pane.
 * Add support for the Core Abilities and What Has Changed tabs of the spellbook.
-
-### Retail
-* Added support for the bags window.

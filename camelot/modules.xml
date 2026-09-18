@@ -1,6 +1,8 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
 
+  <Script file="character.lua" />
+
   <!-- WoW: Forever (client codename Camelot, TOC suffix _Camelot). The
        client is the modern engine with vanilla content, so the retail
        modules load first and Forever-only modules go here. -->
