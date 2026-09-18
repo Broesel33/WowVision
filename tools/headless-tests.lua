@@ -56,6 +56,9 @@ loadAddonFile("core/navigation/stuckMath.lua")
 loadAddonFile("core/navigation/stuckTests.lua")
 loadAddonFile("classic/quests/Adapter.lua")
 loadAddonFile("classic/quests/tests.lua")
+loadAddonFile("core/colors/names.lua")
+loadAddonFile("core/colors/colors.lua")
+loadAddonFile("core/colors/tests.lua")
 loadAddonFile("core/ClassTests.lua")
 
 -- The component registry and the systems above it, all on the class library.
