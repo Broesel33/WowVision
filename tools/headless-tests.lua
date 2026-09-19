@@ -59,6 +59,8 @@ loadAddonFile("core/quests/tests.lua")
 loadAddonFile("core/colors/names.lua")
 loadAddonFile("core/colors/colors.lua")
 loadAddonFile("core/colors/tests.lua")
+loadAddonFile("core/db.lua")
+loadAddonFile("core/dbTests.lua")
 loadAddonFile("core/ttsCacheBust.lua")
 loadAddonFile("core/ttsCacheBustTests.lua")
 loadAddonFile("core/ClassTests.lua")
@@ -203,6 +205,7 @@ loadAddonFile("core/graph/controlTests.lua")
 
 -- Files that need the game client to run but should at least parse cleanly.
 local parseOnly = {
+    "vanilla/speech.lua",
     "tbc/speech.lua",
     "mists/speech.lua",
     "retail/speech.lua",

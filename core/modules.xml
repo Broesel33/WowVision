@@ -8,6 +8,7 @@
     <Include file="../locale/modules.xml" />
               <Script file="Registry.lua" />
   <Script file="db.lua" />
+  <Script file="dbTests.lua" />
     <Script file="Event.lua" />
     <Script file="movement.lua" />
   <Script file="ClassTests.lua" />
