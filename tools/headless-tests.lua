@@ -59,6 +59,8 @@ loadAddonFile("core/quests/tests.lua")
 loadAddonFile("core/colors/names.lua")
 loadAddonFile("core/colors/colors.lua")
 loadAddonFile("core/colors/tests.lua")
+loadAddonFile("core/ttsCacheBust.lua")
+loadAddonFile("core/ttsCacheBustTests.lua")
 loadAddonFile("core/ClassTests.lua")
 
 -- The component registry and the systems above it, all on the class library.
@@ -201,6 +203,9 @@ loadAddonFile("core/graph/controlTests.lua")
 
 -- Files that need the game client to run but should at least parse cleanly.
 local parseOnly = {
+    "tbc/speech.lua",
+    "mists/speech.lua",
+    "retail/speech.lua",
     "core/graph/Screen.lua",
     "core/graph/Host.lua",
     "core/graph/liveWatch.lua",
