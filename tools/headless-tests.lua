@@ -54,8 +54,8 @@ loadAddonFile("core/navigation/atlas/MapDataset.lua")
 loadAddonFile("core/navigation/atlas/datasetTests.lua")
 loadAddonFile("core/navigation/stuckMath.lua")
 loadAddonFile("core/navigation/stuckTests.lua")
-loadAddonFile("classic/quests/Adapter.lua")
-loadAddonFile("classic/quests/tests.lua")
+loadAddonFile("core/quests/Adapter.lua")
+loadAddonFile("core/quests/tests.lua")
 loadAddonFile("core/colors/names.lua")
 loadAddonFile("core/colors/colors.lua")
 loadAddonFile("core/colors/tests.lua")
@@ -239,8 +239,10 @@ local parseOnly = {
     "classic/mail.lua",
     "classic/friends.lua",
     "classic/quests/questie.lua",
-    "classic/quests/module.lua",
-    "classic/quests/scanner.lua",
+    "core/quests/module.lua",
+    "core/quests/scanner.lua",
+    "core/quests/places.lua",
+    "core/quests/native.lua",
     "core/scanner/module.lua",
     "core/scanner/ui.lua",
     "core/scanner/providers.lua",

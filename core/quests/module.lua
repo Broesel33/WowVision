@@ -182,6 +182,86 @@ function module:indexReady()
     return backend ~= nil and backend.indexReady ~= nil and backend.indexReady() == true
 end
 
+-- Whether the source knows NPCs by role (Questie's creature index); the
+-- native source knows quest points only.
+function module:hasNpcIndex()
+    local backend = self.adapter ~= nil and self.adapter.backend or nil
+    return backend ~= nil and backend.npcsInArea ~= nil
+end
+
+-- Whether the source has its available-quest data for the player's map
+-- yet (the native source fetches it asynchronously).
+function module:nearbyReady()
+    if self.adapter == nil then
+        return false
+    end
+    if self.adapter.linesReady == nil then
+        return self.adapter:isReady()
+    end
+    return self.adapter:linesReady(C_Map.GetBestMapForUnit("player"))
+end
+
+-- The player's quest log from the game itself (authoritative, present
+-- with or without a data source), in the adapter's shape. Modern clients
+-- read it through C_QuestLog.GetInfo; classic ones through
+-- GetQuestLogTitle; C_QuestLog.GetQuestObjectives exists on every client.
+function WowVision.quests.gameQuestLog()
+    local entries = {}
+    local function objectivesFor(questId, index)
+        local objectives = {}
+        local list = C_QuestLog ~= nil and C_QuestLog.GetQuestObjectives ~= nil and C_QuestLog.GetQuestObjectives(questId)
+            or nil
+        if list ~= nil then
+            for i, objective in ipairs(list) do
+                objectives[i] = {
+                    text = objective.text,
+                    type = objective.type,
+                    finished = objective.finished == true,
+                    collected = objective.numFulfilled,
+                    needed = objective.numRequired,
+                }
+            end
+        elseif GetNumQuestLeaderBoards ~= nil and index ~= nil then
+            for i = 1, GetNumQuestLeaderBoards(index) do
+                local text, objectiveType, finished = GetQuestLogLeaderBoard(i, index)
+                objectives[i] = { text = text, type = objectiveType, finished = finished == true }
+            end
+        end
+        return objectives
+    end
+    local count = C_QuestLog ~= nil and C_QuestLog.GetNumQuestLogEntries ~= nil and C_QuestLog.GetNumQuestLogEntries()
+        or (GetNumQuestLogEntries ~= nil and GetNumQuestLogEntries())
+        or 0
+    for index = 1, count do
+        if C_QuestLog ~= nil and C_QuestLog.GetInfo ~= nil then
+            local info = C_QuestLog.GetInfo(index)
+            if info ~= nil and not info.isHeader and info.questID ~= nil and info.questID > 0 then
+                tinsert(entries, {
+                    questId = info.questID,
+                    title = info.title,
+                    level = info.level,
+                    complete = C_QuestLog.IsComplete ~= nil and C_QuestLog.IsComplete(info.questID) == true,
+                    failed = C_QuestLog.IsFailed ~= nil and C_QuestLog.IsFailed(info.questID) == true,
+                    objectives = objectivesFor(info.questID, index),
+                })
+            end
+        else
+            local title, level, _, isHeader, _, isComplete, _, questId = GetQuestLogTitle(index)
+            if not isHeader and questId ~= nil and questId > 0 then
+                tinsert(entries, {
+                    questId = questId,
+                    title = title,
+                    level = level,
+                    complete = isComplete == 1 or isComplete == true,
+                    failed = isComplete == -1,
+                    objectives = objectivesFor(questId, index),
+                })
+            end
+        end
+    end
+    return entries
+end
+
 -- ---- source lifecycle ----
 
 local function reasonFor(code)
@@ -200,6 +280,10 @@ local function reasonFor(code)
 end
 
 function module:_attachQuestie()
+    -- The Questie backend file only loads on classic clients.
+    if WowVision.quests.questieBackend == nil then
+        return false
+    end
     local backend = WowVision.quests.questieBackend()
     if backend == nil then
         return false
@@ -221,17 +305,62 @@ function module:_attachQuestie()
     return true
 end
 
-module:registerEvent("event", "ZONE_CHANGED_NEW_AREA")
+-- The game's own quest map data (Retail, Forever, and any client with the
+-- quest line API when Questie is absent).
+function module:_attachNative()
+    if not WowVision.quests.nativeAvailable() then
+        return false
+    end
+    self.adapter = WowVision.quests.NativeAdapter:new()
+    self.adapter:requestLines(C_Map.GetBestMapForUnit("player"))
+    self.events.ready:emit()
+    return true
+end
 
-function module:onEvent(event)
-    if event == "ZONE_CHANGED_NEW_AREA" and self.adapter ~= nil then
-        self.adapter:invalidate()
+module:registerEvent("event", "ZONE_CHANGED_NEW_AREA")
+module:registerEvent("event", "PLAYER_ENTERING_WORLD")
+module:registerEvent("event", "QUESTLINE_UPDATE")
+module:registerEvent("event", "QUEST_POI_UPDATE")
+module:registerEvent("event", "QUEST_LOG_UPDATE")
+module:registerEvent("event", "QUEST_ACCEPTED")
+module:registerEvent("event", "QUEST_TURNED_IN")
+module:registerEvent("event", "QUEST_REMOVED")
+
+function module:onEvent(event, arg1)
+    local adapter = self.adapter
+    if adapter == nil then
+        return
+    end
+    local native = adapter.requestLines ~= nil
+    if event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_ENTERING_WORLD" then
+        adapter:invalidate()
+        if native then
+            adapter:requestLines(C_Map.GetBestMapForUnit("player"))
+        end
+    elseif not native then
+        return
+    elseif event == "QUESTLINE_UPDATE" then
+        adapter:onLinesUpdated(arg1 == true)
+        if arg1 == true then
+            adapter:requestLines(C_Map.GetBestMapForUnit("player"))
+        end
+    elseif event == "QUEST_POI_UPDATE" or event == "QUEST_LOG_UPDATE" then
+        adapter:invalidate()
+    elseif event == "QUEST_ACCEPTED" then
+        adapter:invalidate()
+        self.events.questUpdate:emit(arg1, nil, self.updateReasons.accepted)
+    elseif event == "QUEST_TURNED_IN" then
+        adapter:invalidate()
+        self.events.questUpdate:emit(arg1, nil, self.updateReasons.turnedIn)
+    elseif event == "QUEST_REMOVED" then
+        adapter:invalidate()
+        self.events.questUpdate:emit(arg1, nil, self.updateReasons.abandoned)
     end
 end
 
 function module:onEnable()
-    if self.adapter == nil then
-        self:_attachQuestie()
+    if self.adapter == nil and not self:_attachQuestie() then
+        self:_attachNative()
     end
 end
 
@@ -261,7 +390,7 @@ end
 function module:handleCommand(args)
     local lines = {}
     if not self:hasSource() then
-        tinsert(lines, L["Questie is not loaded"])
+        tinsert(lines, L["No quest data source"])
         printLines(lines)
         return
     end
@@ -288,6 +417,14 @@ function module:handleCommand(args)
                     tostring(entry.questId)
                 )
             )
+        end
+    elseif word == "raw" then
+        if self.adapter.debugLines ~= nil then
+            for _, line in ipairs(self.adapter:debugLines(tonumber(rest))) do
+                tinsert(lines, line)
+            end
+        else
+            tinsert(lines, "No raw dump for this source")
         end
     elseif word == "log" then
         local list = self:inProgress()

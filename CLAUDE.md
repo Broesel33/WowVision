@@ -2,7 +2,7 @@
 
 WowVision is a World of Warcraft accessibility addon for visually impaired players. It provides TTS announcements, sound alerts, and audio-navigable buffers so players can access game state without a visual display.
 
-**Alpha v0.6.0** | ~235 Lua files | Supports Vanilla, TBC, Mists, Retail, and WoW: Forever (TOC suffix `_Camelot`) via separate TOC files.
+**Alpha v0.9.0** | ~235 Lua files | Supports Vanilla, TBC, Mists, Retail, and WoW: Forever (TOC suffix `_Camelot`) via separate TOC files.
 
 ## Quick Orientation
 

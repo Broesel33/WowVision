@@ -276,6 +276,61 @@ function WowVision:registerCommands()
         end,
     })
 
+    -- Quick speech setup for a login macro: /wv speech <voice> <rate>
+    -- <volume>. Trailing values may be left off to keep the current ones;
+    -- no values at all reports the current settings and the voices.
+    self.base:registerCommand({
+        name = "speech",
+        description = "Set the speech voice, rate, and volume: /wv speech voiceID rate volume",
+        func = function(args)
+            local speech = WowVision.base.speech
+            local settings = speech ~= nil and speech.settings or nil
+            if settings == nil then
+                print("Speech settings are not available")
+                return
+            end
+            local voices = C_VoiceChat.GetTtsVoices() or {}
+            local words = {}
+            for word in tostring(args or ""):gmatch("%S+") do
+                tinsert(words, word)
+            end
+            if #words == 0 then
+                print("Speech voice " .. tostring(settings.voiceID) .. ", rate " .. tostring(settings.speechRate) .. ", volume " .. tostring(settings.speechVolume))
+                for _, voice in ipairs(voices) do
+                    print("Voice " .. tostring(voice.voiceID) .. ": " .. tostring(voice.name))
+                end
+                return
+            end
+            local voiceID = tonumber(words[1])
+            local rate = words[2] ~= nil and tonumber(words[2]) or nil
+            local volume = words[3] ~= nil and tonumber(words[3]) or nil
+            if voiceID == nil or (words[2] ~= nil and rate == nil) or (words[3] ~= nil and volume == nil) then
+                print("Usage: /wv speech voiceID rate volume, for example /wv speech 1 9 100")
+                return
+            end
+            local voiceName = nil
+            for _, voice in ipairs(voices) do
+                if voice.voiceID == voiceID then
+                    voiceName = voice.name
+                end
+            end
+            if voiceName == nil and #voices > 0 then
+                print("No voice with id " .. tostring(voiceID) .. ". Type /wv speech to list the voices")
+                return
+            end
+            settings.voiceID = voiceID
+            if rate ~= nil then
+                settings.speechRate = math.max(-10, math.min(10, math.floor(rate + 0.5)))
+            end
+            if volume ~= nil then
+                settings.speechVolume = math.max(0, math.min(100, math.floor(volume + 0.5)))
+            end
+            WowVision:speak(
+                "Speech voice " .. tostring(voiceName or voiceID) .. ", rate " .. tostring(settings.speechRate) .. ", volume " .. tostring(settings.speechVolume)
+            )
+        end,
+    })
+
     -- Registered here in the bootstrap, not in the errors module, so it
     -- works even when a load failure kills half the addon. BugGrabber
     -- (BugSack) owns the error handler when installed and swallows

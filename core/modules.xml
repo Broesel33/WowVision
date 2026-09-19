@@ -41,6 +41,7 @@
   <Script file="errors.lua" />
   <Include file="navigation/modules.xml" />
   <Include file="scanner/modules.xml" />
+  <Include file="quests/modules.xml" />
   <Include file="targeting/modules.xml" />
 
 </Ui>

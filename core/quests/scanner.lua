@@ -206,7 +206,7 @@ scanner:registerProvider({
     order = 10,
     build = function(ctx)
         if not quests:hasSource() then
-            return { { key = "missing", label = L["Questie is not loaded"] } }
+            return { { key = "missing", label = L["No quest data source"] } }
         end
         if not quests:isReady() then
             return { loadingNode() }
@@ -216,6 +216,9 @@ scanner:registerProvider({
                 key = "nearby",
                 label = L["Nearby"],
                 children = function()
+                    if not quests:nearbyReady() then
+                        return { loadingNode() }
+                    end
                     local out = {}
                     for _, entry in ipairs(quests:nearbyQuests({ maxCount = ctx.maxEntries })) do
                         tinsert(out, nearbyQuestNode(entry))
@@ -289,7 +292,7 @@ scanner:registerProvider({
     order = 20,
     build = function(ctx)
         if not quests:hasSource() then
-            return { { key = "missing", label = L["Questie is not loaded"] } }
+            return { { key = "missing", label = L["No quest data source"] } }
         end
         if not quests:isReady() then
             return { loadingNode() }
@@ -304,6 +307,10 @@ scanner:registerProvider({
                 end,
             },
         }
+        -- The native source knows quest points only: givers, nothing else.
+        if not quests:hasNpcIndex() then
+            return categories
+        end
         -- Role buckets share one pass over the zone index; resolved on
         -- the first role expanded, then reused by the others.
         local buckets = nil

@@ -2,6 +2,7 @@
 This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has been entirely redone to increase ease of development and efficiency. Many long-standing UI focus issues have been fixed and overall the game should feel much smoother now.
 
 ### All Versions
+* Much of the addon has been rewritten. The UI framework has been entirely redone, greatly improving efficiency and preventing significant lag spikes on some screens. This should also allow much faster development, as the older framework was overengineered and introducing unnecessary complexity. LLM models, such as Claude code, also have a much easier time with it, allowing us to iterate significantly faster.
 * Fixed some rare instances of options screen controls having incorrect or missing tooltips.
 * Finally fixed the gossip window acting unpredictably when available dialogue options changed. Additionally the new text is automatically read out.
 * Dropdown menus are now fully supported, including submenus.
@@ -13,24 +14,28 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Fixed a bug where home and end would sometimes act unexpectedly, particularly within nested containers.
 * Added support for the rest of the options screen.
 * Fixed a bug where certain popups in the options screen would softlock the game.
+* Added the scanner. The scanner acts as traditionally seen in other mods, providing a categorized list of various things in the world. These include quest givers, nearby quests, and the location of your corpse for now. Press f9 to use it. Important: The scanner can only give you straight line paths currently pathfinding solutions are being worked on.
+* Added the /wv speech command to quickly adjust your speech settings. The syntax is /wv speech voiceID rate volume, for example /wv speech 1 8 100. Note: your first voice has ID 0.
 
 ### Modern
 * Added support for the bags window.
+* Fixed an entirely unnecessary 1.5 second delay when clicking on gossip options before the text refreshed. This was caused by retail changing which events fire for gossip dialogue.
 
 #### Forever
+* Updated the addon architecture and toc files to support the WoW Forever beta.
 * fixed a number of issues with the options window introduced in WoW Forever.
 * Added support for the character pane, including the equipment manager.
-
-#### Retail
-* Added support for the bags window.
+* Known issue: I tried to support nearby quests and quest givers, but the functions to retrieve this data appear to be bugged in the Forever client.
+* Known Issue: WowVision settings are not persisting across reloads or game restarts. This appears to be a bug with the Forever client. I recommend setting up a macro to use the new /wv speech command to quickly set your speech settings upon login or /reload.
+* Known Issue: Range readouts are sparse and probably broken. I haven't been able to test this properly yet.
 
 ### Classic
 * Fixed a bug where edit fields for spell IDs (for example in monitors) would behave extremely inconsistently and often not actually set the spell ID correctly.
 * Added initial support for the social tab, including friends, ignore, and the who list.
-* Added scanner (todo: explain.)
 
 #### The Burning Crusade Classic
 * Updated the TBC speech module to use the retail speech module. Speech output for TBC works again.
+* Implemented Sku's pathfinding data into TBC Anniversary. You can pathfind using f10. Note: pathfinding to scanner entries is not yet supported.
 
 #### Mists of Pandaria Classic
 * Fixed a number of issues with the mounts tab of the collections pane.

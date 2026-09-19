@@ -301,63 +301,9 @@ function quests.questieBackend()
         return list
     end
 
-    -- The map's points of interest (towns, camps, landmarks -- shown
-    -- whether or not the player has explored them) as world positions,
-    -- cached per map. The game offers no subzone-at-coordinate lookup (the
-    -- exploration API reports overlay art, not subzones), so the nearest
-    -- landmark stands in for one.
-    local landmarksByMap = {}
-    local function landmarks(mapId)
-        local list = landmarksByMap[mapId]
-        if list ~= nil then
-            return list
-        end
-        list = {}
-        landmarksByMap[mapId] = list
-        if C_AreaPoiInfo == nil or C_AreaPoiInfo.GetAreaPOIForMap == nil then
-            return list
-        end
-        local ok, ids = pcall(C_AreaPoiInfo.GetAreaPOIForMap, mapId)
-        if not ok or ids == nil then
-            return list
-        end
-        for _, poiId in ipairs(ids) do
-            local infoOk, info = pcall(C_AreaPoiInfo.GetAreaPOIInfo, mapId, poiId)
-            if infoOk and info ~= nil and info.name ~= nil and info.name ~= "" and info.position ~= nil then
-                local _, position = C_Map.GetWorldPosFromMapPos(mapId, info.position)
-                if position ~= nil then
-                    local wx, wy = position:GetXY()
-                    tinsert(list, { name = info.name, wx = wx, wy = wy })
-                end
-            end
-        end
-        return list
-    end
-
-    -- The explored-overlay area names at a map position: the exploration
-    -- art's areas, right in open country, unreliable where overlays crowd
-    -- (and absent until uncovered). Returned as a set of names.
-    local function overlayAreas(mapId, x, y)
-        local names = {}
-        if C_MapExplorationInfo == nil or C_MapExplorationInfo.GetExploredAreaIDsAtPosition == nil then
-            return names
-        end
-        local ok, ids = pcall(C_MapExplorationInfo.GetExploredAreaIDsAtPosition, mapId, CreateVector2D(x / 100, y / 100))
-        if ok and ids ~= nil then
-            for _, id in ipairs(ids) do
-                local name = C_Map.GetAreaInfo(id)
-                if name ~= nil and name ~= "" then
-                    names[name] = true
-                end
-            end
-        end
-        return names
-    end
-
     -- Names for a spawn: the zone, the subzone when the spawn's own area id
-    -- IS a subzone (exact, straight from the data), the nearest landmark
-    -- with its distance in yards, and an overlay area name when one is
-    -- known there.
+    -- IS a subzone (exact, straight from the data), then the shared
+    -- landmark and overlay hints (core/quests/places.lua).
     function backend.placeName(mapId, x, y, areaId)
         local zone, subzone = nil, nil
         if areaId ~= nil and C_Map.GetAreaInfo ~= nil then
@@ -369,33 +315,7 @@ function quests.questieBackend()
                 zone = C_Map.GetAreaInfo(areaId)
             end
         end
-        if zone == nil and mapId ~= nil then
-            local info = C_Map.GetMapInfo(mapId)
-            zone = info ~= nil and info.name or nil
-        end
-        if mapId == nil then
-            return zone, nil, nil, nil, subzone
-        end
-        local _, position = C_Map.GetWorldPosFromMapPos(mapId, CreateVector2D(x / 100, y / 100))
-        if position == nil then
-            return zone, nil, nil, nil, subzone
-        end
-        local wx, wy = position:GetXY()
-        local bestName, bestDistance = nil, nil
-        for _, landmark in ipairs(landmarks(mapId)) do
-            local dx, dy = landmark.wx - wx, landmark.wy - wy
-            local distance = math.sqrt(dx * dx + dy * dy)
-            if bestDistance == nil or distance < bestDistance then
-                bestName, bestDistance = landmark.name, distance
-            end
-        end
-        local area = nil
-        for name in pairs(overlayAreas(mapId, x, y)) do
-            if name ~= zone and (area == nil or name == bestName) then
-                area = name
-            end
-        end
-        return zone, bestName, bestDistance, area, subzone
+        return quests.places.placeName(mapId, x, y, zone, subzone)
     end
 
     function backend.player()
@@ -412,45 +332,4 @@ function quests.questieBackend()
     end
 
     return backend
-end
-
--- The player's quest log from the game itself (authoritative, present with
--- or without Questie), in the adapter's shape. GetQuestLogTitle and
--- C_QuestLog.GetQuestObjectives exist on every classic client.
-function quests.gameQuestLog()
-    local entries = {}
-    local count = GetNumQuestLogEntries ~= nil and GetNumQuestLogEntries() or 0
-    for index = 1, count do
-        local title, level, _, isHeader, _, isComplete, _, questId = GetQuestLogTitle(index)
-        if not isHeader and questId ~= nil and questId > 0 then
-            local objectives = {}
-            local list = C_QuestLog ~= nil and C_QuestLog.GetQuestObjectives ~= nil and C_QuestLog.GetQuestObjectives(questId)
-                or nil
-            if list ~= nil then
-                for i, objective in ipairs(list) do
-                    objectives[i] = {
-                        text = objective.text,
-                        type = objective.type,
-                        finished = objective.finished == true,
-                        collected = objective.numFulfilled,
-                        needed = objective.numRequired,
-                    }
-                end
-            elseif GetNumQuestLeaderBoards ~= nil then
-                for i = 1, GetNumQuestLeaderBoards(index) do
-                    local text, objectiveType, finished = GetQuestLogLeaderBoard(i, index)
-                    objectives[i] = { text = text, type = objectiveType, finished = finished == true }
-                end
-            end
-            tinsert(entries, {
-                questId = questId,
-                title = title,
-                level = level,
-                complete = isComplete == 1 or isComplete == true,
-                failed = isComplete == -1,
-                objectives = objectives,
-            })
-        end
-    end
-    return entries
 end
