@@ -137,6 +137,28 @@ local function emitItem(builder, item)
         return
     end
 
+    -- "Copy Character Name" calls the protected CopyToClipboard. In a menu
+    -- OPENED by addon code (a chat line's player menu) the menu's own data is
+    -- tainted, so even a secure click on the row is blocked. The opener
+    -- leaves the name in dropdown.copyName and the row copies through an
+    -- edit box instead. Menus opened by secure clicks keep the real row.
+    if dropdown.copyName ~= nil and COPY_CHARACTER_NAME ~= nil and label() == COPY_CHARACTER_NAME then
+        local name = dropdown.copyName
+        builder:addItem(ControlId.forObject(item), {
+            controlType = graph.controlTypes.button,
+            announcements = { { text = label, kind = kinds.label } },
+            onActivate = function()
+                if dropdown.frame ~= nil and dropdown.frame.Close ~= nil then
+                    pcall(dropdown.frame.Close, dropdown.frame)
+                end
+                C_Timer.After(0.2, function()
+                    WowVision.graphHost:openCopyBox(name)
+                end)
+            end,
+        })
+        return
+    end
+
     local vtable = {
         controlType = graph.controlTypes.button,
         announcements = { { text = label, kind = kinds.label } },
@@ -218,22 +240,85 @@ local function openMenuFrames(root)
 end
 graph.dropdown.openMenuFrames = openMenuFrames
 
+-- A title row (the player's name, "Interact", "Other Options"): a shown
+-- non-button row carrying text. Returns its text, or nil for anything else
+-- (buttons, dividers, spacers).
+local function titleText(item)
+    if not item:IsShown() or item:GetObjectType() == "Button" then
+        return nil
+    end
+    local labelRegion = itemRegions(item)
+    local text = labelRegion ~= nil and labelRegion:GetText() or nil
+    if text == nil or text == "" then
+        return nil
+    end
+    return text
+end
+
+-- Title rows are structure, not stops: each becomes the CONTEXT of the rows
+-- under it, announced once when focus crosses into its section, never
+-- landed on. A title with no rows under it (an informational line closing
+-- a menu) has nothing to announce it, so it stays a readable text stop.
+-- Menus that register row overrides keep their row numbering: titles still
+-- occupy their index.
 local function renderOneMenu(builder, menuFrame, levelIndex)
     builder:beginStop("menu:" .. levelIndex)
     builder:pushContext("menu:" .. levelIndex, L["Dropdown"])
     local frames = { menuFrame:GetChildren() }
+    local pendingTitle, pendingItem = nil, nil
+    local sectionOpen = false
+    local sections = 0
+
+    local function flushPendingAsText()
+        if pendingTitle ~= nil then
+            emitItem(builder, pendingItem)
+            pendingTitle, pendingItem = nil, nil
+        end
+    end
+
+    local function beforeRow()
+        if pendingTitle == nil then
+            return
+        end
+        if sectionOpen then
+            builder:popContext()
+        end
+        sections = sections + 1
+        builder:pushContext("section:" .. sections, pendingTitle)
+        sectionOpen = true
+        pendingTitle, pendingItem = nil, nil
+    end
+
     for i = 3, #frames do
         local item = frames[i]
         local index = i - 2
         local override = levelIndex == 1 and dropdown.active ~= nil and dropdown.active[index] or nil
         if type(override) == "function" then
+            beforeRow()
             local ok, err = pcall(override, builder, item, index)
             if not ok then
                 geterrorhandler()(err)
             end
         elseif item:IsShown() then
-            emitItem(builder, item)
+            local title = titleText(item)
+            if title ~= nil then
+                -- Back-to-back titles (the player's name, then "Interact")
+                -- read as one: "Xynayya, Interact".
+                if pendingTitle ~= nil then
+                    title = pendingTitle .. ", " .. title
+                end
+                pendingTitle, pendingItem = title, item
+            elseif item:GetObjectType() == "Button" then
+                beforeRow()
+                emitItem(builder, item)
+            else
+                emitItem(builder, item)
+            end
         end
+    end
+    flushPendingAsText()
+    if sectionOpen then
+        builder:popContext()
     end
     builder:popContext()
 end
@@ -278,6 +363,7 @@ function dropdown.update()
         end
         dropdown.depth = 0
         dropdown.active = nil
+        dropdown.copyName = nil
         return
     end
 

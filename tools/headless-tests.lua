@@ -59,6 +59,8 @@ loadAddonFile("core/quests/tests.lua")
 loadAddonFile("core/colors/names.lua")
 loadAddonFile("core/colors/colors.lua")
 loadAddonFile("core/colors/tests.lua")
+loadAddonFile("core/chat/links.lua")
+loadAddonFile("core/chat/linkTests.lua")
 loadAddonFile("core/ClassTests.lua")
 
 -- The component registry and the systems above it, all on the class library.
@@ -270,6 +272,7 @@ local parseOnly = {
     "mists/collections/module.lua",
     "mists/collections/MountJournal.lua",
     "core/chat/ui.lua",
+    "core/ui/tooltip/types/HyperlinkTooltip.lua",
     "mists/auction.lua",
     "tbc/QuestLog.lua",
     "tbc/socketing.lua",

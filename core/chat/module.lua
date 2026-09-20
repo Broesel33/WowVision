@@ -26,6 +26,54 @@ messageAlert:addOutput({
 
 settings:addRef("messageAlert", messageAlert.parameters)
 
+-- The game's chat box (where messages are typed) taking and losing keyboard
+-- focus. Focus rather than visibility: in the classic chat style the box
+-- stays on screen while idle.
+local editBoxOpenAlert = module:addAlert({
+    key = "editBoxOpen",
+    label = L["Chat Box Opened"],
+})
+editBoxOpenAlert:addOutput({
+    type = "Sound",
+    key = "sound",
+    label = L["Sound Alert"],
+    path = "Sound/WowVision/alerts/chatbox_open.mp3",
+})
+settings:addRef("editBoxOpenAlert", editBoxOpenAlert.parameters)
+
+local editBoxCloseAlert = module:addAlert({
+    key = "editBoxClose",
+    label = L["Chat Box Closed"],
+})
+editBoxCloseAlert:addOutput({
+    type = "Sound",
+    key = "sound",
+    label = L["Sound Alert"],
+    path = "Sound/WowVision/alerts/chatbox_close.mp3",
+})
+settings:addRef("editBoxCloseAlert", editBoxCloseAlert.parameters)
+
+-- Script hooks cannot be removed, so each box is hooked once and the
+-- handlers check the module state themselves.
+local hookedEditBoxes = {}
+local function hookEditBox(index)
+    local editBox = _G["ChatFrame" .. index .. "EditBox"]
+    if editBox == nil or hookedEditBoxes[editBox] then
+        return
+    end
+    hookedEditBoxes[editBox] = true
+    editBox:HookScript("OnEditFocusGained", function()
+        if module:getEnabled() then
+            editBoxOpenAlert:fire({})
+        end
+    end)
+    editBox:HookScript("OnEditFocusLost", function()
+        if module:getEnabled() then
+            editBoxCloseAlert:fire({})
+        end
+    end)
+end
+
 function module:getDefaultData()
     return {
         frames = {},
@@ -88,6 +136,7 @@ function module:addFrame(frame, index)
         }),
     }
     WowVision.UIHost:hookFunc(frame, "AddMessage", self.onMessage)
+    hookEditBox(index)
     self.frames[index] = ref
 
     --add any messages in the frame before it was registered

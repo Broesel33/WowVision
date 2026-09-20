@@ -3,7 +3,10 @@ local GraphHost = graph.GraphHost
 
 -- Typed text entry through one shared edit box: keyboard focus swallows keys
 -- while it is up, Enter commits, Escape or focus loss cancels.
--- config: { label = string|function?, text = string?, onCommit = function, onCancel = function? }
+-- config: { label = string|function?, text = string?, silentText = bool?,
+--           onCommit = function, onCancel = function? }
+-- silentText: prefill without speaking it (copy boxes, where the user just
+-- heard the content).
 function GraphHost:openTextEntry(config)
     local frame = self.editFrame
     if frame == nil then
@@ -72,7 +75,20 @@ function GraphHost:openTextEntry(config)
     if label ~= nil then
         self:_speak(label)
     end
-    if config.text ~= nil and config.text ~= "" then
+    if config.text ~= nil and config.text ~= "" and not config.silentText then
         self:_speak(config.text)
     end
+end
+
+-- A copy box: the text sits selected in the entry box, Ctrl-C copies it,
+-- Escape closes. Addons cannot write the clipboard themselves
+-- (CopyToClipboard is protected), so this is the keyboard route to it. The
+-- text is not re-read: the user just heard it.
+function GraphHost:openCopyBox(text)
+    WowVision.base.speech:uiStop()
+    self:openTextEntry({
+        label = WowVision:getLocale()["Copy now"],
+        text = text,
+        silentText = true,
+    })
 end
