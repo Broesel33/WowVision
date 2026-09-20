@@ -132,7 +132,10 @@ end
 -- Blizzard frames carry stale state from prior occupants, so an unshown
 -- control is someone else's control. allowHidden = true opts out for frames
 -- that are clickable while hidden (action bar buttons).
--- config: { target = frame, label = string|function?, allowHidden = bool? }
+-- config: { target = frame, label = string|function?, allowHidden = bool?,
+--           clickLabels = { left = string|function?, right = string|function? }? }
+-- clickLabels: what each click DOES, for the context menu (see
+-- proxyContextActions).
 function nodes.proxyButton(config)
     local target = config.target
     if target == nil then
@@ -152,7 +155,7 @@ function nodes.proxyButton(config)
     end
     return nodes.attachHover({
         controlType = graph.controlTypes.button,
-        contextActions = nodes.proxyContextActions(target),
+        contextActions = nodes.proxyContextActions(target, config.clickLabels),
         announcements = {
             { text = config.label or nodes.frameText(target), kind = kinds.label },
             -- Disabled state reads (and changes live: a Post button enabling
@@ -177,10 +180,32 @@ end
 -- The default context menu for proxy elements over real frames: the raw
 -- interactions a mouse user has. Click entries fire securely; Drag runs the
 -- frame's own drag script.
-function nodes.proxyContextActions(target)
+--
+-- The game never says what clicking a control does -- mouse users know it by
+-- convention -- so a caller that knows can pass clickLabels: a string or
+-- function per button naming the effect ("Sell"), read before the click name
+-- ("Sell, Right Click"). A function returning nil leaves the bare click name.
+function nodes.proxyContextActions(target, clickLabels)
+    local function clickLabel(which, clickName)
+        local effect = clickLabels ~= nil and clickLabels[which] or nil
+        if type(effect) == "function" then
+            local ok, result = pcall(effect)
+            effect = ok and result or nil
+        end
+        if effect ~= nil and effect ~= "" then
+            return effect .. ", " .. clickName
+        end
+        return clickName
+    end
     return function(add)
-        add({ label = L["Left Click"], click = { emulatedKey = "LeftButton", target = target } })
-        add({ label = L["Right Click"], click = { emulatedKey = "RightButton", target = target } })
+        add({
+            label = clickLabel("left", L["Left Click"]),
+            click = { emulatedKey = "LeftButton", target = target },
+        })
+        add({
+            label = clickLabel("right", L["Right Click"]),
+            click = { emulatedKey = "RightButton", target = target },
+        })
         add({
             label = L["Drag"],
             onActivate = function()
