@@ -55,16 +55,13 @@ function Bag:renderGraph(builder)
             module.itemSlotNode(self.button, L["Bag Slot"] .. " " .. bagName)
         )
     end
+    local buttons = {}
     for i = frame.size, 1, -1 do
         local itemButton = _G[frame:GetName() .. "Item" .. i]
         if itemButton ~= nil then
-            builder:addItem(
-                ControlId.forObject(itemButton),
-                module.itemSlotNode(itemButton, function()
-                    return module.getBagItemLabel(itemButton)
-                end)
-            )
+            tinsert(buttons, itemButton)
         end
     end
+    module.renderSlots(builder, buttons)
     builder:popContext()
 end

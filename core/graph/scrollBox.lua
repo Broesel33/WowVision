@@ -94,7 +94,14 @@ function nodes.scrollBoxList(builder, config)
     end
 
     for index = 1, size do
-        local data = provider:Find(index)
+        -- Through the widget when it can: tree views exclude collapsed
+        -- nodes there, while the raw provider asserts without that flag.
+        local data
+        if scrollBox.FindElementData ~= nil then
+            data = scrollBox:FindElementData(index)
+        else
+            data = provider:Find(index)
+        end
         local capturedIndex = index
 
         local id

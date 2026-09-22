@@ -18,6 +18,7 @@ Inside that directory, each game version has its own folder:
 | The Burning Crusade | `_anniversary_` |
 | Mists of Pandaria | `_classic_` |
 | Retail | `_retail_` |
+| WoW: Forever | `_classic_beta_` (beta) |
 
 Each version folder contains an `Interface/AddOns` directory. For example, if you play The Burning Crusade Classic, you would extract WowVision to `C:\Program Files (x86)\World of Warcraft\_anniversary_\Interface\AddOns\WowVision`.
 
@@ -26,7 +27,8 @@ After extraction, the folder structure should look like:
 - `Interface/`
   - `AddOns/`
     - `WowVision/`
-      - `WowVision.toc`
+      - `WowVision_Standard.toc`
+      - `WowVision_Camelot.toc`
       - `WowVision_TBC.toc`
       - `WowVision_Mists.toc`
       - `WowVision_Vanilla.toc`

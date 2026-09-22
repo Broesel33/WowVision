@@ -22,17 +22,14 @@ function Bank:renderGraph(builder)
 
     builder:beginStop("bank")
     builder:pushContext("bank", BANK)
+    local buttons = {}
     for i = 1, frame.size do
         local button = _G["BankFrameItem" .. i]
         if button ~= nil then
-            builder:addItem(
-                ControlId.forObject(button),
-                module.itemSlotNode(button, function()
-                    return module.getBagItemLabel(button)
-                end)
-            )
+            tinsert(buttons, button)
         end
     end
+    module.renderSlots(builder, buttons)
     builder:popContext()
 
     builder:beginStop("bankSlots")

@@ -16,6 +16,7 @@
   <Include file="commands/modules.xml" />
   <Script file="utils.lua" />
   <Include file="templates/modules.xml" />
+  <Include file="colors/modules.xml" />
   <Script file="Profiler.lua" />
   <Script file="dev.lua" />
   <Script file="json.lua" />
@@ -39,5 +40,8 @@
   <Include file="chat/modules.xml" />
   <Script file="errors.lua" />
   <Include file="navigation/modules.xml" />
+  <Include file="scanner/modules.xml" />
+  <Include file="quests/modules.xml" />
+  <Include file="targeting/modules.xml" />
 
 </Ui>

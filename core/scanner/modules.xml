@@ -2,6 +2,7 @@
 ..\FrameXML\UI.xsd">
 
   <Script file="module.lua" />
-  <Script file="focus.lua" />
+  <Script file="ui.lua" />
+  <Script file="providers.lua" />
 
 </Ui>

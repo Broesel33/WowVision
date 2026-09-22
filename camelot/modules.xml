@@ -1,0 +1,14 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+
+  <Script file="character.lua" />
+  <!-- Questie ships a Forever build over its Classic Era database, and
+       the quests module prefers it over the native quest lines (which
+       the beta serves empty), so the Questie backend loads here too. -->
+  <Script file="..\classic\quests\questie.lua" />
+
+  <!-- WoW: Forever (client codename Camelot, TOC suffix _Camelot). The
+       client is the modern engine with vanilla content, so the retail
+       modules load first and Forever-only modules go here. -->
+
+</Ui>

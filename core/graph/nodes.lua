@@ -128,6 +128,15 @@ end
 -- A real Blizzard button: Enter and Backspace click it securely as true
 -- left/right clicks.
 --
+-- hover = false skips running the frame's own OnEnter/OnLeave on focus. On
+-- the modern engine those scripts run as the addon, and everything they
+-- write (the button's tooltip refresh field, the action bar event frames'
+-- tooltip owner) is tainted from then on; Blizzard's secure handlers that
+-- later read those fields inherit the taint and fail on secret values
+-- (cooldowns in combat). Such nodes pass a `tooltip` of their own -- a
+-- Game tooltip with a populate function -- so the reader fills the tooltip
+-- itself without touching the frame.
+--
 -- Hidden targets yield nil (addItem skips nil vtables): hidden pooled
 -- Blizzard frames carry stale state from prior occupants, so an unshown
 -- control is someone else's control. allowHidden = true opts out for frames
@@ -150,7 +159,7 @@ function nodes.proxyButton(config)
             return nil
         end
     end
-    return nodes.attachHover({
+    local vtable = {
         controlType = graph.controlTypes.button,
         contextActions = nodes.proxyContextActions(target),
         announcements = {
@@ -171,7 +180,13 @@ function nodes.proxyButton(config)
             { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = target },
             { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = target },
         },
-    }, target)
+        tooltip = config.tooltip,
+    }
+    if config.hover == false then
+        vtable.tooltipFrame = target
+        return vtable
+    end
+    return nodes.attachHover(vtable, target)
 end
 
 -- The default context menu for proxy elements over real frames: the raw

@@ -136,8 +136,11 @@ function module:onDisable()
     self.interruptFrame:Hide()
 end
 
+-- No string handling on the text here: retail hands addons SECRET values
+-- (unit health among them) that survive concatenation into a label but
+-- throw on any string operation. The speech API accepts secret strings,
+-- so the text goes through untouched.
 function module:speak(text)
-    local text = string.gsub(text, "/", " / ")
     -- Volume above 100 silences TTS entirely in Mists Classic, so clamp it.
     local volume = self.settings.speechVolume or 100
     if volume < 0 then

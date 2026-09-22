@@ -3,5 +3,6 @@
 
   <Script file="templates.lua" />
   <Script file="Template.lua" />
+  <Script file="tests.lua" />
 
 </Ui>

@@ -20,25 +20,21 @@ function WowVision:OnInitialize()
     self.L = LibStub("AceLocale-3.0"):GetLocale("WowVision")
     self:registerCommands()
     local defaultDB = self.base:getDefaultDBRecursive()
+    -- What the saved variables looked like when initialization ran, for
+    -- /wv dbcheck: a store that arrives nil here was not loaded yet (or at
+    -- all), and everything it held is lost to the fresh table below.
+    self.dbDiagnostics = {
+        charLoaded = WowVisionDB ~= nil,
+        globalLoaded = WowVisionGlobalDB ~= nil,
+        globalSeeded = WowVisionGlobalDB ~= nil and WowVisionGlobalDB._seeded == true,
+        trigger = tostring(self.baseName),
+    }
     if WowVisionDB == nil or WowVision.profiles ~= nil then
         WowVisionDB = {}
     end
     self.db = WowVision.dbManager:beginReconcile(defaultDB, WowVisionDB)
 
-    -- The account-wide store. The first character to log in after the
-    -- update seeds it from their per-character values (copies stay behind,
-    -- so seeding is reversible); later characters skip.
-    if WowVisionGlobalDB == nil then
-        WowVisionGlobalDB = {}
-    end
-    local globalDefault = self.base:getDefaultGlobalDBRecursive()
-    self.globalDb = WowVision.dbManager:beginReconcileGlobal(globalDefault, WowVisionGlobalDB)
-    if not self.globalDb._seeded then
-        self.base:seedGlobalDB(self.db, self.globalDb)
-        self.globalDb._seeded = true
-    end
-
-    self.base:setDBObj(self.db, self.globalDb)
+    self:bindGlobalStore("init")
 
     -- Global binding DB (profile-independent)
     local bindingDefaults = WowVision.input:getDefaultDB()
@@ -56,7 +52,57 @@ function WowVision:OnInitialize()
     WowVision.spellHistory:startListening()
 end
 
+-- Bind the account-wide store, or re-bind it when the client swaps the
+-- saved table in. The first character to log in after the update seeds it
+-- from their per-character values (copies stay behind, so seeding is
+-- reversible); later characters skip.
+--
+-- WoW: Forever delivers account-wide saved variables AFTER the addon's
+-- loaded event (per-character ones arrive before it, as on every other
+-- client), so at initialization the global is still nil. Binding a fresh
+-- table there would be saved over the real one at logout. Instead every
+-- bind is idempotent: OnEnable and the update loop watch for the client
+-- replacing the global and adopt whatever it hands over, re-restoring
+-- every settings object from the real values.
+function WowVision:bindGlobalStore(source)
+    local restoredFromMirror = false
+    if WowVisionGlobalDB == nil then
+        -- No account file yet. The per-character file carries a mirror of
+        -- the account store as this character last saw it (bound below),
+        -- so a client that never hands the account file back still gets
+        -- this character's values instead of defaults.
+        local mirror = WowVisionDB._accountMirror
+        if type(mirror) == "table" and mirror._seeded then
+            WowVisionGlobalDB = WowVision.classes.deepCopy(mirror)
+            restoredFromMirror = true
+        else
+            WowVisionGlobalDB = {}
+        end
+    end
+    local globalDefault = self.base:getDefaultGlobalDBRecursive()
+    self.globalDb = WowVision.dbManager:beginReconcileGlobal(globalDefault, WowVisionGlobalDB)
+    if not self.globalDb._seeded then
+        self.base:seedGlobalDB(self.db, self.globalDb)
+        self.globalDb._seeded = true
+    end
+    self.base:setDBObj(self.db, self.globalDb)
+    -- Same table, not a copy: the client serializes it into the character
+    -- file at logout, so the mirror is always current at no cost.
+    WowVisionDB._accountMirror = self.globalDb
+    if self.dbDiagnostics ~= nil then
+        self.dbDiagnostics.globalBoundBy = source
+        self.dbDiagnostics.restoredFromMirror = restoredFromMirror
+    end
+end
+
+function WowVision:adoptGlobalStoreIfReplaced(source)
+    if WowVisionGlobalDB ~= self.globalDb then
+        self:bindGlobalStore(source)
+    end
+end
+
 function WowVision:OnEnable()
+    self:adoptGlobalStoreIfReplaced("login")
     self.base:enable()
     self.profiler = WowVision.Profiler:new()
     self.updateFrame = CreateFrame("Frame")
@@ -74,6 +120,7 @@ function WowVision:OnDisable()
 end
 
 function WowVision:OnUpdate()
+    self:adoptGlobalStoreIfReplaced("late load")
     local profiler = self.profiler
     profiler:beginFrame()
 
@@ -124,6 +171,17 @@ end
 
 function WowVision:getLocale()
     return self.L or LibStub("AceLocale-3.0"):GetLocale("WowVision")
+end
+
+-- Retail (Midnight onward) hands addons SECRET values for some unit data
+-- (enemy health among them): any arithmetic, comparison, or concatenation
+-- on one throws. Classic clients have no such thing, so this reads false
+-- there and every guard collapses to a plain check.
+function WowVision.isSecret(value)
+    if issecretvalue == nil then
+        return false
+    end
+    return issecretvalue(value) == true
 end
 
 function WowVision:recursiveComp(a, b, level)
@@ -177,6 +235,99 @@ function WowVision:registerCommands()
         func = function(args)
             WowVision:globalizeDevTools()
             print("Developer tools active")
+        end,
+    })
+
+    -- Saved variable round-trip check: were the stores loaded before
+    -- initialization, and do the live settings objects still write into
+    -- the tables the client will save.
+    self.base:registerCommand({
+        name = "dbcheck",
+        description = "Report saved variable load state and store identity",
+        func = function(args)
+            local diag = WowVision.dbDiagnostics or {}
+            local function yesno(value)
+                return value and "yes" or "no"
+            end
+            print("Character store loaded at init: " .. yesno(diag.charLoaded))
+            print("Account store loaded at init: " .. yesno(diag.globalLoaded))
+            print("Account store was seeded at init: " .. yesno(diag.globalSeeded))
+            print("Initialized by addon loaded event for: " .. tostring(diag.trigger))
+            print("Account store last bound by: " .. tostring(diag.globalBoundBy))
+            print("Account store restored from character mirror: " .. yesno(diag.restoredFromMirror))
+            print("Live character store is the saved table: " .. yesno(WowVision.db == WowVisionDB))
+            print("Live account store is the saved table: " .. yesno(WowVision.globalDb == WowVisionGlobalDB))
+            local speech = WowVision.base.speech
+            if speech ~= nil and speech.settings ~= nil then
+                local stored = WowVisionGlobalDB.submodules
+                    and WowVisionGlobalDB.submodules.speech
+                    and WowVisionGlobalDB.submodules.speech.settings
+                print("Speech rate in memory: " .. tostring(speech.settings.speechRate))
+                print("Speech rate in account store: " .. tostring(stored and stored.speechRate))
+                local charStored = WowVisionDB.submodules
+                    and WowVisionDB.submodules.speech
+                    and WowVisionDB.submodules.speech.settings
+                print("Speech rate in character store: " .. tostring(charStored and charStored.speechRate))
+                print("Speech rate scope: " .. tostring(WowVision.classes.effectiveScope(
+                    speech.settings.class:getField("speechRate"),
+                    rawget(speech.settings, "_db")
+                )))
+            end
+        end,
+    })
+
+    -- Quick speech setup for a login macro: /wv speech <voice> <rate>
+    -- <volume>. Trailing values may be left off to keep the current ones;
+    -- no values at all reports the current settings and the voices.
+    self.base:registerCommand({
+        name = "speech",
+        description = "Set the speech voice, rate, and volume: /wv speech voiceID rate volume",
+        func = function(args)
+            local speech = WowVision.base.speech
+            local settings = speech ~= nil and speech.settings or nil
+            if settings == nil then
+                print("Speech settings are not available")
+                return
+            end
+            local voices = C_VoiceChat.GetTtsVoices() or {}
+            local words = {}
+            for word in tostring(args or ""):gmatch("%S+") do
+                tinsert(words, word)
+            end
+            if #words == 0 then
+                print("Speech voice " .. tostring(settings.voiceID) .. ", rate " .. tostring(settings.speechRate) .. ", volume " .. tostring(settings.speechVolume))
+                for _, voice in ipairs(voices) do
+                    print("Voice " .. tostring(voice.voiceID) .. ": " .. tostring(voice.name))
+                end
+                return
+            end
+            local voiceID = tonumber(words[1])
+            local rate = words[2] ~= nil and tonumber(words[2]) or nil
+            local volume = words[3] ~= nil and tonumber(words[3]) or nil
+            if voiceID == nil or (words[2] ~= nil and rate == nil) or (words[3] ~= nil and volume == nil) then
+                print("Usage: /wv speech voiceID rate volume, for example /wv speech 1 9 100")
+                return
+            end
+            local voiceName = nil
+            for _, voice in ipairs(voices) do
+                if voice.voiceID == voiceID then
+                    voiceName = voice.name
+                end
+            end
+            if voiceName == nil and #voices > 0 then
+                print("No voice with id " .. tostring(voiceID) .. ". Type /wv speech to list the voices")
+                return
+            end
+            settings.voiceID = voiceID
+            if rate ~= nil then
+                settings.speechRate = math.max(-10, math.min(10, math.floor(rate + 0.5)))
+            end
+            if volume ~= nil then
+                settings.speechVolume = math.max(0, math.min(100, math.floor(volume + 0.5)))
+            end
+            WowVision:speak(
+                "Speech voice " .. tostring(voiceName or voiceID) .. ", rate " .. tostring(settings.speechRate) .. ", volume " .. tostring(settings.speechVolume)
+            )
         end,
     })
 

@@ -4,7 +4,7 @@
 
 WowVision is a World of Warcraft accessibility addon for visually impaired players. It provides TTS announcements, sound alerts, and audio-navigable buffers so players can access game state without a visual display.
 
-Supports 4 game versions via separate TOC files: Vanilla, TBC, Mists, and Retail.
+Supports 5 game versions via separate TOC files: Vanilla, TBC, Mists, Retail, and WoW: Forever (client codename Camelot).
 
 ## Directory Structure
 
@@ -29,11 +29,12 @@ WowVision/
 ├── tbc/            # TBC-specific modules
 ├── mists/          # Mists-specific modules
 ├── retail/         # Retail-specific modules
+├── camelot/        # WoW: Forever-specific modules (loads after retail/)
 ├── audio/          # Git submodule: voice packs
 ├── locale/         # Git submodule: localization strings
 ├── libs/           # Ace3, middleclass, LibSharedMedia, LibRangeCheck
 ├── docs/           # mdBook documentation
-└── *.toc           # 4 TOC files (one per game version)
+└── *.toc           # 5 TOC files (one per game version)
 ```
 
 ## Loading Chain
@@ -50,9 +51,10 @@ Each TOC file defines the load order:
 | WowVision_Vanilla.toc | 11507 | classic/setup.lua | classic/ |
 | WowVision_TBC.toc | 20505 | classic/setup.lua | classic/ + tbc/ |
 | WowVision_Mists.toc | 50500 | classic/setup.lua | classic/ + mists/ |
-| WowVision_Standard.toc | 120000 | retail/setup.lua | retail/ |
+| WowVision_Standard.toc | 120005 | retail/setup.lua | retail/ |
+| WowVision_Camelot.toc | 16001 | retail/setup.lua | retail/ + camelot/ |
 
-TBC and Mists both load `classic/` modules first, then layer their own on top. No runtime version checks — the TOC file selection handles everything.
+TBC and Mists both load `classic/` modules first, then layer their own on top. WoW: Forever runs on the modern engine with vanilla content, so its `_Camelot` TOC loads `retail/` first and layers `camelot/` on top. No runtime version checks — the TOC file selection handles everything.
 
 ## OOP System
 

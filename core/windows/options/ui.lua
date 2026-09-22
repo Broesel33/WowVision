@@ -33,7 +33,9 @@ local function settingName(elementData)
         end
         return elementData.name
     end)
-    if ok and name ~= nil then
+    -- Button rows may carry an empty name (the caption is on the button):
+    -- an empty name is no name.
+    if ok and name ~= nil and name ~= "" then
         return tostring(name)
     end
     return nil
@@ -98,10 +100,74 @@ local function optionsList(options)
             tinsert(result, {
                 value = entry.value,
                 label = entry.label or entry.text or tostring(entry.value),
+                -- Checkbox entries make the dropdown a multi-select over a
+                -- bitmask setting: bit 1 << (value - offset).
+                checkbox = Settings ~= nil
+                    and Settings.ControlType ~= nil
+                    and entry.controlType == Settings.ControlType.Checkbox,
+                enumValueOffset = entry.enumValueOffset,
             })
         end
     end)
     return result
+end
+
+local function bitIsSet(mask, bitIndex)
+    if bit ~= nil and bit.band ~= nil then
+        return bit.band(mask, bit.lshift(1, bitIndex)) ~= 0
+    end
+    return math.floor(mask / (2 ^ bitIndex)) % 2 == 1
+end
+
+-- The spoken value of a dropdown: for radio options the picked entry's
+-- label; for checkbox options (a bitmask) the labels of every set entry
+-- joined as Blizzard joins them, after the initializer's own selection
+-- text function when it has one ("All", "None"); the raw value when
+-- nothing matches.
+local function dropdownValueText(elementData, setting, options)
+    return function()
+        local value = settingValue(setting)
+        if value == nil then
+            return nil
+        end
+        local entries = optionsList(options)
+        local multi = false
+        for _, entry in ipairs(entries) do
+            if entry.checkbox then
+                multi = true
+                break
+            end
+        end
+        if not multi then
+            for _, entry in ipairs(entries) do
+                if entry.value == value then
+                    return entry.label
+                end
+            end
+            return tostring(value)
+        end
+        local selected = {}
+        local labels = {}
+        if type(value) == "number" then
+            for _, entry in ipairs(entries) do
+                if type(entry.value) == "number" and bitIsSet(value, entry.value - (entry.enumValueOffset or 1)) then
+                    tinsert(selected, entry)
+                    tinsert(labels, entry.label)
+                end
+            end
+        end
+        local custom = elementData ~= nil and elementData.getSelectionTextFunc or nil
+        if type(custom) == "function" then
+            local ok, text = pcall(custom, selected)
+            if ok and text ~= nil and text ~= "" then
+                return text
+            end
+        end
+        if #labels == 0 then
+            return L["None"]
+        end
+        return table.concat(labels, LIST_DELIMITER or ", ")
+    end
 end
 
 -- ---- row node builders ----
@@ -263,8 +329,28 @@ local function guardDisabled(vtable, elementData, extra)
     return vtable
 end
 
+-- A row child reached lazily through the row frame (materialized only
+-- while on screen): a parentKey string, a function(rowFrame) -> frame for
+-- nested children, or nil for the row itself.
+local function childResolver(helpers, child)
+    return function()
+        local rowFrame = helpers.target()
+        if rowFrame == nil then
+            return nil
+        end
+        if type(child) == "function" then
+            return child(rowFrame)
+        end
+        if child == nil then
+            return rowFrame
+        end
+        return rowFrame[child] or rowFrame
+    end
+end
+
 -- A checkbox backed by a Setting: value speaks from the setting, Enter
--- genuinely clicks the row's real Checkbox button.
+-- genuinely clicks the row's real Checkbox button. childKey may be a
+-- parentKey or a resolver function (see childResolver).
 local function checkboxNode(elementData, helpers, label, setting, childKey)
     local valueText = nil
     if setting ~= nil then
@@ -288,13 +374,7 @@ local function checkboxNode(elementData, helpers, label, setting, childKey)
                 binding = "leftClick",
                 type = "Click",
                 emulatedKey = "LeftButton",
-                target = function()
-                    local rowFrame = helpers.target()
-                    if rowFrame == nil then
-                        return nil
-                    end
-                    return rowFrame[childKey or "Checkbox"] or rowFrame
-                end,
+                target = childResolver(helpers, childKey or "Checkbox"),
             },
         },
         onFocus = helpers.onFocus,
@@ -315,16 +395,7 @@ local function rowButtonNode(elementData, helpers, label, childKey)
                 binding = "leftClick",
                 type = "Click",
                 emulatedKey = "LeftButton",
-                target = function()
-                    local rowFrame = helpers.target()
-                    if rowFrame == nil then
-                        return nil
-                    end
-                    if childKey ~= nil then
-                        return rowFrame[childKey] or rowFrame
-                    end
-                    return rowFrame
-                end,
+                target = childResolver(helpers, childKey),
             },
         },
         onFocus = helpers.onFocus,
@@ -393,6 +464,7 @@ local function dropdownNode(elementData, helpers, label, setting, options, extra
         choices = function()
             return optionsList(options)
         end,
+        valueText = dropdownValueText(elementData, setting, options),
     })
     local openChoiceList = vtable.onActivate
     vtable.onActivate = function()
@@ -476,28 +548,45 @@ end
 -- Rows holding two controls announce as a bar named for the row, so
 -- entering one says there is something to the right: "Click to Move, bar,
 -- checkbox, unchecked, 1 of 2". (The announcer drops the leading control's
--- own label when the bar already spoke it.)
+-- own label when the bar already spoke it.) The cells are ALSO wired
+-- vertically, so plain up and down through the settings list walk
+-- through the second control instead of skipping it -- a horizontal-only
+-- bar proved too easy to miss. Keybinding slot pairs keep the plain bar.
 local function beginBar(builder, helpers, label)
     builder:pushContext(tostring(helpers.id.key) .. ":bar", label)
     builder:startRow()
+    return {}
 end
 
-local function endBar(builder)
+local function endBar(builder, ids)
     builder:endRow()
     builder:popContext()
+    for i = 1, #ids - 1 do
+        builder:connect(ids[i], "down", ids[i + 1])
+        builder:connect(ids[i + 1], "up", ids[i])
+    end
+end
+
+local function addBarItem(builder, ids, id, vtable)
+    builder:addItem(id, vtable)
+    if vtable ~= nil then
+        tinsert(ids, id)
+    end
 end
 
 settingEmitters["SettingsCheckboxWithButtonControlTemplate"] = function(builder, elementData, index, helpers)
     local label = function()
         return settingName(elementData)
     end
-    beginBar(builder, helpers, label)
-    builder:addItem(helpers.id, checkboxNode(elementData, helpers, label, settingObject(elementData)))
-    builder:addItem(
+    local ids = beginBar(builder, helpers, label)
+    addBarItem(builder, ids, helpers.id, checkboxNode(elementData, helpers, label, settingObject(elementData)))
+    addBarItem(
+        builder,
+        ids,
         ControlId.structural("srow:" .. index .. ":button"),
         rowButtonNode(elementData, helpers, frameChildText(helpers, "Button"), "Button")
     )
-    endBar(builder)
+    endBar(builder, ids)
 end
 
 settingEmitters["SettingsSliderControlTemplate"] = function(builder, elementData, index, helpers)
@@ -534,9 +623,27 @@ settingEmitters["AutoLootDropdownControlTemplate"] = settingEmitters["SettingsDr
 settingEmitters["SettingsLanguageTemplate"] = settingEmitters["SettingsDropdownControlTemplate"]
 settingEmitters["SettingsAudioLocaleTemplate"] = settingEmitters["SettingsDropdownControlTemplate"]
 
+-- A button row: the row's name plus the button's caption ("Cooldown
+-- Manager, Open Edit Mode"), or the caption alone when the row has no
+-- name (Blizzard registers several that way). The caption lives in the
+-- row data as text or a function, so it reads even before the row frame
+-- exists; the frame's button text is the last resort.
 settingEmitters["SettingButtonControlTemplate"] = function(builder, elementData, index, helpers)
     local label = function()
-        return settingName(elementData) or frameChildText(helpers, "Button")()
+        local d = dataOf(elementData) or {}
+        local caption = d.buttonText
+        if type(caption) == "function" then
+            local ok, text = pcall(caption)
+            caption = ok and text or nil
+        end
+        if caption == nil or caption == "" then
+            caption = frameChildText(helpers, "Button")()
+        end
+        local name = settingName(elementData)
+        if name ~= nil and caption ~= nil and caption ~= "" and caption ~= name then
+            return name .. ", " .. caption
+        end
+        return name or caption
     end
     builder:addItem(helpers.id, rowButtonNode(elementData, helpers, label, "Button"))
 end
@@ -572,10 +679,10 @@ settingEmitters["SettingsCheckboxSliderControlTemplate"] = function(builder, ele
     local d = dataOf(elementData)
     local cbSetting = d.setting or d.cbSetting
     local cbLabel = d.cbLabel or settingName(elementData)
-    beginBar(builder, helpers, cbLabel)
+    local ids = beginBar(builder, helpers, cbLabel)
     local cbNode = checkboxNode(elementData, helpers, cbLabel, cbSetting)
     cbNode.tooltip = textTooltip(d.cbTooltip) or cbNode.tooltip
-    builder:addItem(helpers.id, cbNode)
+    addBarItem(builder, ids, helpers.id, cbNode)
     -- The second control always emits; it reads Disabled while the checkbox
     -- is off, as Blizzard greys it out.
     if d.sliderSetting ~= nil then
@@ -584,19 +691,19 @@ settingEmitters["SettingsCheckboxSliderControlTemplate"] = function(builder, ele
         end
         local slider = sliderNode(elementData, helpers, d.sliderLabel, d.sliderSetting, d.sliderOptions, checked)
         slider.tooltip = textTooltip(d.sliderTooltip) or slider.tooltip
-        builder:addItem(ControlId.structural("srow:" .. index .. ":slider"), slider)
+        addBarItem(builder, ids, ControlId.structural("srow:" .. index .. ":slider"), slider)
     end
-    endBar(builder)
+    endBar(builder, ids)
 end
 
 settingEmitters["SettingsCheckboxDropdownControlTemplate"] = function(builder, elementData, index, helpers)
     local d = dataOf(elementData)
     local cbSetting = d.setting or d.cbSetting
     local cbLabel = d.cbLabel or settingName(elementData)
-    beginBar(builder, helpers, cbLabel)
+    local ids = beginBar(builder, helpers, cbLabel)
     local cbNode = checkboxNode(elementData, helpers, cbLabel, cbSetting)
     cbNode.tooltip = textTooltip(d.cbTooltip) or cbNode.tooltip
-    builder:addItem(helpers.id, cbNode)
+    addBarItem(builder, ids, helpers.id, cbNode)
     local dropdownSetting = d.dropdownSetting or d.dropDownSetting
     if dropdownSetting ~= nil then
         local checked = function()
@@ -611,9 +718,346 @@ settingEmitters["SettingsCheckboxDropdownControlTemplate"] = function(builder, e
             checked
         )
         vtable.tooltip = textTooltip(d.tooltip or d.dropDownTooltip) or vtable.tooltip
-        builder:addItem(ControlId.structural("srow:" .. index .. ":dropdown"), vtable)
+        addBarItem(builder, ids, ControlId.structural("srow:" .. index .. ":dropdown"), vtable)
     end
-    endBar(builder)
+    endBar(builder, ids)
+end
+
+-- ---- rows with nested controls: graphics quality, subtext checkboxes,
+-- colour swatches, previews ----
+
+-- A real dropdown inside a row, reached lazily: Enter opens its menu (the
+-- dropdown watcher presents it); the current pick reads through the
+-- materialized dropdown's own text, else the setting's raw value.
+local function lazyDropdownNode(elementData, helpers, label, setting, resolve, extraEnabled)
+    local vtable = {
+        controlType = graph.controlTypes.dropdown,
+        announcements = {
+            { text = label, kind = kinds.label },
+            {
+                text = function()
+                    local frame = resolve()
+                    if frame ~= nil and frame.GetText ~= nil then
+                        local text = frame:GetText()
+                        if text ~= nil and text ~= "" then
+                            return text
+                        end
+                    end
+                    local value = setting ~= nil and settingValue(setting) or nil
+                    return value ~= nil and tostring(value) or nil
+                end,
+                kind = kinds.value,
+                live = "focus",
+            },
+            disabledPart(elementData, extraEnabled),
+        },
+        onActivate = function()
+            local frame = resolve()
+            if frame ~= nil and frame.OpenMenu ~= nil then
+                frame:OpenMenu()
+            end
+        end,
+        onFocus = helpers.onFocus,
+        onUnfocus = helpers.onUnfocus,
+        tooltipFrame = resolve,
+    }
+    guardDisabled(vtable, elementData, extraEnabled)
+    return vtable
+end
+
+-- The Graphics Quality section: one row holding a Base tab and a Raid and
+-- Battlegrounds tab, each with a quality slider (the raid one behind an
+-- enable checkbox) and thirteen quality dropdowns. Settings arrive in the
+-- row data keyed by variable name; the controls live under the row's
+-- BaseQualityControls or RaidQualityControls frame, whichever tab shows.
+local QUALITY_CONTROLS = {
+    "ShadowQuality",
+    "LiquidDetail",
+    "ParticleDensity",
+    "SSAO",
+    "DepthEffects",
+    "ComputeEffects",
+    "OutlineMode",
+    "TextureResolution",
+    "SpellDensity",
+    "ProjectedTextures",
+    "ViewDistance",
+    "EnvironmentDetail",
+    "GroundClutter",
+}
+local QUALITY_SLIDERS = { ViewDistance = true, EnvironmentDetail = true, GroundClutter = true }
+
+-- The quality slider runs 0 to 9 and the game labels it 1 to 10.
+local function qualitySliderNode(elementData, helpers, label, setting, resolve)
+    local vtable = nodes.number({
+        label = label,
+        get = function()
+            local value = settingValue(setting)
+            return value ~= nil and value + 1 or nil
+        end,
+        set = function(value)
+            value = math.floor(value + 0.5) - 1
+            if value < 0 then
+                value = 0
+            elseif value > 9 then
+                value = 9
+            end
+            setting:SetValue(value)
+        end,
+        step = 1,
+    })
+    tinsert(vtable.announcements, disabledPart(elementData))
+    guardDisabled(vtable, elementData)
+    vtable.onFocus = helpers.onFocus
+    vtable.onUnfocus = helpers.onUnfocus
+    vtable.tooltipFrame = resolve
+    return vtable
+end
+
+settingEmitters["SettingsAdvancedQualitySectionTemplate"] = function(builder, elementData, index, helpers)
+    local d = dataOf(elementData)
+    local prefix = "srow:" .. index
+    local rowFrame = helpers.target()
+    local raid = rowFrame ~= nil
+        and rowFrame.RaidQualityControls ~= nil
+        and rowFrame.RaidQualityControls:IsShown()
+        and not (rowFrame.BaseQualityControls ~= nil and rowFrame.BaseQualityControls:IsShown())
+    local controlsKey = raid and "RaidQualityControls" or "BaseQualityControls"
+    local settingPrefix = raid and "raidGraphics" or "graphics"
+    local settings = (raid and d.raidSettings or d.settings) or {}
+    local function control(key)
+        return function(frame)
+            local group = frame[controlsKey]
+            return group ~= nil and group[key] or nil
+        end
+    end
+
+    builder:pushContext(prefix .. ":quality", d.name or GRAPHICS_LABEL or "")
+    builder:pushContext(prefix .. ":tabs", L["Tabs"])
+    builder:startRow()
+    builder:addItem(
+        ControlId.structural(prefix .. ":tab:base"),
+        rowButtonNode(elementData, helpers, BASE_GRAPHICS_QUALITY, "BaseTab")
+    )
+    builder:addItem(
+        ControlId.structural(prefix .. ":tab:raid"),
+        rowButtonNode(elementData, helpers, SETTINGS_RAID_GRAPHICS_QUALITY, "RaidTab")
+    )
+    builder:endRow()
+    builder:popContext()
+
+    local qualityLabel = raid and SETTINGS_RAID_GRAPHICS_QUALITY or BASE_GRAPHICS_QUALITY
+    if raid then
+        -- The enable checkbox has no setting in the row data: its state
+        -- reads from the real check button.
+        local resolveCheckbox = childResolver(helpers, function(frame)
+            local group = frame[controlsKey]
+            return group ~= nil and group.GraphicsQuality ~= nil and group.GraphicsQuality.Checkbox or nil
+        end)
+        local checkbox = checkboxNode(elementData, helpers, qualityLabel .. ", " .. L["Enabled"], nil, function(frame)
+            return resolveCheckbox()
+        end)
+        tinsert(checkbox.announcements, {
+            text = function()
+                local button = resolveCheckbox()
+                if button == nil or button.GetChecked == nil then
+                    return nil
+                end
+                return button:GetChecked() and L["Checked"] or L["Unchecked"]
+            end,
+            kind = kinds.value,
+            live = "focus",
+        })
+        builder:addItem(ControlId.structural(prefix .. ":raidEnabled"), checkbox)
+    end
+    local qualitySetting = settings[settingPrefix .. "Quality"]
+    if qualitySetting ~= nil then
+        builder:addItem(
+            ControlId.structural(prefix .. ":" .. settingPrefix .. "Quality"),
+            qualitySliderNode(
+                elementData,
+                helpers,
+                qualityLabel,
+                qualitySetting,
+                childResolver(helpers, control("GraphicsQuality"))
+            )
+        )
+    end
+    for _, key in ipairs(QUALITY_CONTROLS) do
+        local setting = settings[settingPrefix .. key]
+        -- A control the game hides (spell density on clients without that
+        -- system) is not offered.
+        local child = rowFrame ~= nil and control(key)(rowFrame) or nil
+        local hidden = child ~= nil and child.IsShown ~= nil and not child:IsShown()
+        if setting ~= nil and not hidden then
+            local label = function()
+                local ok, name = pcall(setting.GetName, setting)
+                return ok and name or key
+            end
+            local id = ControlId.structural(prefix .. ":" .. settingPrefix .. key)
+            if QUALITY_SLIDERS[key] then
+                -- View distance, environment detail, and ground clutter are
+                -- sliders on the same 0 to 9 scale as the quality slider.
+                builder:addItem(
+                    id,
+                    qualitySliderNode(elementData, helpers, label, setting, childResolver(helpers, control(key)))
+                )
+            else
+                local resolve = childResolver(helpers, function(frame)
+                    local dropdownHost = control(key)(frame)
+                    return dropdownHost ~= nil and dropdownHost.Control ~= nil and dropdownHost.Control.Dropdown or nil
+                end)
+                builder:addItem(id, lazyDropdownNode(elementData, helpers, label, setting, resolve))
+            end
+        end
+    end
+    builder:popContext()
+end
+
+-- A checkbox with an explanatory line beside it (speech to text,
+-- arachnophobia mode): the line reads as an extra part of the checkbox.
+local function subtextCheckboxEmitter(builder, elementData, index, helpers)
+    local node = checkboxNode(elementData, helpers, function()
+        return settingName(elementData)
+    end, settingObject(elementData))
+    tinsert(node.announcements, {
+        text = function()
+            local rowFrame = helpers.target()
+            local container = rowFrame ~= nil and rowFrame.SubTextContainer or nil
+            return container ~= nil and textOf(container.SubText) or nil
+        end,
+        live = false,
+    })
+    builder:addItem(helpers.id, node)
+end
+settingEmitters["STTTemplate"] = subtextCheckboxEmitter
+settingEmitters["ArachnophobiaTemplate"] = subtextCheckboxEmitter
+
+-- Remote text-to-speech voice: a dropdown with a sample button beside it.
+settingEmitters["RTTSTemplate"] = function(builder, elementData, index, helpers)
+    local setting = settingObject(elementData)
+    if setting == nil then
+        unimplementedRow(builder, helpers.id, elementData.frameTemplate)
+        return
+    end
+    local d = dataOf(elementData)
+    local label = function()
+        return settingName(elementData)
+    end
+    local ids = beginBar(builder, helpers, label)
+    addBarItem(builder, ids, helpers.id, dropdownNode(elementData, helpers, label, setting, d.options))
+    addBarItem(
+        builder,
+        ids,
+        ControlId.structural("srow:" .. index .. ":button"),
+        rowButtonNode(elementData, helpers, frameChildText(helpers, "Button"), "Button")
+    )
+    endBar(builder, ids)
+end
+
+-- A colour swatch button: Enter clicks the real swatch, which opens the
+-- game's colour picker (its own window). An optional value reads the
+-- current colour.
+local function swatchButtonNode(elementData, helpers, label, resolveSwatch, valueText)
+    local node = rowButtonNode(elementData, helpers, label, resolveSwatch)
+    if valueText ~= nil then
+        tinsert(node.announcements, { text = valueText, kind = kinds.value, live = "focus" })
+    end
+    return node
+end
+
+settingEmitters["SettingsColorSwatchControlTemplate"] = function(builder, elementData, index, helpers)
+    local setting = settingObject(elementData)
+    builder:addItem(
+        helpers.id,
+        swatchButtonNode(elementData, helpers, function()
+            return settingName(elementData)
+        end, function(rowFrame)
+            return rowFrame.ColorSwatch
+        end, setting ~= nil and function()
+            local value = settingValue(setting)
+            return value ~= nil and tostring(value) or nil
+        end or nil)
+    )
+end
+
+settingEmitters["SettingsCheckboxWithColorSwatchControlTemplate"] = function(builder, elementData, index, helpers)
+    local label = function()
+        return settingName(elementData)
+    end
+    local ids = beginBar(builder, helpers, label)
+    addBarItem(builder, ids, helpers.id, checkboxNode(elementData, helpers, label, settingObject(elementData), "Checkbox"))
+    addBarItem(
+        builder,
+        ids,
+        ControlId.structural("srow:" .. index .. ":swatch"),
+        swatchButtonNode(elementData, helpers, L["Color"], function(rowFrame)
+            return rowFrame.ColorSwatch
+        end)
+    )
+    endBar(builder, ids)
+end
+
+-- Item quality colour overrides (Colorblind category): one swatch per
+-- quality, labelled from the game's quality names, clicking the pooled
+-- swatch frame for that quality.
+settingEmitters["ItemQualityColorOverrides"] = function(builder, elementData, index, helpers)
+    local overrides = ItemQualityColorOverrideMixin ~= nil and ItemQualityColorOverrideMixin.OverrideData or {}
+    builder:pushContext("srow:" .. index .. ":qualities", L["Item Quality Colors"])
+    if #overrides == 0 then
+        builder:addItem(helpers.id, nodes.text({ label = L["Item Quality Colors"] }))
+    end
+    for _, data in ipairs(overrides) do
+        local quality = data.qualityBase
+        builder:addItem(
+            ControlId.structural("srow:" .. index .. ":quality:" .. tostring(quality)),
+            swatchButtonNode(
+                elementData,
+                helpers,
+                _G["ITEM_QUALITY" .. tostring(quality) .. "_DESC"] or tostring(quality),
+                function(rowFrame)
+                    local pool = rowFrame.ItemQualities
+                    if pool == nil then
+                        return nil
+                    end
+                    for _, child in ipairs({ pool:GetChildren() }) do
+                        if child.data ~= nil and child.data.qualityBase == quality and child.ColorSwatch ~= nil then
+                            return child.ColorSwatch
+                        end
+                    end
+                    return nil
+                end
+            )
+        )
+    end
+    builder:popContext()
+end
+
+-- Informational rows: a label the Interface category shows when its
+-- add-on is disabled, and the raid frame and nameplate previews (pure
+-- visuals, but a place to land so positions stay honest).
+settingEmitters["SettingsAddOnDisabledLabelTemplate"] = function(builder, elementData, index, helpers)
+    builder:addItem(
+        helpers.id,
+        nodes.text({
+            label = function()
+                return frameChildText(helpers, "Text")() or ADDON_DISABLED or ""
+            end,
+        })
+    )
+end
+settingEmitters["RaidFramePreviewTemplate"] = function(builder, elementData, index, helpers)
+    builder:addItem(helpers.id, nodes.text({ label = L["Raid Frame Preview"] }))
+end
+settingEmitters["NamePlatePreviewTemplate"] = function(builder, elementData, index, helpers)
+    builder:addItem(helpers.id, nodes.text({ label = L["Nameplate Preview"] }))
+end
+settingEmitters["MacMicrophoneAccessWarningTemplate"] = function(builder, elementData, index, helpers)
+    builder:addItem(helpers.id, nodes.text({ label = frameChildText(helpers, "Label") }))
+    builder:addItem(
+        ControlId.structural("srow:" .. index .. ":button"),
+        rowButtonNode(elementData, helpers, frameChildText(helpers, "OpenAccessButton"), "OpenAccessButton")
+    )
 end
 
 -- ---- keybindings (structure per Blizzard_SettingsDefinitions_Frame/Keybindings.lua) ----
@@ -788,13 +1232,18 @@ local function render(builder, screen)
         return
     end
 
-    builder:beginStop("tabs")
-    builder:pushContext("tabs", L["Tabs"])
-    builder:startRow()
-    builder:addItem(ControlId.forObject(frame.GameTab), nodes.proxyButton({ target = frame.GameTab }))
-    builder:addItem(ControlId.forObject(frame.AddOnsTab), nodes.proxyButton({ target = frame.AddOnsTab }))
-    builder:endRow()
-    builder:popContext()
+    -- The panel hides both tabs when no addon has registered a settings
+    -- category (a fresh Forever install), and hidden proxies emit nothing,
+    -- so the row only exists while a tab is showing.
+    if (frame.GameTab ~= nil and frame.GameTab:IsShown()) or (frame.AddOnsTab ~= nil and frame.AddOnsTab:IsShown()) then
+        builder:beginStop("tabs")
+        builder:pushContext("tabs", L["Tabs"])
+        builder:startRow()
+        builder:addItem(ControlId.forObject(frame.GameTab), nodes.proxyButton({ target = frame.GameTab }))
+        builder:addItem(ControlId.forObject(frame.AddOnsTab), nodes.proxyButton({ target = frame.AddOnsTab }))
+        builder:endRow()
+        builder:popContext()
+    end
 
     if frame.SearchBox ~= nil then
         builder:beginStop("search")
@@ -830,6 +1279,23 @@ local function render(builder, screen)
         pcall(function()
             title = list.Header.Title:GetText()
         end)
+        -- A new category is a new list: forget where the settings stop was
+        -- so tabbing back lands at the top, as the game scrolls to the top.
+        -- Row ids are index-based, so without this the old position would
+        -- silently map onto the new category's rows.
+        local categoryKey = title
+        pcall(function()
+            local category = frame:GetCurrentCategory()
+            if category ~= nil then
+                categoryKey = category.GetID ~= nil and category:GetID() or category
+            end
+        end)
+        if screen._settingsCategory ~= categoryKey then
+            if screen._settingsCategory ~= nil then
+                screen.state.stopMemory["settings"] = nil
+            end
+            screen._settingsCategory = categoryKey
+        end
         nodes.scrollBoxList(builder, {
             scrollBox = list.ScrollBox,
             key = "settings",

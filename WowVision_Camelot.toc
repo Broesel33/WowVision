@@ -1,0 +1,14 @@
+## Title: WowVision
+## Version: @project-version@
+## Author: bradjrenshaw
+## Interface: 16001
+## OptionalDeps: Sku, BlindSlash, Questie
+## Notes: Provides accessibility for the visually impaired.
+## SavedVariablesPerCharacter: WowVisionDB
+## SavedVariables: WowVisionDump, WowVisionGlobalDB
+
+libs.xml
+retail/setup.lua
+modules.xml
+retail/modules.xml
+camelot/modules.xml

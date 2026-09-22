@@ -31,6 +31,8 @@ function PetActionBar:renderGraph(builder)
                         end
                     end
                     return label
+                end, function(tooltip)
+                    tooltip:SetPetAction(slot)
                 end)
             )
         end

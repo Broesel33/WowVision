@@ -1,7 +1,6 @@
 local module = WowVision.base:createModule("targeting")
 local L = module.L
 module:setLabel(L["Targeting"])
-local gen = module:hasUI()
 local settings = module:hasSettings()
 
 -- Register event for caching target GUID (avoids UnitGUID call every frame)
@@ -99,6 +98,42 @@ hardTargetChange:addOutput({
     path = "Sound/WowVision/alerts/notification21.mp3",
 })
 
+local hardTargetHealth = module:addAlert({
+    key = "hardTargetHealth",
+    label = L["Health Monitor"],
+})
+
+hardTargetHealth:addOutput({
+    key = "tts",
+    type = "TTS",
+    label = L["TTS Alert"],
+    shouldFire = function(self, message)
+        if message.healthInterval >= 100 or message.healthInterval <= 0 then
+            return false
+        end
+        return true
+    end,
+    buildMessage = function(self, message)
+        return message.healthInterval .. "%"
+    end,
+})
+
+hardTargetHealth:addOutput({
+    key = "voice",
+    type = "Voice",
+    label = L["Voice Alert"],
+    shouldFire = function(self, message)
+        if message.healthInterval >= 100 or message.healthInterval <= 0 then
+            return false
+        end
+        return true
+    end,
+    getPath = function(self, message)
+        return "Path", "numbers/" .. message.healthInterval .. ".mp3"
+    end,
+    enabled = false,
+})
+
 local hardTarget = settings:add({
     type = "Category",
     key = "hardTarget",
@@ -106,6 +141,7 @@ local hardTarget = settings:add({
 })
 
 hardTarget:addRef("targetChange", hardTargetChange.parameters)
+hardTarget:addRef("healthMonitor", hardTargetHealth.parameters)
 
 local softTargets = {}
 
@@ -120,7 +156,7 @@ local function addSoftTarget(info)
     if not enabled then
         error("Could not retrieve enabled parameter on " .. info.key .. " alert.")
     end
-    enabled.events.valueChange:subscribe(nil, function(event, setting, value)
+    enabled.events.valueChange:subscribe(nil, function(event, obj, key, value)
         if value == true then
             SetCVar(info.cvar, 3)
         else
@@ -210,9 +246,9 @@ addSoftTarget({
 })
 
 function module:onEvent(event, a, b)
+    -- Cache hard target GUID on event (avoids UnitGUID call every frame)
     if event == "PLAYER_TARGET_CHANGED" then
-        self.hardTargetChangeEvent = true
-        self.hardTarget = UnitGUID("target")
+        self._cachedTargetGuid = UnitGUID("target")
         return
     end
 
@@ -230,14 +266,37 @@ function module:onEvent(event, a, b)
 end
 
 function module:updateHardTarget()
-    if not self.hardTargetChangeEvent then
-        return nil
+    -- Use cached GUID from PLAYER_TARGET_CHANGED event (avoids API call every frame)
+    local target = self._cachedTargetGuid
+    if target == nil then
+        self.hardTarget = nil
+        return
     end
-    if self.hardTarget then
+    if target ~= self.hardTarget then
+        self.hardTarget = target
         module.tooltips.hardTarget:set(nil, { type = "Unit", unit = "target" })
-        hardTargetChange:fire({ target = self.hardTarget })
+        hardTargetChange:fire({ target = target })
     end
-    self.hardTargetChangeEvent = false
+    local targetHealth = UnitHealth("target")
+    local targetHealthMax = UnitHealthMax("target")
+    -- Retail keeps some units' health secret from addons: no math is
+    -- possible on it, so the health monitor sits out for those targets.
+    if
+        WowVision.isSecret(targetHealth)
+        or WowVision.isSecret(targetHealthMax)
+        or targetHealthMax == nil
+        or targetHealthMax == 0
+    then
+        self.targetHealthInterval = nil
+        return
+    end
+    --Note 100/5 = 20, otherwise the calculation would be math.ceil((targetHealth / targetHealthMax) * 100 / 5)*5 which is a bit pointless
+    --we only want the percent interval for the report, hence the math.ceil
+    local targetHealthInterval = math.ceil((targetHealth / targetHealthMax) * 20) * 5
+    if targetHealthInterval ~= self.targetHealthInterval then
+        hardTargetHealth:fire({ target = target, healthInterval = targetHealthInterval })
+        self.targetHealthInterval = targetHealthInterval
+    end
 end
 
 function module:updateSoftTarget(target, newGuid)

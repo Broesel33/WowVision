@@ -514,6 +514,10 @@ function GraphHost:_tab(screen, key)
     -- No move (a single-stop screen): silent, same as arrows.
 end
 
+-- Home/End: within a tree, the first/last sibling; in a horizontal row (a
+-- bar of action buttons, a row of tabs), the row's first/last cell -- the
+-- bar is the list the player is in, not the column of bars beneath it;
+-- otherwise the top/bottom of the column.
 function GraphHost:_jumpEdge(screen, first)
     local kg = screen.keyGraph
     local node = kg:currentNode()
@@ -523,6 +527,8 @@ function GraphHost:_jumpEdge(screen, first)
     local move
     if graph.KeyGraph.inTree(node) then
         move = kg:moveToSiblingEdge(first)
+    elseif node.transitions.left ~= nil or node.transitions.right ~= nil then
+        move = kg:moveToEdge(first and "left" or "right")
     else
         move = kg:moveToEdge(first and "up" or "down")
     end

@@ -2,7 +2,7 @@
 ## Version: @project-version@
 ## Author: bradjrenshaw
 ## Interface: 50503, 50504
-## OptionalDeps: Sku, BlindSlash
+## OptionalDeps: Sku, BlindSlash, Questie
 ## Notes: Provides accessibility for the visually impaired.
 ## SavedVariablesPerCharacter: WowVisionDB
 ## SavedVariables: WowVisionDump, WowVisionGlobalDB

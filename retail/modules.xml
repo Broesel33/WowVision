@@ -2,6 +2,6 @@
 ..\FrameXML\UI.xsd">
 
   <Script file="speech.lua" />
-  <Include file="targeting/modules.xml" />
+  <Include file="containers/modules.xml" />
 
 </Ui>

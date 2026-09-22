@@ -260,7 +260,9 @@ end
 
 function Module:_addEvent(event)
     if event.type == "event" then
-        self.eventsFrame:RegisterEvent(event.event)
+        -- Tolerant: a module may list events a client lacks (the quest
+        -- line events on older clients); it simply never hears them.
+        pcall(self.eventsFrame.RegisterEvent, self.eventsFrame, event.event)
     elseif event.type == "unit" then
         self.eventsFrame:RegisterUnitEvent(event.event, unpack(event.args))
     end

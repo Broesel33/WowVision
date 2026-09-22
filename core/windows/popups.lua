@@ -54,21 +54,58 @@ local function getPopupButtons(frame)
     return buttons
 end
 
+-- Retail's dialog template enables keyboard input on the dialog and on its
+-- full-screen cover (shown for dialogs like the unapplied-settings
+-- prompt). A keyboard-enabled frame swallows every key it does not
+-- handle, so Tab and the arrows never reached our bindings. Release it:
+-- Escape still reaches the dialog through UIParent's escape cascade, and
+-- Enter goes through the focused node (the text node clicks the first
+-- button when the dialog asks for that).
+local function releaseKeyboard(frame)
+    if frame ~= nil and frame.IsKeyboardEnabled ~= nil and frame:IsKeyboardEnabled() then
+        frame:EnableKeyboard(false)
+    end
+end
+
+local function firstShownButton(frame)
+    for _, button in ipairs(getPopupButtons(frame)) do
+        if button:IsShown() then
+            return button
+        end
+    end
+    return nil
+end
+
 local function renderDialog(builder, frame, index)
     local contextKey = "popup:" .. tostring(frame.which or index)
     builder:pushContext(contextKey, L["Popup"])
+    releaseKeyboard(frame)
+    releaseKeyboard(frame.CoverFrame)
+    releaseKeyboard(frame.Cover)
 
     local text = getPopupText(frame)
     if text ~= nil and text:IsShown() then
         builder:beginStop()
-        builder:addItem(
-            ControlId.structural(contextKey .. ":text"),
-            nodes.text({
-                label = function()
-                    return text:GetText()
-                end,
-            })
-        )
+        local vtable = nodes.text({
+            label = function()
+                return text:GetText()
+            end,
+        })
+        local info = StaticPopupDialogs ~= nil and frame.which ~= nil and StaticPopupDialogs[frame.which] or nil
+        if info ~= nil and info.enterClicksFirstButton and firstShownButton(frame) ~= nil then
+            vtable.controlType = graph.controlTypes.button
+            vtable.bindings = {
+                {
+                    binding = "leftClick",
+                    type = "Click",
+                    emulatedKey = "LeftButton",
+                    target = function()
+                        return firstShownButton(frame)
+                    end,
+                },
+            }
+        end
+        builder:addItem(ControlId.structural(contextKey .. ":text"), vtable)
     end
 
     local editBox = getPopupEditBox(frame)
