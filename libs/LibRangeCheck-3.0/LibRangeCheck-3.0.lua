@@ -4632,7 +4632,7 @@ function lib:activate()
     self.frame = frame
 
     if not (isMidnight or isTBC) then
-      frame:RegisterEvent("LEARNED_SPELL_IN_TAB")
+      pcall(frame.RegisterEvent, frame, "LEARNED_SPELL_IN_TAB")
     end
     frame:RegisterEvent("CHARACTER_POINTS_CHANGED")
     frame:RegisterEvent("SPELLS_CHANGED")
