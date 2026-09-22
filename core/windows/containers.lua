@@ -36,8 +36,9 @@ end
 
 -- An item slot node: live label (bag contents change constantly under
 -- focus), real clicks for pickup, use, and split, and drag support.
-function module.itemSlotNode(itemButton, label)
-    local vtable = nodes.proxyButton({ target = itemButton, label = label })
+-- clickLabels (optional) name what the clicks do, for the context menu.
+function module.itemSlotNode(itemButton, label, clickLabels)
+    local vtable = nodes.proxyButton({ target = itemButton, label = label, clickLabels = clickLabels })
     if vtable == nil then
         return nil
     end
@@ -53,6 +54,77 @@ function module.itemSlotNode(itemButton, label)
         end,
     })
     return vtable
+end
+
+local function shown(frame)
+    return frame ~= nil and frame:IsShown()
+end
+
+-- What clicking an item slot does right now. The game decides a right click
+-- by which window is open (the same order its own click handler and
+-- UseContainerItem follow), so the label does too. nil means "nothing worth
+-- naming" and leaves the bare click name.
+function module.itemClickLabels(itemButton)
+    local function slotInfo()
+        local bagID = itemButton.GetBagID ~= nil and itemButton:GetBagID() or itemButton:GetParent():GetID()
+        local slotID = itemButton:GetID()
+        return bagID, slotID, C_Container.GetContainerItemInfo(bagID, slotID)
+    end
+    return {
+        left = function()
+            local _, _, info = slotInfo()
+            if CursorHasItem() then
+                return L["Place Item"]
+            end
+            if info == nil then
+                return nil
+            end
+            return L["Pick Up"]
+        end,
+        right = function()
+            local bagID, _, info = slotInfo()
+            if info == nil then
+                return nil
+            end
+            if shown(MerchantFrame) then
+                if info.hasNoValue then
+                    return nil
+                end
+                return L["Sell"]
+            end
+            if bagID == BANK_CONTAINER or bagID > NUM_BAG_SLOTS then
+                return L["Move to Bags"]
+            end
+            if shown(BankFrame) then
+                return L["Move to Bank"]
+            end
+            if shown(SendMailFrame) then
+                return L["Attach to Mail"]
+            end
+            if shown(TradeFrame) then
+                return L["Add to Trade"]
+            end
+            if shown(AuctionHouseFrame) then
+                return L["Put up for Auction"]
+            end
+            if info.hasLoot then
+                return L["Open"]
+            end
+            local link = info.hyperlink
+            local isEquippable = C_Item ~= nil and C_Item.IsEquippableItem or IsEquippableItem
+            if link ~= nil and isEquippable ~= nil and isEquippable(link) then
+                return L["Equip"]
+            end
+            if info.isReadable then
+                return L["Read"]
+            end
+            local getItemSpell = C_Item ~= nil and C_Item.GetItemSpell or GetItemSpell
+            if link ~= nil and getItemSpell ~= nil and getItemSpell(link) ~= nil then
+                return L["Use"]
+            end
+            return nil
+        end,
+    }
 end
 
 -- Bag shape: item slots read as the grid the frame draws (rows, with
@@ -125,7 +197,7 @@ function module.renderSlots(builder, buttons)
                 ControlId.forObject(itemButton),
                 module.itemSlotNode(itemButton, function()
                     return module.getBagItemLabel(itemButton)
-                end)
+                end, module.itemClickLabels(itemButton))
             )
         end
         if grid then
