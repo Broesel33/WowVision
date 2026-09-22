@@ -63,7 +63,13 @@ module:hasUpdate(function(self)
     if translating and wasTranslating and px ~= nil and lastX ~= nil then
         local dx, dy = px - lastX, py - lastY
         local actual = math.sqrt(dx * dx + dy * dy)
-        local severity = stuckMath.severity(actual, GetUnitSpeed("player"), dt)
+        -- Speed is a secret value in combat on the modern engine, and the
+        -- grading compares it; no reading until it is plain again.
+        local speed = GetUnitSpeed("player")
+        if WowVision.isSecret(speed) then
+            speed = nil
+        end
+        local severity = stuckMath.severity(actual, speed, dt)
         local sound = cadence:sample(severity)
         if sound ~= nil then
             self:fireAlert("stuck", { action = "stuck" .. sound })

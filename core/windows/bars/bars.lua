@@ -119,11 +119,26 @@ local bars = module:createComponentRegistry({
 -- An action button node: live label (drag, page flips, and cooldown-driven
 -- changes rewrite slots), real clicks, drag support. allowHidden: action
 -- buttons stay clickable while their bar frame is hidden (the old
--- ignoreRequiresFrameShown).
-function module.actionButtonNode(button, label)
+-- ignoreRequiresFrameShown). No hover scripts: an action button's OnEnter
+-- writes the tooltip owner onto the shared action bar event frames, and
+-- run as the addon that taints the bars' own cooldown updates (secret
+-- cooldown values then fail in combat). The tooltip is filled directly
+-- from the action instead; bars whose buttons hold no action slot (stance,
+-- pet) pass their own populate(tooltip, button).
+function module.actionButtonNode(button, label, populate)
     local vtable = nodes.proxyButton({
         target = button,
         allowHidden = true,
+        hover = false,
+        tooltip = {
+            type = "Game",
+            mode = "immediate",
+            populate = populate or function(tooltip)
+                if button.action ~= nil then
+                    tooltip:SetAction(button.action)
+                end
+            end,
+        },
         label = label or function()
             return module.getActionButtonLabel(button)
         end,

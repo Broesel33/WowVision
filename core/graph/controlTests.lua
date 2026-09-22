@@ -247,6 +247,22 @@ testRunner:addSuite("GraphNodes", {
         t:assertEqual(frame._scripts[2], "OnLeave")
     end,
 
+    ["proxyButton hover=false runs no frame scripts and keeps its tooltip"] = function(t)
+        local frame = {
+            _scripts = {},
+            HasScript = function(self, script)
+                return true
+            end,
+        }
+        local tooltip = { type = "Game", mode = "immediate" }
+        local vtable = graph.nodes.proxyButton({ target = frame, label = "OK", hover = false, tooltip = tooltip })
+        t:assertNil(vtable.onFocus)
+        t:assertNil(vtable.onUnfocus)
+        t:assertEqual(vtable.tooltipFrame, frame)
+        t:assertEqual(vtable.tooltip, tooltip)
+        t:assertEqual(#frame._scripts, 0)
+    end,
+
     ["proxyButton hovers its target on focus"] = function(t)
         if CreateFrame ~= nil then
             return -- headless-only: fake frames cannot pass the real ExecuteFrameScript

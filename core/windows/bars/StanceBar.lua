@@ -22,6 +22,8 @@ function StanceBar:renderGraph(builder)
                 module.actionButtonNode(button, function()
                     local _, _, _, spellID = GetShapeshiftFormInfo(formIndex)
                     return module.GetSpellInfo(spellID)
+                end, function(tooltip)
+                    tooltip:SetShapeshift(formIndex)
                 end)
             )
         end
