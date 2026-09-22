@@ -102,8 +102,9 @@ function nodes.scrollBoxList(builder, config)
         -- nodes there, while the raw provider asserts without that flag.
         local data
         if isTree then
-            local node = provider:Find(index, true)
-            data = node ~= nil and node.GetData ~= nil and node:GetData() or node
+            -- The tree NODE, not its payload: row frames carry the node as
+            -- their element data, and emitters read collapse state from it.
+            data = provider:Find(index, true)
         elseif scrollBox.FindElementData ~= nil then
             data = scrollBox:FindElementData(index)
         else
