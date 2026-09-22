@@ -7,40 +7,59 @@ local nodes = graph.nodes
 local ControlId = graph.ControlId
 local kinds = graph.kinds
 
--- The class trainer: the service list (a Faux-style static button pool over
--- GetTrainerServiceInfo), the selected service's details, and the train
--- button. Details are live: selecting a service rewrites them in place.
-
-local function trainerButtons()
-    local buttons = {}
-    for i = 1, CLASS_TRAINER_SKILLS_DISPLAYED do
-        local button = _G["ClassTrainerSkill" .. i]
-        if button ~= nil then
-            tinsert(buttons, button)
-        end
+-- The class trainer: the service list, the selected service's details, and
+-- the train button. Details are live: selecting a service rewrites them in
+-- place.
+--
+-- The service list frame changed from a Faux-style static button pool
+-- (ClassTrainerListScrollFrame) to a ScrollBox (ClassTrainerFrame.ScrollBox)
+-- at some point after the original migration -- each row's element data is
+-- just { skillIndex, playerMoney, trainerType }, a thin pointer back into
+-- the same GetTrainerServiceInfo(skillIndex) API the old code used, so the
+-- announcement logic below is unchanged; only the scroll adapter is new.
+--
+-- GetTrainerServiceInfo's own return order also differs by client: Classic/
+-- TBC/Mists return (name, rank, category, isExpanded); WoW: Forever (since
+-- patch 1.60.1) returns (name, category, spellID, levelReq, rank) instead.
+-- The two are told apart by the 3rd value's type -- a category string on the
+-- old signature, a numeric spellID on the new one.
+local function getServiceInfo(index)
+    local a, b, c, d, e = GetTrainerServiceInfo(index)
+    if type(c) == "number" then
+        return { name = a, category = b, spellID = c, levelReq = d, rank = e }
     end
-    return buttons
+    return { name = a, rank = b, category = c, isExpanded = d }
 end
 
 local function serviceLabel(index)
-    local serviceName, serviceSubText, serviceType = GetTrainerServiceInfo(index)
-    if serviceName == nil then
+    local info = getServiceInfo(index)
+    if info.name == nil then
         return nil
     end
-    local label = serviceName
-    if serviceSubText ~= nil and serviceSubText ~= "" then
-        label = label .. " " .. serviceSubText
+    local label = info.name
+    if info.rank ~= nil and info.rank ~= "" then
+        label = label .. " " .. info.rank
     end
-    if serviceType == "used" then
-        label = label .. " " .. L["Known"]
-    elseif serviceType == "unavailable" then
-        label = label .. " " .. L["Unavailable"]
+    if info.category == "used" then
+        label = label .. ", " .. L["Known"]
+    elseif info.category == "unavailable" then
+        label = label .. ", " .. L["Unavailable"]
+    end
+    if info.category ~= "header" then
+        local cost = GetTrainerServiceCost ~= nil and GetTrainerServiceCost(index) or nil
+        if cost ~= nil and cost > 0 then
+            label = label .. ", " .. C_CurrencyInfo.GetCoinText(cost)
+        end
+        if info.category == "unavailable" and info.levelReq ~= nil and info.levelReq > 0 then
+            label = label .. ", " .. L["Level"] .. " " .. tostring(info.levelReq)
+        end
     end
     return label
 end
 
-local function emitService(builder, index, helpers)
-    local _, _, serviceType = GetTrainerServiceInfo(index)
+local function emitService(builder, data, position, helpers)
+    local index = data.skillIndex
+    local category = getServiceInfo(index).category
 
     local announcements = {
         {
@@ -51,11 +70,10 @@ local function emitService(builder, index, helpers)
             live = "focus",
         },
     }
-    if serviceType == "header" then
+    if category == "header" then
         tinsert(announcements, {
             text = function()
-                local _, _, _, isExpanded = GetTrainerServiceInfo(index)
-                return isExpanded and L["Expanded"] or L["Collapsed"]
+                return getServiceInfo(index).isExpanded and L["Expanded"] or L["Collapsed"]
             end,
             kind = kinds.value,
             live = "focus",
@@ -157,26 +175,52 @@ local function render(builder, screen)
     builder:pushContext("trainer", ClassTrainerNameText ~= nil and ClassTrainerNameText:GetText() or L["Training"])
 
     builder:beginStop("services")
-    nodes.hybridScrollList(builder, {
-        scrollFrame = ClassTrainerListScrollFrame,
-        key = "services",
-        label = L["Training"],
-        count = function()
-            return GetNumTrainerServices()
-        end,
-        rowHeight = CLASS_TRAINER_SKILL_HEIGHT,
-        buttons = trainerButtons,
-        emit = emitService,
-    })
+    if ClassTrainerFrame.ScrollBox ~= nil then
+        nodes.scrollBoxList(builder, {
+            scrollBox = ClassTrainerFrame.ScrollBox,
+            key = "services",
+            label = L["Training"],
+            id = function(data)
+                return ControlId.structural("services:" .. tostring(data.skillIndex))
+            end,
+            emit = emitService,
+        })
+    elseif ClassTrainerListScrollFrame ~= nil then
+        -- Older clients still on the Faux-style static button pool.
+        nodes.hybridScrollList(builder, {
+            scrollFrame = ClassTrainerListScrollFrame,
+            key = "services",
+            label = L["Training"],
+            count = function()
+                return GetNumTrainerServices()
+            end,
+            rowHeight = CLASS_TRAINER_SKILL_HEIGHT,
+            buttons = function()
+                local buttons = {}
+                for i = 1, CLASS_TRAINER_SKILLS_DISPLAYED do
+                    local button = _G["ClassTrainerSkill" .. i]
+                    if button ~= nil then
+                        tinsert(buttons, button)
+                    end
+                end
+                return buttons
+            end,
+            emit = function(emitBuilder, index, helpers)
+                emitService(emitBuilder, { skillIndex = index }, index, helpers)
+            end,
+        })
+    else
+        builder:pushContext("services", L["Training"])
+        builder:addItem(ControlId.structural("services:unsupported"), nodes.text({ label = L["Unavailable"] }))
+        builder:popContext()
+    end
 
     renderDetails(builder)
 
-    if ClassTrainerTrainButton ~= nil and ClassTrainerTrainButton:IsShown() then
+    local trainButton = ClassTrainerFrame.TrainButton or ClassTrainerTrainButton
+    if trainButton ~= nil and trainButton:IsShown() then
         builder:beginStop("train")
-        builder:addItem(
-            ControlId.forObject(ClassTrainerTrainButton),
-            nodes.proxyButton({ target = ClassTrainerTrainButton })
-        )
+        builder:addItem(ControlId.forObject(trainButton), nodes.proxyButton({ target = trainButton }))
     end
 
     builder:popContext()

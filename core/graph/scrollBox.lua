@@ -73,8 +73,12 @@ function nodes.scrollBoxList(builder, config)
         error("scrollBoxList requires rowLabel, row, emit, or templates")
     end
 
-    local size = scrollBox:GetDataProviderSize()
     local provider = scrollBox.GetDataProvider ~= nil and scrollBox:GetDataProvider() or nil
+    -- Tree-backed providers (TreeDataProviderMixin) require an explicit
+    -- excludeCollapsed argument on GetSize/Find -- GetDataProviderSize just
+    -- relays whatever it's given, so a flat call errors on these.
+    local isTree = provider ~= nil and provider.GetRootNode ~= nil
+    local size = isTree and scrollBox:GetDataProviderSize(true) or scrollBox:GetDataProviderSize()
     local keyPrefix = tostring(config.key or config.label or "list")
 
     -- An empty list is still a place to land.
@@ -97,7 +101,10 @@ function nodes.scrollBoxList(builder, config)
         -- Through the widget when it can: tree views exclude collapsed
         -- nodes there, while the raw provider asserts without that flag.
         local data
-        if scrollBox.FindElementData ~= nil then
+        if isTree then
+            local node = provider:Find(index, true)
+            data = node ~= nil and node.GetData ~= nil and node:GetData() or node
+        elseif scrollBox.FindElementData ~= nil then
             data = scrollBox:FindElementData(index)
         else
             data = provider:Find(index)
