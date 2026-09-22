@@ -2,6 +2,9 @@ local module = WowVision.base.ui:createModule("cursor")
 local L = module.L
 module:setLabel(L["Cursor"])
 
+local ITEM_QUALITY_RARE = LE_ITEM_QUALITY_RARE or (Enum.ItemQuality and Enum.ItemQuality.Rare) or 3
+local ITEM_QUALITY_HEIRLOOM = LE_ITEM_QUALITY_HEIRLOOM or (Enum.ItemQuality and Enum.ItemQuality.Heirloom) or 7
+
 module:registerBinding({
     type = "Function",
     key = "destroyCursorItem",
@@ -17,7 +20,7 @@ module:registerBinding({
         if not itemName then
             return
         end
-        if itemQuality >= LE_ITEM_QUALITY_RARE and itemQuality ~= LE_ITEM_QUALITY_HEIRLOOM then
+        if itemQuality and itemQuality >= ITEM_QUALITY_RARE and itemQuality ~= ITEM_QUALITY_HEIRLOOM then
             StaticPopup_Show("DELETE_GOOD_ITEM", itemName)
         else
             StaticPopup_Show("DELETE_ITEM", itemName)
