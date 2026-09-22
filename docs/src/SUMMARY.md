@@ -22,3 +22,4 @@
 - [Monitors](./developer/monitors.md)
 - [Alerts & Outputs](./developer/alerts.md)
 - [Graph UI Framework](./developer/graph-ui.md)
+- [Chat Links Under Lockdown](./developer/chat-links-lockdown.md)

@@ -5,6 +5,7 @@ local graph = WowVision.graph
 local nodes = graph.nodes
 local ControlId = graph.ControlId
 local kinds = graph.kinds
+local chatLinks = WowVision.chatLinks
 
 -- The chat reader (Shift-F3): the message log is ONE node holding a cursor
 -- over the message buffer (up to 5000 entries), not a node per message --
@@ -12,6 +13,35 @@ local kinds = graph.kinds
 -- and speak messages directly, so the per-tick rebuild cost is constant.
 -- The label is not live: movement speech is manual, and buffer eviction
 -- shifting indices under the cursor must not re-announce.
+--
+-- Within a message a second cursor walks its clickable PARTS -- channel,
+-- sender, links, in line order (chatLinks.parse). Enter, Backspace, and the
+-- shift click act on the selected part exactly as a mouse click on that
+-- piece of the line would; the tooltip keys read a selected link.
+
+-- Keymaps for the part cursor; engaged per node, so they only hold their
+-- keys while the message log is focused.
+module:registerBinding({
+    type = "Flexible",
+    key = "chat/previousPart",
+    dorment = true,
+    label = L["Previous Link in Message"],
+    inputs = { "CTRL-LEFT" },
+})
+module:registerBinding({
+    type = "Flexible",
+    key = "chat/nextPart",
+    dorment = true,
+    label = L["Next Link in Message"],
+    inputs = { "CTRL-RIGHT" },
+})
+module:registerBinding({
+    type = "Flexible",
+    key = "chat/shiftClick",
+    dorment = true,
+    label = L["Shift Click"],
+    inputs = { "SHIFT-ENTER" },
+})
 
 local function currentBuffer()
     local frame = SELECTED_CHAT_FRAME
@@ -43,6 +73,106 @@ local function messagesNode(screen)
         end
     end
 
+    -- Parts of the message under the cursor, parsed once per message. nil
+    -- parts mean the text is secret (chat messaging lockdown).
+    local function currentParts()
+        local buffer, index = clampedIndex()
+        local item = buffer ~= nil and buffer.items[index] or nil
+        local data = item ~= nil and item:getData() or nil
+        if type(data) ~= "table" then
+            return {}, 0
+        end
+        if screen._chatPartsData ~= data then
+            screen._chatPartsData = data
+            screen._chatParts = chatLinks.parse(data.message)
+            screen._chatPart = chatLinks.defaultIndex(screen._chatParts)
+        end
+        return screen._chatParts, screen._chatPart, data
+    end
+
+    local function currentPart()
+        local parts, index = currentParts()
+        if parts == nil then
+            return nil, true
+        end
+        return parts[index], false
+    end
+
+    -- Re-point the tooltip reader at the newly selected part.
+    local function refreshTooltip()
+        local node = screen.keyGraph ~= nil and screen.keyGraph:currentNode() or nil
+        if node ~= nil then
+            WowVision.graphHost:_setTooltipFor(node)
+        end
+    end
+
+    local function movePart(step)
+        local parts, index = currentParts()
+        if parts == nil then
+            WowVision:speak(L["Links unavailable here"])
+            return
+        end
+        local target = index + step
+        if target < 1 or target > #parts then
+            return -- boundary bump (or no parts at all): silent
+        end
+        screen._chatPart = target
+        refreshTooltip()
+        WowVision:speak(chatLinks.partLabel(parts[target]))
+    end
+
+    local function withPart(func)
+        local part, secret = currentPart()
+        if secret then
+            WowVision:speak(L["Links unavailable here"])
+        elseif part ~= nil then
+            func(part)
+        end
+    end
+
+    -- A left click on a link shows its tooltip; here that is reading it. A
+    -- link with no tooltip form (a Retail talent build, a calendar event)
+    -- falls through to the game's own click handling.
+    local function leftClick(part)
+        if part.kind == "link" then
+            local text = WowVision.UIHost.tooltip:getText()
+            if text ~= nil and text ~= "" then
+                WowVision:speak(text)
+                return
+            end
+        end
+        chatLinks.click(part, "LeftButton")
+    end
+
+    -- The game's own menu for the part. A player menu opened from here is
+    -- tainted, which blocks its "Copy Character Name" row; hand the dropdown
+    -- reader the name so that row can copy through an edit box instead.
+    local function rightClick(part)
+        if part.kind == "player" then
+            graph.dropdown.copyName = chatLinks.playerName(part)
+        end
+        chatLinks.click(part, "RightButton")
+    end
+
+    local function copyLine()
+        local _, _, data = currentParts()
+        if data == nil then
+            return
+        end
+        local text = chatLinks.plainText(data.message)
+        if text == nil then
+            WowVision:speak(L["Links unavailable here"])
+            return
+        end
+        -- Shortly after: the context menu pops its screens once this
+        -- returns and the message node re-announces on refocus; the entry
+        -- box and its cue must come after that settles. The line itself is
+        -- not re-read -- the user just heard it.
+        C_Timer.After(0.2, function()
+            WowVision.graphHost:openCopyBox(text)
+        end)
+    end
+
     local function moveTo(target)
         local buffer, index, count = clampedIndex()
         if count == 0 then
@@ -58,11 +188,72 @@ local function messagesNode(screen)
             return -- boundary bump: silent, like the graph's own moves
         end
         screen._chatIndex = target
+        currentParts()
+        refreshTooltip()
         speak()
     end
 
     return {
         controlType = graph.controlTypes.text,
+        tooltip = {
+            type = "Hyperlink",
+            link = function()
+                local part = currentPart()
+                if part ~= nil and part.kind == "link" then
+                    return part.link
+                end
+                return nil
+            end,
+        },
+        onActivate = function()
+            withPart(leftClick)
+        end,
+        onSecondary = function()
+            withPart(rightClick)
+        end,
+        contextActions = function(add)
+            -- The game never labels what clicking a chat link does -- sighted
+            -- players know it by convention -- so the entries say it, with
+            -- the click that does the same from the line as a reminder.
+            local part = currentPart()
+            if part ~= nil then
+                local left, right, shift
+                if part.kind == "player" then
+                    left = L["Whisper %s"]
+                    right = L["Player Menu for %s"]
+                    shift = L["Who %s"]
+                elseif part.kind == "channel" then
+                    left = L["Write to %s"]
+                    right = L["Channel Menu for %s"]
+                else
+                    left = L["Read Tooltip of %s"]
+                    shift = L["Link %s in Chat"]
+                end
+                add({
+                    label = left:format(part.display) .. ", " .. L["Left Click"],
+                    onActivate = function()
+                        leftClick(part)
+                    end,
+                })
+                if right ~= nil then
+                    add({
+                        label = right:format(part.display) .. ", " .. L["Right Click"],
+                        onActivate = function()
+                            rightClick(part)
+                        end,
+                    })
+                end
+                if shift ~= nil and part.linkType ~= "BNplayer" and part.linkType ~= "BNplayerCommunity" then
+                    add({
+                        label = shift:format(part.display) .. ", " .. L["Shift Click"],
+                        onActivate = function()
+                            chatLinks.shiftClick(part)
+                        end,
+                    })
+                end
+            end
+            add({ label = L["Copy Line"], onActivate = copyLine })
+        end,
         announcements = {
             {
                 text = function()
@@ -86,9 +277,14 @@ local function messagesNode(screen)
             },
         },
         onFocus = function()
-            -- Land on the latest message.
+            -- Land on the latest message when the window opens or the chat
+            -- tab changed. Focus RETURNING (a context menu or dropdown
+            -- closing over it) keeps the place.
             local buffer = currentBuffer()
-            screen._chatIndex = buffer ~= nil and #buffer.items or 0
+            if screen._chatBuffer ~= buffer or screen._chatIndex == nil then
+                screen._chatBuffer = buffer
+                screen._chatIndex = buffer ~= nil and #buffer.items or 0
+            end
         end,
         bindings = {
             {
@@ -122,6 +318,30 @@ local function messagesNode(screen)
                 func = function()
                     local buffer = currentBuffer()
                     moveTo(buffer ~= nil and #buffer.items or 0)
+                end,
+            },
+            {
+                binding = "chat/previousPart",
+                type = "Function",
+                interruptSpeech = true,
+                func = function()
+                    movePart(-1)
+                end,
+            },
+            {
+                binding = "chat/nextPart",
+                type = "Function",
+                interruptSpeech = true,
+                func = function()
+                    movePart(1)
+                end,
+            },
+            {
+                binding = "chat/shiftClick",
+                type = "Function",
+                interruptSpeech = true,
+                func = function()
+                    withPart(chatLinks.shiftClick)
                 end,
             },
         },

@@ -63,6 +63,8 @@ loadAddonFile("core/db.lua")
 loadAddonFile("core/dbTests.lua")
 loadAddonFile("core/ttsCacheBust.lua")
 loadAddonFile("core/ttsCacheBustTests.lua")
+loadAddonFile("core/chat/links.lua")
+loadAddonFile("core/chat/linkTests.lua")
 loadAddonFile("core/ClassTests.lua")
 loadAddonFile("core/errors/utils.lua")
 loadAddonFile("core/errors/tests.lua")
@@ -280,6 +282,7 @@ local parseOnly = {
     "mists/collections/module.lua",
     "mists/collections/MountJournal.lua",
     "core/chat/ui.lua",
+    "core/ui/tooltip/types/HyperlinkTooltip.lua",
     "mists/auction.lua",
     "tbc/QuestLog.lua",
     "tbc/socketing.lua",
