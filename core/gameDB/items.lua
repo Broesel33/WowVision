@@ -42,6 +42,17 @@ db:register("Merchant", {
         local numInStock = -1
         if props.buyback then
             label, _, price, count = GetBuybackItemInfo(id)
+        elseif C_MerchantFrame ~= nil and C_MerchantFrame.GetItemInfo ~= nil then
+            -- GetMerchantItemInfo was deprecated in 11.0.5 and removed in
+            -- 12.0.0 (Retail and WoW: Forever); Classic/TBC/Mists still
+            -- have it.
+            local info = C_MerchantFrame.GetItemInfo(id)
+            if info ~= nil then
+                label = info.name
+                price = info.price
+                count = info.stackCount
+                numInStock = info.numAvailable or -1
+            end
         else
             label, _, price, count, numInStock = GetMerchantItemInfo(id)
         end
@@ -51,15 +62,15 @@ db:register("Merchant", {
             label = ""
         end
 
-        if count > 1 then
+        if count ~= nil and count > 1 then
             label = label .. " x " .. count
         end
 
-        if price > 0 then
+        if price ~= nil and price > 0 then
             label = label .. ", " .. C_CurrencyInfo.GetCoinText(price)
         end
 
-        if numInStock >= 0 then
+        if numInStock ~= nil and numInStock >= 0 then
             label = label .. ", " .. numInStock .. " " .. L["in stock"]
         end
 
