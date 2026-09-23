@@ -12,8 +12,8 @@ end
 
 db:register("TradePlayer", {
     getLabel = function(button, props)
-        local name, _, count, _, _, _ = GetTradePlayerItemInfo(props.id)
-        local label = name or L["Empty"]
+        local name, _, count, quality = GetTradePlayerItemInfo(props.id)
+        local label = WowVision.items.formatName(name, quality) or L["Empty"]
         if label and count and count > 0 then
             label = label .. " x" .. count
         end
@@ -23,8 +23,8 @@ db:register("TradePlayer", {
 
 db:register("TradeTarget", {
     getLabel = function(button, props)
-        local name, _, count, _, _, _ = GetTradeTargetItemInfo(props.id)
-        local label = name or L["Empty"]
+        local name, _, count, quality = GetTradeTargetItemInfo(props.id)
+        local label = WowVision.items.formatName(name, quality) or L["Empty"]
         if label and count and count > 0 then
             label = label .. " x" .. count
         end
@@ -60,6 +60,10 @@ db:register("Merchant", {
         --Account for single frames where data isn't yet populated for label text
         if label == nil or label == "" then
             label = ""
+        else
+            local getLink = props.buyback and GetBuybackItemLink or GetMerchantItemLink
+            local link = getLink ~= nil and getLink(id) or nil
+            label = WowVision.items.formatName(label, WowVision.items.getQuality(link))
         end
 
         if count ~= nil and count > 1 then

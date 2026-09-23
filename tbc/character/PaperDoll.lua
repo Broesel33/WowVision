@@ -69,15 +69,14 @@ local function getEquipmentLabel(frame)
     local slotId = frame:GetID()
     local itemLink = GetInventoryItemLink("player", slotId)
     if itemLink then
-        local itemName = GetItemInfo(itemLink)
-        return itemName or itemLink
+        return WowVision.items.getLinkLabel(itemLink) or itemLink
     end
     -- Fallback for slots where GetInventoryItemLink returns nil (e.g. ammo slot)
     local itemId = GetInventoryItemID("player", slotId)
     if itemId then
-        local itemName = GetItemInfo(itemId)
-        if itemName then
-            return itemName
+        local label = WowVision.items.getLinkLabel(itemId)
+        if label then
+            return label
         end
     end
     return SLOT_NAMES[slotId] or L["Empty"]

@@ -14,8 +14,8 @@ local ControlId = graph.ControlId
 
 local function slotLabel(getInfo, id)
     return function()
-        local name, _, count = getInfo(id)
-        local label = name or L["Empty"]
+        local name, _, count, quality = getInfo(id)
+        local label = WowVision.items.formatName(name, quality) or L["Empty"]
         if name ~= nil and count ~= nil and count > 0 then
             label = label .. " x" .. count
         end
