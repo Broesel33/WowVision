@@ -2,6 +2,7 @@
 ..\FrameXML\UI.xsd">
 
   <Script file="speech.lua" />
+  <Script file="QuestLog.lua" />
   <Include file="containers/modules.xml" />
 
 </Ui>
