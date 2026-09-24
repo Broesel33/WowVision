@@ -9,7 +9,7 @@ function module.getBagItemLabel(frame)
     if not info then
         return L["Empty"]
     end
-    local label = info.itemName
+    local label = WowVision.items.formatName(info.itemName, info.quality)
     if frame.Count:IsShown() then
         label = label .. " " .. frame.Count:GetText()
     end

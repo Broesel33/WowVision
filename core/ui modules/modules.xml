@@ -6,5 +6,6 @@
   <Script file="cursor.lua" />
   <Script file="combat.lua" />
   <Script file="tooltip.lua" />
+  <Script file="tooltipQuality.lua" />
 
 </Ui>

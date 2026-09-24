@@ -4,8 +4,8 @@ local L = module.L
 -- Retail item slot labels. Item buttons are pooled and carry their own bag
 -- id (the combined frame mixes bags), so the bag comes from the button,
 -- not its parent. Markers the game draws on the slot read as words: stack
--- count, quest item, new, junk, and whether the slot fails the current
--- bag search.
+-- count, quest item, new, and whether the slot fails the current bag
+-- search. The quality colour follows the name.
 function module.getBagItemLabel(itemButton)
     local bagID = itemButton.GetBagID ~= nil and itemButton:GetBagID() or itemButton:GetParent():GetID()
     local slotID = itemButton:GetID()
@@ -13,7 +13,7 @@ function module.getBagItemLabel(itemButton)
     if info == nil then
         return L["Empty"]
     end
-    local parts = { info.itemName or L["Loading"] }
+    local parts = { info.itemName ~= nil and WowVision.items.formatName(info.itemName, info.quality) or L["Loading"] }
     local count = info.stackCount
     if count ~= nil and not WowVision.isSecret(count) and count > 1 then
         tinsert(parts, tostring(count))
@@ -26,10 +26,6 @@ function module.getBagItemLabel(itemButton)
     end
     if C_NewItems ~= nil and C_NewItems.IsNewItem ~= nil and C_NewItems.IsNewItem(bagID, slotID) then
         tinsert(parts, L["New"])
-    end
-    local quality = info.quality
-    if quality ~= nil and not WowVision.isSecret(quality) and quality == Enum.ItemQuality.Poor and not info.hasNoValue then
-        tinsert(parts, L["Junk"])
     end
     if info.isLocked then
         tinsert(parts, L["Locked"])

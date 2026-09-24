@@ -80,9 +80,9 @@ SendMailFrame:HookScript("OnShow", function()
 end)
 
 local function getAttachmentLabel(i)
-    local itemName, _, _, stackCount = GetSendMailItem(i)
+    local itemName, _, _, stackCount, quality = GetSendMailItem(i)
     if itemName then
-        local label = itemName
+        local label = WowVision.items.formatName(itemName, quality)
         if stackCount and stackCount > 1 then
             label = label .. " x " .. stackCount
         end

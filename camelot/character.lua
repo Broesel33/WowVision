@@ -220,26 +220,11 @@ local SLOT_NAMES = {
     [INVSLOT_RANGED] = L["Ranged"],
 }
 
--- The modern engine has no global GetItemInfo; the C_Item form is the
--- one that exists here. The name may be nil until the item is cached,
--- in which case the link itself is spoken.
-local function itemName(itemLink)
-    local getInfo = C_Item ~= nil and C_Item.GetItemInfo or GetItemInfo
-    if getInfo == nil then
-        return nil
-    end
-    local ok, name = pcall(getInfo, itemLink)
-    if ok then
-        return name
-    end
-    return nil
-end
-
 local function equipmentLabel(slot)
     local slotId = slot:GetID()
     local itemLink = GetInventoryItemLink("player", slotId)
     if itemLink then
-        return itemName(itemLink) or itemLink
+        return WowVision.items.getLinkLabel(itemLink) or itemLink
     end
     return SLOT_NAMES[slotId] or L["Empty"]
 end

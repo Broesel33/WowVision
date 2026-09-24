@@ -55,22 +55,45 @@ function Tooltip:onUnfocus()
     end
 end
 
+-- The lines as read: { left, right } pairs from the frame, plus the item
+-- quality and item level when the tooltip shows an item (see
+-- WowVision.items.augmentTooltipLines).
+function Tooltip:collectLines()
+    local frame = self.activeFrame
+    local lines = {}
+    if not frame then
+        return lines
+    end
+    for index = 1, frame:NumLines() do
+        local left, right = self.reader:getLine(frame, index)
+        tinsert(lines, { left, right })
+    end
+    if frame.GetItem ~= nil and WowVision.items ~= nil then
+        local ok, _, link = pcall(frame.GetItem, frame)
+        if ok and link ~= nil and not WowVision.isSecret(link) then
+            local augmented, err = pcall(WowVision.items.augmentTooltipLines, lines, link)
+            if not augmented then
+                geterrorhandler()(err)
+            end
+        end
+    end
+    return lines
+end
+
 function Tooltip:getText(lineNumber)
     if not self.activeFrame then
         return ""
     end
-
-    if self.activeType then
-        self.activeType:beforeRead()
+    local lines = self:readLines()
+    local result = {}
+    if lineNumber == nil then
+        for _, line in ipairs(lines) do
+            tinsert(result, self.reader:formatLine(line[1], line[2]))
+        end
+    elseif lines[lineNumber] ~= nil then
+        tinsert(result, self.reader:formatLine(lines[lineNumber][1], lines[lineNumber][2]))
     end
-
-    local text = self.reader:getText(self.activeFrame, lineNumber)
-
-    if self.activeType then
-        self.activeType:afterRead()
-    end
-
-    return text
+    return table.concat(result, "\n")
 end
 
 function Tooltip:speak(lineNumber)
@@ -102,9 +125,16 @@ function Tooltip:finishRead()
     end
 end
 
-function Tooltip:isLineBlank(lineNumber)
-    local left, right = self.reader:getLine(self.activeFrame, lineNumber)
-    local text = self.reader:formatLine(left, right)
+-- Fill the tooltip (immediate mode), collect its lines, and release it.
+function Tooltip:readLines()
+    self:prepareRead()
+    local lines = self:collectLines()
+    self:finishRead()
+    return lines
+end
+
+function Tooltip:isBlank(line)
+    local text = self.reader:formatLine(line[1], line[2])
     if not text then
         return true
     end
@@ -114,102 +144,74 @@ function Tooltip:isLineBlank(lineNumber)
     return strtrim(stripped) == ""
 end
 
-function Tooltip:nextLine()
+function Tooltip:isLineBlank(lineNumber)
+    local line = self:readLines()[lineNumber]
+    return line == nil or self:isBlank(line)
+end
+
+-- Move to the next non-blank line in direction (1 or -1) and speak it.
+function Tooltip:moveLine(direction)
     if not self.activeFrame then
         return
     end
-    self:prepareRead()
-    local numLines = self:getNumLines()
+    local lines = self:readLines()
+    local numLines = #lines
     if numLines == 0 then
-        self:finishRead()
         return
     end
 
-    local start = self.currentLine or 0
-    local target = start + 1
-    while target <= numLines and self:isLineBlank(target) do
-        target = target + 1
+    local start = self.currentLine or (direction > 0 and 0 or numLines + 1)
+    local target = start + direction
+    while target >= 1 and target <= numLines and self:isBlank(lines[target]) do
+        target = target + direction
     end
-    if target <= numLines then
+    if target >= 1 and target <= numLines then
         self.currentLine = target
     end
 
-    local left, right = self.reader:getLine(self.activeFrame, self.currentLine)
-    self:finishRead()
-    local text = self.reader:formatLine(left, right)
+    local line = self.currentLine ~= nil and lines[self.currentLine] or nil
+    if line == nil then
+        return
+    end
+    local text = self.reader:formatLine(line[1], line[2])
     if text and text ~= "" then
         WowVision:speak(text)
     end
 end
 
+function Tooltip:nextLine()
+    self:moveLine(1)
+end
+
 function Tooltip:previousLine()
+    self:moveLine(-1)
+end
+
+-- Speak one side (1 left, 2 right) of the current line.
+function Tooltip:speakCurrentSide(side)
     if not self.activeFrame then
         return
     end
-    self:prepareRead()
-    local numLines = self:getNumLines()
-    if numLines == 0 then
-        self:finishRead()
+    local lines = self:readLines()
+    if #lines == 0 then
         return
     end
-
-    local start = self.currentLine or (numLines + 1)
-    local target = start - 1
-    while target >= 1 and self:isLineBlank(target) do
-        target = target - 1
+    if self.currentLine == nil then
+        self.currentLine = 1
     end
-    if target >= 1 then
-        self.currentLine = target
-    end
-
-    local left, right = self.reader:getLine(self.activeFrame, self.currentLine)
-    self:finishRead()
-    local text = self.reader:formatLine(left, right)
+    local line = lines[self.currentLine]
+    local text = line ~= nil and line[side] or nil
     if text and text ~= "" then
         WowVision:speak(text)
     end
 end
 
 function Tooltip:speakCurrentLeft()
-    if not self.activeFrame then
-        return
-    end
-    self:prepareRead()
-    local numLines = self:getNumLines()
-    if numLines == 0 then
-        self:finishRead()
-        return
-    end
-    if self.currentLine == nil then
-        self.currentLine = 1
-    end
-
-    local left, _ = self.reader:getLine(self.activeFrame, self.currentLine)
-    self:finishRead()
-    if left and left ~= "" then
-        WowVision:speak(left)
-    end
+    self:speakCurrentSide(1)
 end
 
 function Tooltip:speakCurrentRight()
-    if not self.activeFrame then
-        return
-    end
-    self:prepareRead()
-    local numLines = self:getNumLines()
-    if numLines == 0 then
-        self:finishRead()
-        return
-    end
-    if self.currentLine == nil then
-        self.currentLine = 1
-    end
-
-    local _, right = self.reader:getLine(self.activeFrame, self.currentLine)
-    self:finishRead()
-    if right and right ~= "" then
-        WowVision:speak(right)
-    end
+    self:speakCurrentSide(2)
 end
 
 local tooltips = {

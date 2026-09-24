@@ -39,9 +39,8 @@ local function getEquipmentLabel(frame)
     local slotId = frame:GetID()
     local itemLink = GetInventoryItemLink("player", slotId)
     if itemLink then
-        local itemName = GetItemInfo(itemLink)
-        -- GetItemInfo may return nil if item isn't cached yet, fallback to link
-        return itemName or itemLink
+        -- nil if the item isn't cached yet, fallback to link
+        return WowVision.items.getLinkLabel(itemLink) or itemLink
     end
     -- Empty slot - return localized slot name
     return SLOT_NAMES[slotId] or L["Empty"]

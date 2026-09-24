@@ -169,14 +169,15 @@ local function renderOpenMail(builder)
             -- Count fontstring is a global, not a keyed child, so read the
             -- attachment straight from the inbox API by slot id.
             label = function()
-                local name, _, _, count = GetInboxItem(InboxFrame.openMailID, captured:GetID())
+                local name, _, _, count, quality = GetInboxItem(InboxFrame.openMailID, captured:GetID())
                 if name == nil then
                     return L["Empty"]
                 end
+                local label = WowVision.items.formatName(name, quality)
                 if count ~= nil and count > 1 then
-                    return name .. " x " .. count
+                    return label .. " x " .. count
                 end
-                return name
+                return label
             end
         end
         builder:addItem(ControlId.forObject(captured), nodes.proxyButton({ target = captured, label = label }))
