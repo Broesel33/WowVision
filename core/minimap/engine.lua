@@ -34,12 +34,26 @@ function Engine.available()
         and Minimap.UpdateMouseoverAtPoint ~= nil
 end
 
-function Engine.readDots()
+-- The names the minimap's mouseover holds right now.
+local function readMouseover()
     local ok, data = pcall(C_TooltipInfo.GetMinimapMouseover)
     if not ok then
         return {}
     end
     return Scan.parseMouseover(data, WowVision.isSecret)
+end
+
+-- The shrunk minimap asked at its centre. The cursor's own read misses
+-- dots while nothing moves (measured 2026-09-28 outdoors: it named two
+-- towns and two indoor NPCs, the same frame's point read also a herb and
+-- a mailbox).
+function Engine.readDots()
+    local cx, cy = Minimap:GetCenter()
+    if cx ~= nil then
+        local scale = Minimap:GetEffectiveScale()
+        pcall(Minimap.UpdateMouseoverAtPoint, Minimap, cx * scale, cy * scale)
+    end
+    return readMouseover()
 end
 
 -- Every tracking type: index, name, active, spell or filter, filter id
@@ -157,7 +171,7 @@ function Engine.pointReader()
         if not ok then
             return {}
         end
-        return Engine.readDots()
+        return readMouseover()
     end
 end
 
