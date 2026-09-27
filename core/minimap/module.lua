@@ -25,7 +25,8 @@ local settings = module:hasSettings()
 --
 -- Entries live for the session. Quest givers go to the quest system's
 -- seen givers (Quests > Nearby, NPCs > Quest Givers), other NPCs to the
--- NPC categories, gathering nodes to Gathering; a database entry of the
+-- NPC categories, gathering nodes (known by name while their tracking
+-- spell is on; the scan never switches spells) to Gathering; a database entry of the
 -- same name wins over a seen one.
 
 settings:add({
@@ -33,12 +34,6 @@ settings:add({
     type = "Bool",
     label = L["Announce Tracked Dots While Walking"],
     -- On while it is being tried out: addon settings still reset often.
-    default = true,
-})
-settings:add({
-    key = "sortGathering",
-    type = "Bool",
-    label = L["Switch Gathering Tracking Off To Sort Nodes"],
     default = true,
 })
 settings:add({
@@ -236,10 +231,11 @@ local function setFilters(filters, on)
 end
 
 -- The sorting passes, on the shrunk minimap. Returns the classified
--- names. task.spellsSwitched is set BEFORE a spell is touched, so an
--- abort in between still switches it back on.
+-- names. Tracking spells are never switched (see Scan.gatheringKinds):
+-- with every filter off the baseline holds quest givers and, while a
+-- gathering spell is on, its nodes, sorted by name.
 local function sortingPasses(task, filters, spells)
-    local passes = { filters = {}, spells = {} }
+    local passes = { filters = {} }
     setFilters(filters, nil)
     passes.baseline = Engine.readSettled()
     -- One pass with every sorted filter on first: when it shows nothing
@@ -260,34 +256,15 @@ local function sortingPasses(task, filters, spells)
         end
     end
     setFilters(filters, nil)
-    local spellActive = false
-    for _, s in ipairs(spells) do
-        spellActive = spellActive or s.active
-    end
-    if spellActive and not module.settings.sortGathering then
-        -- Gathering nodes stay mixed in with the quest givers.
+    local otherSpell
+    passes.gathering, otherSpell = Scan.gatheringKinds(spells, Scan.gatheringNames, GetLocale())
+    if otherSpell then
+        -- Hunter tracking and the like: their dots stay mixed in with the
+        -- quest givers.
         passes.baselineCategory = "unsorted"
     end
-    if module.settings.sortGathering then
-        local baseSig = Scan.signature(passes.baseline)
-        for _, s in ipairs(spells) do
-            if s.active then
-                task.spellsSwitched = true
-                C_Minimap.SetTracking(s.index, false)
-                local category = "spell:" .. tostring(s.spellID or s.name)
-                module.spellLabels[category] = s.name
-                tinsert(passes.spells, { category = category, label = s.name, dots = Engine.readSettled(12) })
-                C_Minimap.SetTracking(s.index, true)
-                -- Casting the spell again takes longer than a filter
-                -- switch; wait until the baseline is back (3 s at most).
-                for _ = 1, 180 do
-                    Engine.wait()
-                    if Scan.signature(Engine.readDots()) == baseSig then
-                        break
-                    end
-                end
-            end
-        end
+    for _, kind in ipairs(passes.gathering) do
+        module.spellLabels[kind.category] = kind.label
     end
     local classified = Scan.classify(passes)
     -- The walking check's names for each kind.
@@ -295,8 +272,8 @@ local function sortingPasses(task, filters, spells)
     for _, pass in ipairs(passes.filters) do
         labels[pass.category] = labels[pass.category] or pass.label
     end
-    for _, pass in ipairs(passes.spells) do
-        labels[pass.category] = pass.label
+    for _, kind in ipairs(passes.gathering) do
+        labels[kind.category] = kind.label
     end
     for _, item in ipairs(classified) do
         module.kinds[item.name] = item.category == "questGiver" and L["quest giver"] or labels[item.category]
@@ -524,7 +501,7 @@ function module:scanBody(task)
         Engine.restoreFrame(state)
     end)
     Engine.onCleanup(function()
-        Engine.restoreTracking(state, task.spellsSwitched)
+        Engine.restoreTracking(state, false)
     end)
 
     local px, py, _, continent = UnitPosition("player")
@@ -685,8 +662,8 @@ function module:scan()
         task.stats.seconds = GetTime() - task.stats.started
         task.stats.outcome = ok and "done" or tostring(reason or "error")
         self.lastStats = task.stats
-        -- A tracking spell switched back on is a cast; give it a second,
-        -- then say so if it did not come back.
+        -- Give the filters a second, then say so if one did not come
+        -- back.
         if task.state ~= nil then
             C_Timer.After(1, function()
                 local restored, name = Engine.trackingRestored(task.state)

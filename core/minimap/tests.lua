@@ -151,23 +151,55 @@ testRunner:addSuite("MinimapScan", {
         t:assertNil(find(result, "Harlan Bagley", "banker"))
     end,
 
-    ["a tracking spell switched off claims the names that vanish"] = function(t)
+    ["a gathering list claims the names that contain one of its names"] = function(t)
+        local names = {
+            herbs = { spells = { 2383 }, enUS = { "Peacebloom" }, deDE = { "Silberblatt", "Friedensblume" } },
+            mining = { spells = { 2580 }, enUS = { "Copper Vein" }, deDE = { "Kupfervorkommen" } },
+        }
+        local kinds, other = Scan.gatheringKinds({
+            { spellID = 2383, name = "Kräutersuche", active = true },
+            { spellID = 2580, name = "Mineraliensuche", active = false },
+        }, names, "deDE")
+        t:assertEqual(#kinds, 1)
+        t:assertEqual(other, false)
         local result = Scan.classify({
-            baseline = Scan.parseMouseover(tooltip("Marshal McBride\nPeacebloom\nPeacebloom")),
-            spells = { { category = "spell:2383", dots = Scan.parseMouseover(tooltip("Marshal McBride")) } },
+            baseline = Scan.parseMouseover(tooltip("Marshal McBride\nVerkümmertes Silberblatt\nFriedensblume\nFriedensblume\nKupfervorkommen")),
+            gathering = kinds,
         })
-        t:assertEqual(find(result, "Peacebloom").category, "spell:2383")
-        t:assertEqual(find(result, "Peacebloom").count, 2)
+        t:assertEqual(find(result, "Verkümmertes Silberblatt").category, "spell:2383")
+        t:assertEqual(find(result, "Friedensblume").category, "spell:2383")
+        t:assertEqual(find(result, "Friedensblume").count, 2)
         t:assertEqual(find(result, "Marshal McBride").category, "questGiver")
-        t:assertNil(find(result, "Peacebloom", "questGiver"))
+        -- Mining is off: its names are not looked for.
+        t:assertEqual(find(result, "Kupfervorkommen").category, "questGiver")
+        t:assertNil(find(result, "Friedensblume", "questGiver"))
     end,
 
-    ["unsorted spells leave the baseline unsorted"] = function(t)
+    ["a missing locale falls back to the English names"] = function(t)
+        local kinds = Scan.gatheringKinds(
+            { { spellID = 2383, name = "Find Herbs", active = true } },
+            { herbs = { spells = { 2383 }, enUS = { "Peacebloom" } } },
+            "esES"
+        )
+        t:assertEqual(Scan.gatheringCategory("Peacebloom", kinds).category, "spell:2383")
+    end,
+
+    ["another tracking spell leaves the baseline unsorted"] = function(t)
+        local _, other = Scan.gatheringKinds({ { spellID = 1494, name = "Track Beasts", active = true } }, Scan.gatheringNames, "enUS")
+        t:assertEqual(other, true)
         local result = Scan.classify({
-            baseline = Scan.parseMouseover(tooltip("Marshal McBride\nPeacebloom")),
+            baseline = Scan.parseMouseover(tooltip("Marshal McBride\nYoung Wolf")),
             baselineCategory = "unsorted",
         })
-        t:assertEqual(find(result, "Peacebloom").category, "unsorted")
+        t:assertEqual(find(result, "Young Wolf").category, "unsorted")
+    end,
+
+    ["the shipped lists cover every locale of every kind"] = function(t)
+        for key, kind in pairs(Scan.gatheringNames) do
+            t:assertTrue(#kind.spells > 0, key)
+            t:assertEqual(#kind.deDE, #kind.enUS)
+            t:assertEqual(#kind.frFR, #kind.enUS)
+        end
     end,
 
     ["offsets turn into yards north and west"] = function(t)

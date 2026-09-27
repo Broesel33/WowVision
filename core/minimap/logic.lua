@@ -438,15 +438,62 @@ function Scan.hasExtras(baseline, dots)
     return false
 end
 
+-- The gathering kinds the active tracking spells show, for classify:
+-- { category = "spell:<id>", label = spell name, needles = lower-case
+-- names } in spell order (names from gatheringNames.lua, the client's
+-- locale or enUS). Second result: true when another tracking spell is on
+-- (hunter tracking and the like), whose dots no list sorts.
+-- Tracking spells are never switched: turning one back on is a cast the
+-- game refuses outside a key press (measured 2026-09-28).
+function Scan.gatheringKinds(spells, names, locale)
+    local bySpell = {}
+    for _, kind in pairs(names or {}) do
+        for _, id in ipairs(kind.spells) do
+            bySpell[id] = kind
+        end
+    end
+    local kinds, other = {}, false
+    for _, s in ipairs(spells) do
+        if s.active then
+            local kind = bySpell[s.spellID]
+            if kind == nil then
+                other = true
+            else
+                local needles = {}
+                for _, name in ipairs(kind[locale] or kind.enUS) do
+                    tinsert(needles, name:lower())
+                end
+                tinsert(kinds, { category = "spell:" .. tostring(s.spellID), label = s.name, needles = needles })
+            end
+        end
+    end
+    return kinds, other
+end
+
+-- The kind whose list a dot name contains ("Verkümmertes Silberblatt"
+-- holds Silberblatt), or nil.
+function Scan.gatheringCategory(name, kinds)
+    local lowered = name:lower()
+    for _, kind in ipairs(kinds) do
+        for _, needle in ipairs(kind.needles) do
+            if lowered:find(needle, 1, true) ~= nil then
+                return kind
+            end
+        end
+    end
+    return nil
+end
+
 -- passes.baseline: dots with every tracking filter off (spells as found):
 --   quest givers, plus whatever the active tracking spells show.
 -- passes.filters: { category, dots, flag? } one per filter switched on
 --   alone; names beyond the baseline are that category (flag marks quest
 --   givers only shown by that filter, such as "trivial").
--- passes.spells: { category, dots } one per tracking spell switched off
---   with the filters; names that vanish are that spell's.
+-- passes.gathering: kinds from Scan.gatheringKinds; baseline names
+--   matching one are that kind's. Empty or nil when no gathering spell
+--   is on, and the name check is skipped.
 -- passes.baselineCategory: what the baseline's unexplained names are,
---   "questGiver" unless tracking spells were left unsorted.
+--   "questGiver" unless another tracking spell adds dots no list sorts.
 -- Returns entries { name, category, count, subtitle?, flag? }.
 function Scan.classify(passes)
     local subtitles = {}
@@ -468,13 +515,12 @@ function Scan.classify(passes)
     for name, count in pairs(base) do
         givers[name] = count
     end
-    for _, pass in ipairs(passes.spells or {}) do
-        local counts = Scan.counts(pass.dots)
+    if passes.gathering ~= nil and #passes.gathering > 0 then
         for name, count in pairs(base) do
-            local gone = count - (counts[name] or 0)
-            if gone > 0 then
-                add(name, pass.category, gone)
-                givers[name] = givers[name] - gone
+            local kind = Scan.gatheringCategory(name, passes.gathering)
+            if kind ~= nil then
+                add(name, kind.category, count)
+                givers[name] = 0
             end
         end
     end

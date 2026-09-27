@@ -2,6 +2,7 @@
 ..\FrameXML\UI.xsd">
 
   <Script file="logic.lua" />
+  <Script file="gatheringNames.lua" />
   <Script file="engine.lua" />
   <Script file="module.lua" />
   <Script file="scanner.lua" />

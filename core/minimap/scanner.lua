@@ -4,8 +4,9 @@ local L = module.L
 
 -- The scanner's Gathering category: nodes the minimap scanner placed this
 -- session, one subcategory per tracking spell ("Find Herbs", "Find
--- Minerals", named by the game), plus names it could not sort when the
--- gathering sort is switched off. Hidden while there is nothing. The
+-- Minerals", named by the game; nodes are known by name, see
+-- gatheringNames.lua), plus names it could not sort while another
+-- tracking spell (hunter tracking) was on. Hidden while there is nothing. The
 -- Points of Interest category below holds the town markers.
 -- Quest givers and other NPCs feed the Quests and NPCs categories instead
 -- (see module.lua).
