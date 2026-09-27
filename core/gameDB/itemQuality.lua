@@ -124,22 +124,26 @@ end
 
 -- Extra lines for an item tooltip: the quality name and the item level
 -- go under the slot line (or under the name when the item has no slot).
--- lines is a list of { left, right }; it is changed in place. Any item
--- level line the game shows itself is dropped so it isn't read twice.
+-- lines is a list of { left, right }; it is changed in place.
+--
+-- The item level line the game shows itself is the authority: it carries
+-- upgrades (Mists item upgrades, retail's detailed level) that the link
+-- queries miss, so when present it is MOVED to this position, text intact.
+-- Only a tooltip without one gets a computed line.
 function items.augmentTooltipLines(lines, link)
     local _, _, quality, baseLevel, equipLoc = getItemInfo(link)
     local qualityName = items.getQualityName(quality)
-    local itemLevel = getItemLevel(link, baseLevel, equipLoc)
-    if qualityName == nil and itemLevel == nil then
-        return
-    end
 
-    if itemLevel ~= nil then
-        for i = #lines, 2, -1 do
-            if isItemLevelLine(lines[i][1]) then
-                table.remove(lines, i)
-            end
+    local gameLevelLine = nil
+    for i = #lines, 2, -1 do
+        if isItemLevelLine(lines[i][1]) then
+            gameLevelLine = gameLevelLine or lines[i]
+            table.remove(lines, i)
         end
+    end
+    local itemLevel = gameLevelLine == nil and getItemLevel(link, baseLevel, equipLoc) or nil
+    if qualityName == nil and itemLevel == nil and gameLevelLine == nil then
+        return
     end
 
     local position = math.min(2, #lines + 1)
@@ -153,7 +157,9 @@ function items.augmentTooltipLines(lines, link)
         end
     end
 
-    if itemLevel ~= nil and ITEM_LEVEL ~= nil then
+    if gameLevelLine ~= nil then
+        table.insert(lines, position, gameLevelLine)
+    elseif itemLevel ~= nil and ITEM_LEVEL ~= nil then
         table.insert(lines, position, { format(ITEM_LEVEL, itemLevel), nil })
     end
     if qualityName ~= nil then
