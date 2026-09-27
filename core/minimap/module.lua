@@ -1054,8 +1054,10 @@ function module:logText()
     return table.concat(lines, "\n")
 end
 
--- /wv mscan raw: one read of the shrunk minimap exactly as the game sends
--- it (each line's colour, escapes visible), then every tracking type. For
+local RAW_READ_FRAMES = 30
+
+-- /wv mscan raw: reads of the shrunk minimap exactly as the game sends
+-- them (each line's colour, escapes visible), then every tracking type. For
 -- the day the tooltip layout changes and the scanner reads nothing.
 function module:rawRead()
     if self.task ~= nil or self.walkTask ~= nil then
@@ -1073,6 +1075,11 @@ function module:rawRead()
     local task = {}
     self.task = task
     task.body = function()
+        -- The scan's own start: cursor centred, then the minimap under it.
+        if module.settings.centreCursor then
+            Engine.centreCursor()
+        end
+        Engine.wait()
         local x, y = GetCursorPosition()
         task.overWorld = Engine.cursorOverWorld()
         local state = Engine.capture()
@@ -1080,11 +1087,47 @@ function module:rawRead()
         Engine.onCleanup(function()
             Engine.restoreFrame(state)
         end)
+        Engine.onCleanup(function()
+            Engine.restoreTracking(state, false)
+        end)
         Minimap:SetZoom(0)
         Engine.shrink(x, y)
-        Engine.wait(2)
+        -- Half a second of reads; every read that differs from the one
+        -- before is kept, so late dots show up.
+        task.reads = {}
+        local function readFrames(title)
+            local lastSig = nil
+            for frame = 1, RAW_READ_FRAMES do
+                Engine.wait()
+                local ok, data = pcall(C_TooltipInfo.GetMinimapMouseover)
+                data = ok and data or nil
+                local sig = Scan.signature(Scan.parseMouseover(data, WowVision.isSecret))
+                if sig ~= lastSig then
+                    lastSig = sig
+                    tinsert(task.reads, { label = string.format("%s, frame %d of %d", title, frame, RAW_READ_FRAMES), data = data })
+                end
+            end
+        end
+        readFrames("Your tracking")
+        -- The scan's baseline: every tracking filter off, spells as they
+        -- are (town arrows, vendors and the like gone).
+        local filters = {}
+        for _, t in ipairs(state.tracking) do
+            if not t.isSpell then
+                tinsert(filters, t)
+            end
+        end
+        setFilters(filters, nil)
+        readFrames("Every filter off")
+        Engine.restoreTracking(state, false)
+        Engine.wait()
+        -- Then the game asked to name the centre point itself: does the
+        -- cursor's own read miss dots while nothing moves?
+        local cx, cy = Minimap:GetCenter()
+        local scale = Minimap:GetEffectiveScale()
+        local asked = pcall(Minimap.UpdateMouseoverAtPoint, Minimap, cx * scale, cy * scale)
         local ok, data = pcall(C_TooltipInfo.GetMinimapMouseover)
-        task.data = ok and data or nil
+        tinsert(task.reads, { label = "Asked at the centre (" .. (asked and "ok" or "failed") .. ")", data = ok and data or nil })
     end
     task.check = function()
         return InCombatLockdown() and "combat" or nil
@@ -1099,10 +1142,13 @@ function module:rawRead()
             return
         end
         local lines = { "WowVision minimap raw read, cursor over the game world: " .. tostring(task.overWorld) }
-        for _, line in ipairs(Scan.rawLines(task.data, WowVision.isSecret)) do
-            tinsert(lines, line)
+        for _, read in ipairs(task.reads) do
+            tinsert(lines, read.label)
+            for _, line in ipairs(Scan.rawLines(read.data, WowVision.isSecret)) do
+                tinsert(lines, line)
+            end
+            tinsert(lines, "Parsed: " .. Scan.signature(Scan.parseMouseover(read.data, WowVision.isSecret)):gsub("\n", ", "))
         end
-        tinsert(lines, "Parsed: " .. Scan.signature(Scan.parseMouseover(task.data, WowVision.isSecret)):gsub("\n", ", "))
         tinsert(lines, "Tracking types")
         for _, t in ipairs(task.state.tracking) do
             tinsert(

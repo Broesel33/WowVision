@@ -127,8 +127,54 @@ function Scan.rawLines(data, isSecret)
             local shown = tostring(text):gsub("|", "||"):gsub("\n", "\\n")
             tinsert(out, "[" .. hex .. "] " .. shown)
         end
+        local extra = Scan.otherFields(line, { leftText = true, leftColor = true }, isSecret)
+        if extra ~= nil then
+            tinsert(out, "  fields: " .. extra)
+        end
+    end
+    local extra = Scan.otherFields(data, { lines = true }, isSecret)
+    if extra ~= nil then
+        tinsert(out, "data fields: " .. extra)
     end
     return out
+end
+
+-- Every field of a tooltip table except the skipped ones, sorted, one
+-- level of nested tables shown; nil when there are none. For spotting
+-- what the game sends besides the text (a line type, an icon).
+local function fieldValue(value, isSecret)
+    if isSecret ~= nil and isSecret(value) then
+        return "(secret value)"
+    elseif type(value) == "string" then
+        return (value:gsub("|", "||"):gsub("\n", "\\n"))
+    end
+    return tostring(value)
+end
+
+function Scan.otherFields(tbl, skip, isSecret)
+    if type(tbl) ~= "table" then
+        return nil
+    end
+    local parts = {}
+    for key, value in pairs(tbl) do
+        if not skip[key] then
+            if type(value) == "table" then
+                local inner = {}
+                for k, v in pairs(value) do
+                    tinsert(inner, tostring(k) .. "=" .. (type(v) == "table" and "table" or fieldValue(v, isSecret)))
+                end
+                table.sort(inner)
+                tinsert(parts, tostring(key) .. "={" .. table.concat(inner, ", ") .. "}")
+            else
+                tinsert(parts, tostring(key) .. "=" .. fieldValue(value, isSecret))
+            end
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    table.sort(parts)
+    return table.concat(parts, ", ")
 end
 
 -- name -> number of dots with that name.

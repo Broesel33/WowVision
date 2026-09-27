@@ -102,6 +102,14 @@ testRunner:addSuite("MinimapScan", {
         t:assertEqual(Scan.rawLines(nil)[1], "no tooltip data")
     end,
 
+    ["a raw read lists the other fields of lines and data"] = function(t)
+        local data = { type = 0, lines = { { leftText = "Friedensblume", leftColor = GOLD, type = 5, args = { icon = "|T1:0|t" } } } }
+        local lines = Scan.rawLines(data)
+        t:assertEqual(#lines, 3)
+        t:assertEqual(lines[2], "  fields: args={icon=||T1:0||t}, type=5")
+        t:assertEqual(lines[3], "data fields: type=0")
+    end,
+
     ["the signature ignores order"] = function(t)
         local a = Scan.parseMouseover(tooltip("B\nA"))
         local b = Scan.parseMouseover(tooltip("A\nB"))
