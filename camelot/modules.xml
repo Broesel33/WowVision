@@ -17,5 +17,7 @@
   <Include file="collections\modules.xml" />
   <!-- Forever's spellbook is the modern PlayerSpellsFrame, not Mists'. -->
   <Script file="spellbook.lua" />
+  <!-- The professions book is a page of the retail ProfessionsFrame. -->
+  <Script file="professions.lua" />
 
 </Ui>
