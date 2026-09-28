@@ -46,24 +46,6 @@ settings:add({
     default = true,
 })
 
-local dotAlert = module:addAlert({
-    key = "newDot",
-    label = L["New Minimap Dot Alert"],
-})
-local dotTTS = dotAlert:addOutput({
-    type = "TTS",
-    key = "tts",
-    label = L["TTS Alert"],
-    buildMessage = function(self, message)
-        return message.text
-    end,
-})
-
--- For the moment the walking announcements speak with game voice 0, not
--- the player's speech voice: with an NVDA SAPI voice there they were cut
--- off by the screen reader's own speech.
-local WALK_VOICE = 0
-
 -- The walking check's log (/wv mscan log): what each read showed when it
 -- changed, every decision of the walking memory, and why a check did not
 -- run, repeats of the same line folded into one. Kept in the
@@ -99,17 +81,25 @@ local function walkNote(text)
     end
 end
 
-function dotTTS:onFire(message)
-    local text = message.text
-    if text == nil then
-        return
-    end
-    local speech = WowVision.base.speech
-    local volume = math.max(0, math.min(100, speech.settings.speechVolume or 100))
-    text = WowVision.ttsCacheBust.bust(text)
-    walkNote("spoken: " .. text)
-    C_VoiceChat.SpeakText(WALK_VOICE, text, speech.settings.speechRate, volume, false)
-end
+local dotAlert = module:addAlert({
+    key = "newDot",
+    label = L["New Minimap Dot Alert"],
+})
+-- For the moment the walking announcements speak with game voice 0, not
+-- the player's speech voice: with an NVDA SAPI voice there they were cut
+-- off by the screen reader's own speech.
+dotAlert:addOutput({
+    type = "TTS",
+    key = "tts",
+    label = L["TTS Alert"],
+    voice = 0,
+    buildMessage = function(self, message)
+        if message.text then
+            walkNote("spoken: " .. message.text)
+        end
+        return message.text
+    end,
+})
 dotAlert:addOutput({
     type = "Sound",
     key = "sound",
