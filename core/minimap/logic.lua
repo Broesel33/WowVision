@@ -72,7 +72,51 @@ local function partColour(part, carried)
     return atStart, after
 end
 
--- Tooltip data -> list of dots { name, subtitle, otherLevel }. White
+-- A texture escape's inside ("path:height:width:x:y:texWidth:texHeight:
+-- left:right:top:bottom") -> { spec, left, right, top, bottom } with the
+-- corners as fractions of the texture, or nil without them.
+function Scan.textureCoords(spec)
+    local fields = {}
+    for field in (spec .. ":"):gmatch("([^:]*):") do
+        tinsert(fields, field)
+    end
+    local texWidth, texHeight = tonumber(fields[6]), tonumber(fields[7])
+    local left, right = tonumber(fields[8]), tonumber(fields[9])
+    local top, bottom = tonumber(fields[10]), tonumber(fields[11])
+    if texWidth == nil or texHeight == nil or texWidth <= 0 or texHeight <= 0 or bottom == nil then
+        return nil
+    end
+    return {
+        spec = spec,
+        left = left / texWidth,
+        right = right / texWidth,
+        top = top / texHeight,
+        bottom = bottom / texHeight,
+    }
+end
+
+-- "above", "below" or nil: which of the game's arrow atlases (atlases =
+-- { above = { left, right, top, bottom }, below = ... }, from
+-- C_Texture.GetAtlasInfo) cuts the same part of the texture.
+function Scan.arrowLevel(arrow, atlases)
+    if arrow == nil or arrow.top == nil or atlases == nil then
+        return nil
+    end
+    for _, level in ipairs({ "above", "below" }) do
+        local a = atlases[level]
+        if a ~= nil
+            and math.abs(arrow.left - a.left) < 0.05
+            and math.abs(arrow.right - a.right) < 0.05
+            and math.abs(arrow.top - a.top) < 0.05
+            and math.abs(arrow.bottom - a.bottom) < 0.05
+        then
+            return level
+        end
+    end
+    return nil
+end
+
+-- Tooltip data -> list of dots { name, subtitle, otherLevel, arrow }. White
 -- text, a whole line or a colour code inside one, is detail under the dot
 -- before it (measured on Forever: "Quest name|cffffffff\n-Objective: 1/8|r"
 -- from quest objective tracking), so it never becomes a dot itself.
@@ -92,8 +136,11 @@ function Scan.parseMouseover(data, isSecret)
                 -- A texture before a name is a small arrow (measured on
                 -- Forever 2026-09-28: gathering nodes read as
                 -- "|TInterface\Minimap\Minimap-PositionArrows:...|tSilberblatt"
-                -- from some spots); the dot is the same, only the name counts.
-                local arrow = part:match("|T[^|]*|t") ~= nil
+                -- from some spots): the dot is above or below the player
+                -- (Warcraft Wiki, Minimap). The dot is the same, only the
+                -- name counts; the arrow is kept (Scan.arrowLevel).
+                local texture = part:match("|T([^|]*)|t")
+                local arrow = texture ~= nil and (Scan.textureCoords(texture) or { spec = texture }) or nil
                 local clean = trim(
                     part:gsub("|T[^|]*|t", ""):gsub("|A[^|]*|a", ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
                 )

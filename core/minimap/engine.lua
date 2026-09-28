@@ -34,13 +34,48 @@ function Engine.available()
         and Minimap.UpdateMouseoverAtPoint ~= nil
 end
 
--- The names the minimap's mouseover holds right now.
+-- The game's above and below arrows (the atlases the quest line pins use,
+-- Blizzard_SharedMapDataProviders) as texture fractions, for
+-- Scan.arrowLevel: { above, below }, each { left, right, top, bottom,
+-- file }. Read once; nil parts when the client lacks them.
+local ARROW_ATLASES = { above = "MiniMap-PositionArrowUp", below = "MiniMap-PositionArrowDown" }
+local arrowAtlases = nil
+
+function Engine.arrowAtlases()
+    if arrowAtlases == nil then
+        arrowAtlases = {}
+        if C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil then
+            for level, atlas in pairs(ARROW_ATLASES) do
+                local ok, info = pcall(C_Texture.GetAtlasInfo, atlas)
+                if ok and type(info) == "table" and info.topTexCoord ~= nil then
+                    arrowAtlases[level] = {
+                        left = info.leftTexCoord,
+                        right = info.rightTexCoord,
+                        top = info.topTexCoord,
+                        bottom = info.bottomTexCoord,
+                        file = info.filename or info.file,
+                    }
+                end
+            end
+        end
+    end
+    return arrowAtlases
+end
+
+-- The names the minimap's mouseover holds right now; a dot with an arrow
+-- gets level "above" or "below" when the arrow matches the game's.
 local function readMouseover()
     local ok, data = pcall(C_TooltipInfo.GetMinimapMouseover)
     if not ok then
         return {}
     end
-    return Scan.parseMouseover(data, WowVision.isSecret)
+    local dots = Scan.parseMouseover(data, WowVision.isSecret)
+    for _, dot in ipairs(dots) do
+        if dot.arrow ~= nil then
+            dot.level = Scan.arrowLevel(dot.arrow, Engine.arrowAtlases())
+        end
+    end
+    return dots
 end
 
 -- The shrunk minimap asked at its centre. The cursor's own read misses
