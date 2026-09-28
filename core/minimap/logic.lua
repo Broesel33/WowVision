@@ -714,13 +714,22 @@ function Scan.giverStatus(wx, wy, points, radius)
 end
 
 -- ---- the walking memory ----
--- What the walking check announced, per name: how many dots of it should
--- be in view, and for how long fewer showed. A name is spoken when a read
--- shows more dots of it than remembered; remembered dots only count as
--- gone after GONE_AFTER seconds of walking outdoors with fewer in view.
--- Standing, combat and a window under the cursor stop the reads; the
--- minimap indoors shows only the building (and a shorter range), so time
--- indoors does not count either.
+-- What the walking check announced, per name: its dots, placed where the
+-- walking check could find them. A name is spoken when a read shows more
+-- dots of it than can be in view.
+-- - A placed dot counts as in view within the view radius less INNER,
+--   and as out of range once the player is MARGIN yards beyond the
+--   radius from it; between the two it may or may not show. So what is
+--   said again depends on the distance walked, not on what one read
+--   shows: a flicker at the rim, a building (the minimap indoors shows
+--   only the building, with a shorter range) and standing change nothing.
+-- - A dot without a place (not found, locating stopped, or a name that
+--   stays in view past its range, such as a town's arrow) falls back to
+--   the name rule: it counts as gone after GONE_AFTER seconds of walking
+--   outdoors with fewer in view. Standing, combat and a window under the
+--   cursor stop the reads; time indoors does not count either.
+-- - A placed dot in view that stays missing that long is gone as well (a
+--   herb picked).
 
 local Walk = {}
 Walk.__index = Walk
@@ -729,9 +738,18 @@ Scan.Walk = Walk
 Walk.GONE_AFTER = 30
 -- The most one gap between two reads adds to the clock.
 Walk.MAX_GAP = 1
+-- Yards, see above; the outdoor view radius at zoom 0 when none is read.
+Walk.MARGIN = 25
+Walk.INNER = 10
+Walk.RADIUS = 233
+-- Yards: a found dot this close to a placed one of its name is that one.
+Walk.MATCH = 25
+-- Yards between two reads that mean a hearthstone, portal or loading
+-- screen, not walking.
+Walk.JUMP = 60
 
 function Walk.new()
-    return setmetatable({ names = {} }, Walk)
+    return setmetatable({ names = {}, nameOnly = {} }, Walk)
 end
 
 local function sortedKeys(...)
@@ -748,15 +766,26 @@ local function sortedKeys(...)
     return keys
 end
 
--- read: { counts = name -> dots read, now = seconds, indoors }.
--- Returns events in name order, each { kind, name, ... }:
--- - new: count, remembered (dots in view before); the one to speak
--- - fewer: count, remembered; fewer dots than remembered showed
+local function unplace(dot)
+    dot.wx, dot.wy, dot.continent, dot.distance = nil, nil, nil, nil
+end
+
+-- read: { counts = name -> dots read, now = seconds, indoors, px, py,
+-- continent (player; nil: every dot judged by the name rule), radius
+-- (outdoor view radius) }.
+-- Returns events in name order, each { kind, name, ... }, and the names
+-- whose new dots want a place (Walk:placed):
+-- - new: count, remembered (dots that could be in view); the one to speak
+-- - fewer: count, remembered (dots that should be in view)
 -- - back: missing (clock seconds); they showed again in time, silent
--- - gone: dropped (dots), missing; they count as out of range now
+-- - gone: dropped (dots), missing; missing too long, out of range now
+-- - left: distance; a placed dot the player walked away from
+-- - follows: distance; a placed dot still in view past its range: its
+--   name goes to the name rule for the session
 -- - indoors / outdoors: the clock stopped or runs again
+-- - jump: distance (nil: another continent); no follow check this read
 function Walk:update(read)
-    local events = {}
+    local events, locate = {}, {}
     local dt = 0
     if self.lastAt ~= nil and not read.indoors and not self.lastIndoors then
         dt = math.max(0, math.min(read.now - self.lastAt, Walk.MAX_GAP))
@@ -764,7 +793,22 @@ function Walk:update(read)
     if self.lastAt ~= nil and (read.indoors and true or false) ~= (self.lastIndoors and true or false) then
         tinsert(events, { kind = read.indoors and "indoors" or "outdoors" })
     end
+    local jumped = false
+    if read.px ~= nil and self.lastPx ~= nil then
+        if read.continent ~= self.lastContinent then
+            jumped = true
+            tinsert(events, { kind = "jump" })
+        else
+            local step = math.sqrt(distanceSq(read.px, read.py, self.lastPx, self.lastPy))
+            if step > Walk.JUMP then
+                jumped = true
+                tinsert(events, { kind = "jump", distance = step })
+            end
+        end
+    end
     self.lastAt, self.lastIndoors = read.now, read.indoors
+    self.lastPx, self.lastPy, self.lastContinent = read.px, read.py, read.continent
+    local radius = read.radius or Walk.RADIUS
     for _, name in ipairs(sortedKeys(read.counts, self.names)) do
         local rec = self.names[name]
         if rec == nil then
@@ -772,24 +816,81 @@ function Walk:update(read)
             self.names[name] = rec
         end
         local count = read.counts[name] or 0
-        local remembered = #rec.dots
-        if count > remembered then
-            for _ = remembered + 1, count do
-                tinsert(rec.dots, {})
+        local near, band, far, loose = {}, {}, {}, {}
+        for _, dot in ipairs(rec.dots) do
+            if dot.wx == nil or read.px == nil then
+                tinsert(loose, dot)
+            else
+                dot.distance = dot.continent == read.continent
+                        and math.sqrt(distanceSq(dot.wx, dot.wy, read.px, read.py))
+                    or math.huge
+                if dot.distance > radius + Walk.MARGIN then
+                    tinsert(far, dot)
+                elseif dot.distance > radius - Walk.INNER then
+                    tinsert(band, dot)
+                else
+                    tinsert(near, dot)
+                end
             end
-            tinsert(events, { kind = "new", name = name, count = count, remembered = remembered })
+        end
+        if #far > 0 then
+            -- A real dot leaves view before the player is that far from
+            -- it; one the reads still show was drawn at a fixed distance
+            -- (a town's arrow) or walked along.
+            if count > #near + #band + #loose and not jumped and not rec.short then
+                self.nameOnly[name] = true
+                tinsert(events, { kind = "follows", name = name, distance = far[1].distance })
+                for _, dot in ipairs(rec.dots) do
+                    unplace(dot)
+                end
+                near, band, loose = {}, {}, rec.dots
+            else
+                for _, dot in ipairs(far) do
+                    tinsert(events, { kind = "left", name = name, distance = dot.distance })
+                end
+                rec.dots = {}
+                for _, list in ipairs({ near, band, loose }) do
+                    for _, dot in ipairs(list) do
+                        tinsert(rec.dots, dot)
+                    end
+                end
+            end
+        end
+        local inView = #near + #loose
+        local canShow = inView + #band
+        if count > canShow then
+            for _ = canShow + 1, count do
+                tinsert(rec.dots, { fresh = true })
+            end
+            tinsert(events, { kind = "new", name = name, count = count, remembered = canShow })
             rec.short, rec.missing = false, 0
-        elseif count < remembered then
+            if read.px ~= nil and not self.nameOnly[name] then
+                tinsert(locate, name)
+            end
+        elseif count < inView then
             if not rec.short then
                 rec.short = true
-                tinsert(events, { kind = "fewer", name = name, count = count, remembered = remembered })
+                tinsert(events, { kind = "fewer", name = name, count = count, remembered = inView })
             end
             rec.missing = rec.missing + dt
             if rec.missing >= Walk.GONE_AFTER then
-                for _ = count + 1, remembered do
-                    tremove(rec.dots)
+                -- Unplaced dots first, then the nearest: the ones that
+                -- should show most surely.
+                table.sort(near, function(a, b)
+                    return a.distance < b.distance
+                end)
+                local drop = {}
+                for i = 1, inView - count do
+                    drop[loose[i] or near[i - #loose]] = true
                 end
-                tinsert(events, { kind = "gone", name = name, dropped = remembered - count, missing = rec.missing })
+                local kept = {}
+                for _, dot in ipairs(rec.dots) do
+                    if not drop[dot] then
+                        tinsert(kept, dot)
+                    end
+                end
+                rec.dots = kept
+                tinsert(events, { kind = "gone", name = name, dropped = inView - count, missing = rec.missing })
                 rec.short, rec.missing = false, 0
             end
         elseif rec.short then
@@ -800,17 +901,90 @@ function Walk:update(read)
             self.names[name] = nil
         end
     end
-    return events
+    return events, locate
 end
 
--- One line per remembered name, sorted, for /wv mscan walk.
-function Walk:describe()
+-- Where the dots of a name are, found by the sweep: positions { wx, wy }
+-- of every dot of it in view. A placed dot takes the nearest within MATCH
+-- (it may have walked); the rest go to unplaced dots, new ones first.
+-- Returns { placed = dots just placed, refreshed, extra (positions left
+-- over), unplaced (dots still without a place) }.
+function Walk:placed(name, positions, continent)
+    local result = { placed = {}, refreshed = 0, extra = 0, unplaced = 0 }
+    local rec = self.names[name]
+    if rec == nil or self.nameOnly[name] then
+        return result
+    end
+    local used = {}
+    for _, dot in ipairs(rec.dots) do
+        if dot.wx ~= nil and dot.continent == continent then
+            local best, bestD = nil, Walk.MATCH * Walk.MATCH
+            for i, pos in ipairs(positions) do
+                local d = distanceSq(dot.wx, dot.wy, pos.wx, pos.wy)
+                if not used[i] and d <= bestD then
+                    best, bestD = i, d
+                end
+            end
+            if best ~= nil then
+                used[best] = true
+                dot.wx, dot.wy = positions[best].wx, positions[best].wy
+                result.refreshed = result.refreshed + 1
+            end
+        end
+    end
+    local loose = {}
+    for _, dot in ipairs(rec.dots) do
+        if dot.wx == nil then
+            tinsert(loose, dot)
+        end
+    end
+    table.sort(loose, function(a, b)
+        return (a.fresh and 1 or 0) > (b.fresh and 1 or 0)
+    end)
+    local nextPos = 1
+    for _, dot in ipairs(loose) do
+        while used[nextPos] do
+            nextPos = nextPos + 1
+        end
+        local pos = positions[nextPos]
+        if pos == nil then
+            result.unplaced = result.unplaced + 1
+        else
+            used[nextPos] = true
+            dot.wx, dot.wy, dot.continent, dot.fresh = pos.wx, pos.wy, continent, nil
+            tinsert(result.placed, dot)
+        end
+    end
+    for i = 1, #positions do
+        if not used[i] then
+            result.extra = result.extra + 1
+        end
+    end
+    return result
+end
+
+-- One line per remembered name, sorted, for /wv mscan walk: its dots
+-- with distance (from px, py when given), the missing clock, the rule.
+function Walk:describe(px, py, continent)
     local lines = {}
     for _, name in ipairs(sortedKeys(self.names)) do
         local rec = self.names[name]
-        local line = string.format("%s: %d remembered", name, #rec.dots)
+        local parts = {}
+        for _, dot in ipairs(rec.dots) do
+            if dot.wx == nil then
+                tinsert(parts, "not placed")
+            elseif px == nil or dot.continent ~= continent then
+                tinsert(parts, "placed elsewhere")
+            else
+                tinsert(parts, string.format("%.0f yd", math.sqrt(distanceSq(dot.wx, dot.wy, px, py))))
+            end
+        end
+        local line = string.format("%s: %d remembered, %s", name, #rec.dots, table.concat(parts, ", "))
         if rec.short then
-            line = line .. string.format(", fewer in view for %.1f s", rec.missing)
+            line = line .. string.format("; fewer in view for %.1f s", rec.missing)
+        end
+        if self.nameOnly[name] then
+            line = line .. "; name rule"
         end
         tinsert(lines, line)
     end

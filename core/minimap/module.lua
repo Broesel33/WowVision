@@ -21,8 +21,10 @@ local settings = module:hasSettings()
 -- - The walking check (a setting): twice a second while moving, one read
 --   of the shrunk minimap with the player's own tracking; a name that
 --   comes into range is announced once, with its kind when a scan
---   already sorted it, and again only after it was out of view for 30
---   seconds of walking outdoors (Scan.Walk).
+--   already sorted it. A new dot is placed by a sweep while walking on;
+--   its name is said again only after the player walked out of its range
+--   (Scan.Walk). Dots without a place fall back to 30 seconds out of
+--   view while walking outdoors.
 --
 -- Entries live for the session. Quest givers go to the quest system's
 -- seen givers (Quests > Nearby, NPCs > Quest Givers), other NPCs to the
@@ -727,6 +729,17 @@ local function eventText(e)
         return string.format("back after %.1f s missing, silent: %s", e.missing, e.name)
     elseif e.kind == "gone" then
         return string.format("gone after %.1f s missing: %s, %d dropped", e.missing, e.name, e.dropped)
+    elseif e.kind == "left" then
+        return string.format("left range, %.0f yd from its place: %s", e.distance, e.name)
+    elseif e.kind == "follows" then
+        return string.format(
+            "still in view %.0f yd from its place: %s, a town arrow or a walking NPC; name rule from now",
+            e.distance,
+            e.name
+        )
+    elseif e.kind == "jump" then
+        return e.distance ~= nil and string.format("jumped %.0f yd: no follow check this read", e.distance)
+            or "other continent: no follow check this read"
     elseif e.kind == "indoors" then
         return "indoors: missing clock stopped"
     elseif e.kind == "outdoors" then
@@ -735,7 +748,21 @@ local function eventText(e)
     return e.kind .. (e.name ~= nil and (": " .. e.name) or "")
 end
 
--- A walking read: into the memory, the new names spoken.
+local COMPASS = { "north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west" }
+
+-- "231 yd north-west": a world point seen from the player.
+local function fromPlayer(px, py, wx, wy)
+    local north, east = wx - px, -(wy - py)
+    local angle = math.deg(math.atan2(east, north)) % 360
+    local word = COMPASS[math.floor(angle / 45 + 0.5) % 8 + 1]
+    return string.format("%.0f yd %s", math.sqrt(north * north + east * east), word)
+end
+
+-- The outdoor view radius at zoom 0, read on each outdoor walking check.
+module.outdoorRadius = Scan.Walk.RADIUS
+
+-- A walking read: into the memory, the new names spoken. Returns the
+-- names whose new dots want a place.
 function module:walkJudge(dots, indoors)
     local counts = Scan.counts(dots)
     local text = countsText(counts)
@@ -744,13 +771,87 @@ function module:walkJudge(dots, indoors)
         lastReadText = text .. where
         walkNote("read " .. where .. ": " .. text)
     end
-    local events = self.walk:update({ counts = counts, now = GetTime(), indoors = indoors })
+    -- Town arrows from the last scan: never placed.
+    for _, name in ipairs(self.places) do
+        self.walk.nameOnly[name] = true
+    end
+    local px, py, _, continent = UnitPosition("player")
+    local events, locate = self.walk:update({
+        counts = counts,
+        now = GetTime(),
+        indoors = indoors,
+        px = px,
+        py = py,
+        continent = continent,
+        radius = self.outdoorRadius,
+    })
     for _, e in ipairs(events) do
         walkNote(eventText(e))
         if e.kind == "new" then
             local kind = self.kinds[e.name]
             dotAlert:fire({ text = kind ~= nil and (e.name .. ", " .. kind) or e.name })
         end
+    end
+    return locate
+end
+
+-- Inside the walking check: the sweep (as the scan does it) over the
+-- full-size minimap for the names with new dots, while the player walks
+-- on. Positions are taken from the player's position halfway through.
+function module:walkLocate(task, state, cursorX, cursorY, names)
+    task.locating = true
+    task.cursorX, task.cursorY = cursorX, cursorY
+    task.stats = { questions = 0, frames = 0, ms = 0, dots = 0, merged = 0 }
+    local work = {}
+    for _, name in ipairs(names) do
+        tinsert(work, { name = name })
+    end
+    local viewRadius = C_Minimap.GetViewRadius()
+    local facing = GetCVar("rotateMinimap") == "1" and (GetPlayerFacing() or 0) or 0
+    local startX, startY, _, continent = UnitPosition("player")
+    local started = GetTime()
+    Engine.fullSize(state, cursorX, cursorY)
+    Engine.wait(2)
+    local radius = state.width / 2
+    local found = sweepPositions(task, work, radius) or {}
+    local endX, endY = UnitPosition("player")
+    if endX == nil then
+        endX, endY = startX, startY
+    end
+    local px, py = (startX + endX) / 2, (startY + endY) / 2
+    local s = task.stats
+    walkNote(
+        string.format(
+            "located %s: %d questions, %d extra frames, %.2f s, walked %.0f yd meanwhile",
+            table.concat(names, ", "),
+            s.questions,
+            s.frames,
+            GetTime() - started,
+            math.sqrt((endX - startX) ^ 2 + (endY - startY) ^ 2)
+        )
+    )
+    for _, name in ipairs(names) do
+        local positions = {}
+        for _, offset in ipairs(found[name] or {}) do
+            local north, west = Scan.offsetToWorld(offset[1], offset[2], viewRadius / radius, facing)
+            tinsert(positions, { wx = px + north, wy = py + west })
+        end
+        local result = self.walk:placed(name, positions, continent)
+        local parts = {}
+        for _, dot in ipairs(result.placed) do
+            tinsert(parts, fromPlayer(px, py, dot.wx, dot.wy))
+        end
+        local line = "placed " .. name .. ": " .. (#parts > 0 and table.concat(parts, ", ") or "none")
+        if result.refreshed > 0 then
+            line = line .. string.format("; %d known found again", result.refreshed)
+        end
+        if result.unplaced > 0 then
+            line = line .. string.format("; %d not found, name rule for them", result.unplaced)
+        end
+        if result.extra > 0 then
+            line = line .. string.format("; %d more found than new", result.extra)
+        end
+        walkNote(line)
     end
 end
 
@@ -777,18 +878,41 @@ function module:walkCheck()
         Engine.shrink(x, y)
         Engine.wait(2)
         local dots = Engine.readDots()
-        module:walkJudge(dots, IsIndoors ~= nil and IsIndoors() or false)
+        local indoors = IsIndoors ~= nil and IsIndoors() or false
+        if not indoors then
+            local radius = C_Minimap.GetViewRadius()
+            if type(radius) == "number" and not WowVision.isSecret(radius) and radius > 0 then
+                module.outdoorRadius = radius
+            end
+        end
+        local locate = module:walkJudge(dots, indoors)
+        if #locate > 0 then
+            module:walkLocate(task, state, x, y, locate)
+        end
     end
     task.check = function()
         if InCombatLockdown() then
             return "combat"
+        end
+        if task.locating then
+            -- The sweep asks points of the minimap under the resting cursor.
+            if IsMouselooking ~= nil and IsMouselooking() then
+                return "mouselook"
+            end
+            local x, y = GetCursorPosition()
+            if math.abs(x - task.cursorX) > 2 or math.abs(y - task.cursorY) > 2 then
+                return "mouse"
+            end
         end
         return nil
     end
     task.finish = function(ok, reason, err)
         self.walkTask = nil
         if not ok then
-            walkNote("check stopped: " .. tostring(reason or "error"))
+            walkNote(
+                (task.locating and "locating stopped, new dots stay on the name rule: " or "check stopped: ")
+                    .. tostring(reason or "error")
+            )
             if err ~= nil then
                 geterrorhandler()(err)
             end
@@ -1090,8 +1214,16 @@ end
 
 -- /wv mscan walk: what the walking memory holds now.
 function module:walkText()
-    local lines = { "WowVision minimap walking memory" }
-    local described = self.walk:describe()
+    local lines = {
+        string.format(
+            "WowVision minimap walking memory; outdoor view radius %.0f yd, in view within %.0f, out of range past %.0f",
+            self.outdoorRadius,
+            self.outdoorRadius - Scan.Walk.INNER,
+            self.outdoorRadius + Scan.Walk.MARGIN
+        ),
+    }
+    local px, py, _, continent = UnitPosition("player")
+    local described = self.walk:describe(px, py, continent)
     if #described == 0 then
         tinsert(lines, "nothing remembered")
     end

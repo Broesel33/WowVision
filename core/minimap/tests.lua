@@ -477,6 +477,92 @@ testRunner:addSuite("MinimapSweep", {
         t:assertEqual(kinds(walk:update({ counts = { Peacebloom = 2 }, now = 31.5 })), "new Peacebloom")
     end,
 
+    ["walking, placed: only walking past range and back makes it new"] = function(t)
+        local walk = Scan.Walk.new()
+        local function at(x, counts, now)
+            return walk:update({ counts = counts, now = now, px = x, py = 0, continent = 0, radius = 233 })
+        end
+        local events, locate = at(220, { Mailbox = 1 }, 0)
+        t:assertEqual(kinds(events), "new Mailbox")
+        t:assertEqual(table.concat(locate, ","), "Mailbox")
+        local result = walk:placed("Mailbox", { { wx = 0, wy = 0 } }, 0)
+        t:assertEqual(#result.placed, 1)
+        -- Out of view just past the rim for a minute, walking outdoors:
+        -- it may or may not show there, so nothing is said.
+        events = walkFor(walk, {}, 0.5, 60, false, function()
+            return 250, 0
+        end)
+        t:assertEqual(kinds(events), "")
+        t:assertEqual(kinds(at(225, { Mailbox = 1 }, 60.5)), "")
+        -- Past range plus margin: left; back in view: new.
+        t:assertEqual(kinds(at(260, {}, 61)), "left Mailbox")
+        t:assertEqual(kinds(at(230, { Mailbox = 1 }, 61.5)), "new Mailbox")
+    end,
+
+    ["walking, placed: a building changes nothing"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Mailbox = 1 }, now = 0, px = 100, py = 0, continent = 0 })
+        walk:placed("Mailbox", { { wx = 0, wy = 0 } }, 0)
+        local events = walkFor(walk, {}, 0.5, 120, true, function()
+            return 100, 0
+        end)
+        t:assertEqual(kinds(events), "indoors,fewer Mailbox")
+        events = walk:update({ counts = { Mailbox = 1 }, now = 120.5, px = 100, py = 0, continent = 0 })
+        t:assertEqual(kinds(events), "outdoors,back Mailbox")
+    end,
+
+    ["walking, placed: missing 30 s while it should show means gone"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Peacebloom = 1 }, now = 0, px = 50, py = 0, continent = 0 })
+        walk:placed("Peacebloom", { { wx = 0, wy = 0 } }, 0)
+        -- Picked by someone else; the player walks around nearby.
+        local events = walkFor(walk, {}, 0.5, 31, false, function(now)
+            return 50 + now, 0
+        end)
+        t:assertEqual(kinds(events), "fewer Peacebloom,gone Peacebloom")
+        t:assertNil(walk.names["Peacebloom"])
+    end,
+
+    ["walking, placed: a second one in view is new, the first found again stays"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Peacebloom = 1 }, now = 0, px = 0, py = 0, continent = 0 })
+        walk:placed("Peacebloom", { { wx = 100, wy = 0 } }, 0)
+        local events, locate = walk:update({ counts = { Peacebloom = 2 }, now = 0.5, px = 0, py = 0, continent = 0 })
+        t:assertEqual(kinds(events), "new Peacebloom")
+        t:assertEqual(#locate, 1)
+        -- The sweep finds both: the old one moved a little, the new one far off.
+        local result = walk:placed("Peacebloom", { { wx = -150, wy = 20 }, { wx = 104, wy = 3 } }, 0)
+        t:assertEqual(result.refreshed, 1)
+        t:assertEqual(#result.placed, 1)
+        t:assertEqual(result.placed[1].wx, -150)
+        t:assertEqual(result.extra, 0)
+        t:assertEqual(walk.names["Peacebloom"].dots[1].wx, 104)
+    end,
+
+    ["walking, placed: one still in view past its range goes to the name rule"] = function(t)
+        -- A town's arrow: always about 209 yards ahead.
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Goldshire = 1 }, now = 0, px = 0, py = 0, continent = 0 })
+        walk:placed("Goldshire", { { wx = 209, wy = 0 } }, 0)
+        local events = walkFor(walk, { Goldshire = 1 }, 0.5, 80, false, function(now)
+            return now * 7, 0
+        end)
+        t:assertEqual(kinds(events), "follows Goldshire")
+        t:assertTrue(walk.nameOnly["Goldshire"])
+        -- A new read of it asks for no place any more.
+        local _, locate = walk:update({ counts = { Goldshire = 2 }, now = 81, px = 567, py = 0, continent = 0 })
+        t:assertEqual(#locate, 0)
+    end,
+
+    ["walking, placed: a hearthstone is a jump, not a dot following"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Mailbox = 1 }, now = 0, px = 100, py = 0, continent = 0 })
+        walk:placed("Mailbox", { { wx = 0, wy = 0 } }, 0)
+        local events = walk:update({ counts = { Mailbox = 1 }, now = 12, px = 5000, py = 0, continent = 0 })
+        t:assertEqual(kinds(events), "jump,left Mailbox,new Mailbox")
+        t:assertNil(walk.nameOnly["Mailbox"])
+    end,
+
     ["a read with more of any name than the baseline has extras"] = function(t)
         local base = { { name = "Marshal McBride" } }
         t:assertFalse(Scan.hasExtras(base, { { name = "Marshal McBride" } }))
