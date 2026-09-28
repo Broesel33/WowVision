@@ -712,9 +712,10 @@ local lastReadText = nil
 -- The arrow atlases go into the log once a session, with the first arrow.
 local atlasNoted = false
 
--- "Mailbox x2, Peacebloom below": a read's names with their counts and
--- arrows, sorted. An arrow the game's atlases do not explain shows its
--- texture escape, to be looked at.
+-- "Mailbox x2, Peacebloom below, Copper Vein grey": a read's names with
+-- their counts, arrows and grey (inside a building or underground),
+-- sorted. An arrow Scan.arrowLevel does not explain shows its texture
+-- escape, to be looked at.
 local function readText(dots)
     local counts, keys = {}, {}
     for _, dot in ipairs(dots) do
@@ -723,6 +724,9 @@ local function readText(dots)
             key = key .. " " .. dot.level
         elseif dot.arrow ~= nil then
             key = key .. " arrow " .. dot.arrow.spec
+        end
+        if dot.otherLevel then
+            key = key .. " grey"
         end
         if counts[key] == nil then
             counts[key] = 0
@@ -754,6 +758,21 @@ local function arrowAtlasText()
         end
     end
     return "arrow atlases (left right top bottom): " .. table.concat(parts, "; ")
+end
+
+-- True when every dot of the name in the read is grey: inside a building
+-- or underground while the player is not (Warcraft Wiki, Minimap).
+local function nameIndoors(dots, name)
+    local any = false
+    for _, dot in ipairs(dots) do
+        if dot.name == name then
+            if not dot.otherLevel then
+                return false
+            end
+            any = true
+        end
+    end
+    return any
 end
 
 -- "above" or "below" when every dot of the name in the read has that
@@ -852,6 +871,9 @@ function module:walkJudge(dots, indoors)
             local level = nameLevel(dots, e.name)
             if level ~= nil then
                 text = text .. ", " .. L[level]
+            end
+            if nameIndoors(dots, e.name) then
+                text = text .. ", " .. L["indoors"]
             end
             local kind = self.kinds[e.name]
             if kind ~= nil then
