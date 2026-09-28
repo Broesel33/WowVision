@@ -21,7 +21,8 @@ local settings = module:hasSettings()
 -- - The walking check (a setting): twice a second while moving, one read
 --   of the shrunk minimap with the player's own tracking; a name that
 --   comes into range is announced once, with its kind when a scan
---   already sorted it.
+--   already sorted it, and again only after it was out of view for 30
+--   seconds of walking outdoors (Scan.Walk).
 --
 -- Entries live for the session. Quest givers go to the quest system's
 -- seen givers (Quests > Nearby, NPCs > Quest Givers), other NPCs to the
@@ -61,21 +62,38 @@ local dotTTS = dotAlert:addOutput({
 -- off by the screen reader's own speech.
 local WALK_VOICE = 0
 
--- The walking check's log (/wv mscan log): each step it took or why
--- it did not run, repeats of the same skip folded into one line. A
--- diagnostic while the announcement is being tried out.
-local WALK_LOG_SIZE = 60
-module.walkLog = {}
+-- The walking check's log (/wv mscan log): what each read showed when it
+-- changed, every decision of the walking memory, and why a check did not
+-- run, repeats of the same line folded into one. Kept in the
+-- WowVisionDump saved variable (key minimapWalk), so after /reload or
+-- logout it can be read from the SavedVariables file. A diagnostic while
+-- the announcement is being tried out.
+local WALK_LOG_SIZE = 2000
+local WALK_LOG_SHOWN = 300
 local lastWalkNote = nil
+local sessionMarked = false
+
+local function walkLogLines()
+    WowVisionDump = WowVisionDump or {}
+    if type(WowVisionDump.minimapWalk) ~= "table" then
+        WowVisionDump.minimapWalk = {}
+    end
+    return WowVisionDump.minimapWalk
+end
 
 local function walkNote(text)
     if text == lastWalkNote then
         return
     end
     lastWalkNote = text
-    tinsert(module.walkLog, string.format("%.1f %s", GetTime(), text))
-    if #module.walkLog > WALK_LOG_SIZE then
-        tremove(module.walkLog, 1)
+    local lines = walkLogLines()
+    if not sessionMarked then
+        sessionMarked = true
+        tinsert(lines, "---- session " .. date("%Y-%m-%d %H:%M:%S") .. " ----")
+    end
+    tinsert(lines, date("%H:%M:%S") .. " " .. text)
+    while #lines > WALK_LOG_SIZE do
+        tremove(lines, 1)
     end
 end
 
@@ -137,9 +155,6 @@ local QUEST_FILTER_FLAG = {
     AccountCompletedQuests = "accountCompleted",
 }
 
--- Seconds before a name that left the walking check's range is announced
--- again, against flicker at the edge.
-local REANNOUNCE_AFTER = 30
 local WALK_INTERVAL = 0.5
 -- Yards: a scan's find replaces the entry of its name this close; a
 -- quest giver this close to a finished quest's point hands it in.
@@ -686,9 +701,58 @@ end
 
 -- ---- the walking check ----
 
-module.lastNames = {}
-module.announcedAt = {}
+-- What the walking check announced (Scan.Walk): a name is spoken again
+-- only after its dots were out of view for 30 seconds of walking
+-- outdoors.
+module.walk = Scan.Walk.new()
 module.centredOnce = false
+local lastReadText = nil
+
+-- "Mailbox x2, Peacebloom": a read's names with their counts, sorted.
+local function countsText(counts)
+    local parts = {}
+    for name, count in pairs(counts) do
+        tinsert(parts, count > 1 and (name .. " x" .. count) or name)
+    end
+    table.sort(parts)
+    return #parts > 0 and table.concat(parts, ", ") or "no names"
+end
+
+local function eventText(e)
+    if e.kind == "new" then
+        return string.format("new: %s, read %d, remembered %d", e.name, e.count, e.remembered)
+    elseif e.kind == "fewer" then
+        return string.format("fewer: %s, read %d of %d remembered", e.name, e.count, e.remembered)
+    elseif e.kind == "back" then
+        return string.format("back after %.1f s missing, silent: %s", e.missing, e.name)
+    elseif e.kind == "gone" then
+        return string.format("gone after %.1f s missing: %s, %d dropped", e.missing, e.name, e.dropped)
+    elseif e.kind == "indoors" then
+        return "indoors: missing clock stopped"
+    elseif e.kind == "outdoors" then
+        return "outdoors: missing clock runs"
+    end
+    return e.kind .. (e.name ~= nil and (": " .. e.name) or "")
+end
+
+-- A walking read: into the memory, the new names spoken.
+function module:walkJudge(dots, indoors)
+    local counts = Scan.counts(dots)
+    local text = countsText(counts)
+    local where = indoors and "indoors" or "outdoors"
+    if text .. where ~= lastReadText then
+        lastReadText = text .. where
+        walkNote("read " .. where .. ": " .. text)
+    end
+    local events = self.walk:update({ counts = counts, now = GetTime(), indoors = indoors })
+    for _, e in ipairs(events) do
+        walkNote(eventText(e))
+        if e.kind == "new" then
+            local kind = self.kinds[e.name]
+            dotAlert:fire({ text = kind ~= nil and (e.name .. ", " .. kind) or e.name })
+        end
+    end
+end
 
 function module:walkCheck()
     local task = {}
@@ -712,7 +776,8 @@ function module:walkCheck()
         Minimap:SetZoom(0)
         Engine.shrink(x, y)
         Engine.wait(2)
-        task.dots = Engine.readDots()
+        local dots = Engine.readDots()
+        module:walkJudge(dots, IsIndoors ~= nil and IsIndoors() or false)
     end
     task.check = function()
         if InCombatLockdown() then
@@ -720,32 +785,14 @@ function module:walkCheck()
         end
         return nil
     end
-    task.finish = function(ok)
+    task.finish = function(ok, reason, err)
         self.walkTask = nil
-        if not ok or task.dots == nil then
-            walkNote(ok and "read nothing" or "check failed")
-            return
-        end
-        local read = {}
-        for _, dot in ipairs(task.dots) do
-            tinsert(read, dot.name)
-        end
-        walkNote("read: " .. (#read > 0 and table.concat(read, ", ") or "no names"))
-        local now = GetTime()
-        local names = {}
-        for _, dot in ipairs(task.dots) do
-            names[dot.name] = true
-            if not self.lastNames[dot.name] then
-                local last = self.announcedAt[dot.name]
-                if last == nil or now - last > REANNOUNCE_AFTER then
-                    self.announcedAt[dot.name] = now
-                    local kind = self.kinds[dot.name]
-                    walkNote("announce: " .. dot.name)
-                    dotAlert:fire({ text = kind ~= nil and (dot.name .. ", " .. kind) or dot.name })
-                end
+        if not ok then
+            walkNote("check stopped: " .. tostring(reason or "error"))
+            if err ~= nil then
+                geterrorhandler()(err)
             end
         end
-        self.lastNames = names
     end
     Engine.run(task)
 end
@@ -1024,8 +1071,31 @@ function module:logText()
         end
     end
     tinsert(lines, "")
-    tinsert(lines, "Walking check, newest last")
-    for _, line in ipairs(self.walkLog) do
+    local walkLines = walkLogLines()
+    local first = math.max(1, #walkLines - WALK_LOG_SHOWN + 1)
+    tinsert(
+        lines,
+        string.format(
+            "Walking check, newest last, lines %d to %d of %d; all of them in WowVisionDump minimapWalk after /reload",
+            first,
+            #walkLines,
+            #walkLines
+        )
+    )
+    for i = first, #walkLines do
+        tinsert(lines, walkLines[i])
+    end
+    return table.concat(lines, "\n")
+end
+
+-- /wv mscan walk: what the walking memory holds now.
+function module:walkText()
+    local lines = { "WowVision minimap walking memory" }
+    local described = self.walk:describe()
+    if #described == 0 then
+        tinsert(lines, "nothing remembered")
+    end
+    for _, line in ipairs(described) do
         tinsert(lines, line)
     end
     return table.concat(lines, "\n")
@@ -1151,10 +1221,15 @@ local COMMANDS = {
     clear = function()
         module.store:clear()
         module.places = {}
+        module.walk = Scan.Walk.new()
+        walkNote("cleared: seen entries and walking memory")
         speak(L["Seen entries cleared"])
     end,
     log = function()
         WowVision.testing.showResults(module:logText())
+    end,
+    walk = function()
+        WowVision.testing.showResults(module:walkText())
     end,
     raw = function()
         module:rawRead()
@@ -1164,7 +1239,7 @@ local COMMANDS = {
 module:registerCommand({
     name = "mscan",
     scope = "WowVision",
-    description = "Minimap scanner: scan now; 'list' shows every seen entry, 'clear' forgets them, 'log' shows how the last scan and the walking check went, 'raw' one unparsed minimap read",
+    description = "Minimap scanner: scan now; 'list' shows every seen entry, 'clear' forgets them and the walking memory, 'log' shows how the last scan and the walking check went, 'walk' what the walking check remembers, 'raw' one unparsed minimap read",
     func = function(args)
         local word = (args or ""):lower():match("^%s*(%S+)")
         local command = word ~= nil and COMMANDS[word] or nil

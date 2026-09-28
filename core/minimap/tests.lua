@@ -27,6 +27,34 @@ local function find(list, name, category)
     return nil
 end
 
+-- Walking events as "kind name" joined by ",".
+local function kinds(events)
+    local out = {}
+    for _, e in ipairs(events) do
+        tinsert(out, e.name ~= nil and (e.kind .. " " .. e.name) or e.kind)
+    end
+    return table.concat(out, ",")
+end
+
+-- The same read every half second from `from` to `to` (inclusive);
+-- returns every event on the way.
+local function walkFor(walk, counts, from, to, indoors, position)
+    local all = {}
+    local now = from
+    while now <= to + 1e-9 do
+        local read = { counts = counts, now = now, indoors = indoors }
+        if position ~= nil then
+            local px, py = position(now)
+            read.px, read.py, read.continent = px, py, 0
+        end
+        for _, e in ipairs(walk:update(read)) do
+            tinsert(all, e)
+        end
+        now = now + 0.5
+    end
+    return all
+end
+
 testRunner:addSuite("MinimapScan", {
     ["one gold line splits into dots, a title joins the name before it"] = function(t)
         local dots = Scan.parseMouseover(tooltip("Llane Beshere\n <Kriegerlehrer>\nMarshal McBride"))
@@ -394,6 +422,59 @@ testRunner:addSuite("MinimapSweep", {
         t:assertEqual(Scan.edgeCentre(85.6, 99, 9.4), 95)
         t:assertEqual(Scan.edgeCentre(-99, -85.6, 9.4), -95)
         t:assertEqual(Scan.edgeCentre(1, 5, nil), 3)
+    end,
+
+    ["walking: a name is spoken once, a short gap stays silent"] = function(t)
+        local walk = Scan.Walk.new()
+        local events = walk:update({ counts = { Mailbox = 1 }, now = 0 })
+        t:assertEqual(kinds(events), "new Mailbox")
+        t:assertEqual(kinds(walk:update({ counts = { Mailbox = 1 }, now = 0.5 })), "")
+        -- Half a second, then five seconds, missing: back, not new.
+        t:assertEqual(kinds(walk:update({ counts = {}, now = 1 })), "fewer Mailbox")
+        t:assertEqual(kinds(walk:update({ counts = { Mailbox = 1 }, now = 1.5 })), "back Mailbox")
+        walkFor(walk, {}, 2, 7)
+        t:assertEqual(kinds(walk:update({ counts = { Mailbox = 1 }, now = 7.5 })), "back Mailbox")
+    end,
+
+    ["walking: 30 seconds of walking without it means gone, then it is new again"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Mailbox = 1 }, now = 0 })
+        local events = walkFor(walk, {}, 0.5, 31)
+        t:assertEqual(kinds(events), "fewer Mailbox,gone Mailbox")
+        t:assertEqual(kinds(walk:update({ counts = { Mailbox = 1 }, now = 31.5 })), "new Mailbox")
+    end,
+
+    ["walking: standing still adds at most one second to the clock"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Mailbox = 1, Peacebloom = 1 }, now = 0 })
+        -- The mailbox left view as the player stopped; five minutes later
+        -- the walk goes on: one second counted, not three hundred.
+        walk:update({ counts = { Peacebloom = 1 }, now = 0.5 })
+        t:assertEqual(kinds(walk:update({ counts = { Peacebloom = 1 }, now = 300 })), "")
+        t:assertEqual(kinds(walk:update({ counts = { Peacebloom = 1, Mailbox = 1 }, now = 300.5 })), "back Mailbox")
+    end,
+
+    ["walking: time indoors is not missing time"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Mailbox = 1, ["Olivia Burnside"] = 1 }, now = 0 })
+        -- Into the inn: only the innkeeper in view, for two minutes.
+        local events = walkFor(walk, { Innkeeper = 1 }, 0.5, 120, true)
+        t:assertEqual(kinds(events), "indoors,new Innkeeper,fewer Mailbox,fewer Olivia Burnside")
+        -- Out again: everything back, nothing spoken.
+        events = walk:update({ counts = { Mailbox = 1, ["Olivia Burnside"] = 1 }, now = 120.5 })
+        t:assertEqual(kinds(events), "outdoors,fewer Innkeeper,back Mailbox,back Olivia Burnside")
+    end,
+
+    ["walking: a second dot of a name in view is new"] = function(t)
+        local walk = Scan.Walk.new()
+        walk:update({ counts = { Peacebloom = 1 }, now = 0 })
+        local events = walk:update({ counts = { Peacebloom = 2 }, now = 0.5 })
+        t:assertEqual(kinds(events), "new Peacebloom")
+        t:assertEqual(events[1].remembered, 1)
+        -- One of them missing for good: dropped to one, then two is new again.
+        events = walkFor(walk, { Peacebloom = 1 }, 1, 31)
+        t:assertEqual(kinds(events), "fewer Peacebloom,gone Peacebloom")
+        t:assertEqual(kinds(walk:update({ counts = { Peacebloom = 2 }, now = 31.5 })), "new Peacebloom")
     end,
 
     ["a read with more of any name than the baseline has extras"] = function(t)

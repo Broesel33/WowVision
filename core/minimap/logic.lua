@@ -713,6 +713,110 @@ function Scan.giverStatus(wx, wy, points, radius)
     return "available"
 end
 
+-- ---- the walking memory ----
+-- What the walking check announced, per name: how many dots of it should
+-- be in view, and for how long fewer showed. A name is spoken when a read
+-- shows more dots of it than remembered; remembered dots only count as
+-- gone after GONE_AFTER seconds of walking outdoors with fewer in view.
+-- Standing, combat and a window under the cursor stop the reads; the
+-- minimap indoors shows only the building (and a shorter range), so time
+-- indoors does not count either.
+
+local Walk = {}
+Walk.__index = Walk
+Scan.Walk = Walk
+
+Walk.GONE_AFTER = 30
+-- The most one gap between two reads adds to the clock.
+Walk.MAX_GAP = 1
+
+function Walk.new()
+    return setmetatable({ names = {} }, Walk)
+end
+
+local function sortedKeys(...)
+    local seen, keys = {}, {}
+    for _, tbl in ipairs({ ... }) do
+        for key in pairs(tbl) do
+            if not seen[key] then
+                seen[key] = true
+                tinsert(keys, key)
+            end
+        end
+    end
+    table.sort(keys)
+    return keys
+end
+
+-- read: { counts = name -> dots read, now = seconds, indoors }.
+-- Returns events in name order, each { kind, name, ... }:
+-- - new: count, remembered (dots in view before); the one to speak
+-- - fewer: count, remembered; fewer dots than remembered showed
+-- - back: missing (clock seconds); they showed again in time, silent
+-- - gone: dropped (dots), missing; they count as out of range now
+-- - indoors / outdoors: the clock stopped or runs again
+function Walk:update(read)
+    local events = {}
+    local dt = 0
+    if self.lastAt ~= nil and not read.indoors and not self.lastIndoors then
+        dt = math.max(0, math.min(read.now - self.lastAt, Walk.MAX_GAP))
+    end
+    if self.lastAt ~= nil and (read.indoors and true or false) ~= (self.lastIndoors and true or false) then
+        tinsert(events, { kind = read.indoors and "indoors" or "outdoors" })
+    end
+    self.lastAt, self.lastIndoors = read.now, read.indoors
+    for _, name in ipairs(sortedKeys(read.counts, self.names)) do
+        local rec = self.names[name]
+        if rec == nil then
+            rec = { dots = {}, missing = 0 }
+            self.names[name] = rec
+        end
+        local count = read.counts[name] or 0
+        local remembered = #rec.dots
+        if count > remembered then
+            for _ = remembered + 1, count do
+                tinsert(rec.dots, {})
+            end
+            tinsert(events, { kind = "new", name = name, count = count, remembered = remembered })
+            rec.short, rec.missing = false, 0
+        elseif count < remembered then
+            if not rec.short then
+                rec.short = true
+                tinsert(events, { kind = "fewer", name = name, count = count, remembered = remembered })
+            end
+            rec.missing = rec.missing + dt
+            if rec.missing >= Walk.GONE_AFTER then
+                for _ = count + 1, remembered do
+                    tremove(rec.dots)
+                end
+                tinsert(events, { kind = "gone", name = name, dropped = remembered - count, missing = rec.missing })
+                rec.short, rec.missing = false, 0
+            end
+        elseif rec.short then
+            tinsert(events, { kind = "back", name = name, missing = rec.missing })
+            rec.short, rec.missing = false, 0
+        end
+        if #rec.dots == 0 then
+            self.names[name] = nil
+        end
+    end
+    return events
+end
+
+-- One line per remembered name, sorted, for /wv mscan walk.
+function Walk:describe()
+    local lines = {}
+    for _, name in ipairs(sortedKeys(self.names)) do
+        local rec = self.names[name]
+        local line = string.format("%s: %d remembered", name, #rec.dots)
+        if rec.short then
+            line = line .. string.format(", fewer in view for %.1f s", rec.missing)
+        end
+        tinsert(lines, line)
+    end
+    return lines
+end
+
 -- ---- real names for title-only dots ----
 
 -- Measured on WoW: Forever (2026-09-24): some NPCs new to Forever (a
