@@ -497,8 +497,11 @@ end
 -- names } in spell order (names from gatheringNames.lua, the client's
 -- locale or enUS). Second result: true when another tracking spell is on
 -- (hunter tracking and the like), whose dots no list sorts.
--- Tracking spells are never switched: turning one back on is a cast the
--- game refuses outside a key press (measured 2026-09-28).
+-- Tracking spells are never switched, by choice: C_Minimap.SetTracking
+-- cannot turn a spell back on outside a key press, but CastSpellByID can
+-- out of combat (measured 2026-09-28; other spells are forbidden). Each
+-- switch costs a global cooldown, about 3 s per scan for two gathering
+-- spells, while the name lists already sort what the minimap shows.
 function Scan.gatheringKinds(spells, names, locale)
     local bySpell = {}
     for _, kind in pairs(names or {}) do
