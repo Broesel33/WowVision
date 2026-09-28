@@ -89,7 +89,14 @@ function Scan.parseMouseover(data, isSecret)
             for part in tostring(text):gmatch("[^\n]+") do
                 local code, after = partColour(part, carried)
                 carried = after
-                local clean = trim(part:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+                -- A texture before a name is a small arrow (measured on
+                -- Forever 2026-09-28: gathering nodes read as
+                -- "|TInterface\Minimap\Minimap-PositionArrows:...|tSilberblatt"
+                -- from some spots); the dot is the same, only the name counts.
+                local arrow = part:match("|T[^|]*|t") ~= nil
+                local clean = trim(
+                    part:gsub("|T[^|]*|t", ""):gsub("|A[^|]*|a", ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+                )
                 if clean ~= "" then
                     local last = dots[#dots]
                     if clean:match("^<.*>$") then
@@ -97,7 +104,7 @@ function Scan.parseMouseover(data, isSecret)
                             last.subtitle = clean:sub(2, -2)
                         end
                     elseif not detailLine and not (code ~= nil and isWhiteCode(code)) then
-                        tinsert(dots, { name = clean, otherLevel = code ~= nil and isGreyCode(code) })
+                        tinsert(dots, { name = clean, otherLevel = code ~= nil and isGreyCode(code), arrow = arrow })
                     end
                 end
             end

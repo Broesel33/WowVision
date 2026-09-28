@@ -90,6 +90,18 @@ testRunner:addSuite("MinimapScan", {
         t:assertFalse(dots[5].otherLevel)
     end,
 
+    ["an arrow texture before a name is not part of it"] = function(t)
+        -- Walking log, Elwynn, 2026-09-28.
+        local dots = Scan.parseMouseover(tooltip(
+            "Friedensblume\n|TInterface\\Minimap\\Minimap-PositionArrows:0:0:0:0:16:32:0:16:0:16|tSilberblatt\n"
+                .. "|TInterface\\Minimap\\Minimap-PositionArrows:0:0:0:0:16:32:0:16:16:32|tSilberblatt"
+        ))
+        t:assertEqual(names(dots), "Friedensblume,Silberblatt,Silberblatt")
+        t:assertFalse(dots[1].arrow)
+        t:assertTrue(dots[2].arrow)
+        t:assertEqual(Scan.counts(dots)["Silberblatt"], 2)
+    end,
+
     ["grey names are on another level, until the colour ends"] = function(t)
         -- Northshire from outside the abbey, 2026-09-24.
         local dots = Scan.parseMouseover(tooltip(
