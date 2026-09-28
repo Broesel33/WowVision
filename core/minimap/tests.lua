@@ -102,15 +102,12 @@ testRunner:addSuite("MinimapScan", {
         t:assertEqual(dots[2].arrow.bottom, 0.5)
         t:assertEqual(dots[3].arrow.top, 0.5)
         t:assertEqual(Scan.counts(dots)["Silberblatt"], 2)
-        -- The atlases say which half is which.
-        local atlases = {
-            above = { left = 0, right = 1, top = 0, bottom = 0.5 },
-            below = { left = 0, right = 1, top = 0.5, bottom = 1 },
-        }
-        t:assertEqual(Scan.arrowLevel(dots[2].arrow, atlases), "above")
-        t:assertEqual(Scan.arrowLevel(dots[3].arrow, atlases), "below")
-        t:assertNil(Scan.arrowLevel(dots[2].arrow, nil))
-        t:assertNil(Scan.arrowLevel({ spec = "odd" }, atlases))
+        -- The top half is above the player, the bottom half below.
+        t:assertEqual(Scan.arrowLevel(dots[2].arrow), "above")
+        t:assertEqual(Scan.arrowLevel(dots[3].arrow), "below")
+        t:assertNil(Scan.arrowLevel(nil))
+        t:assertNil(Scan.arrowLevel({ spec = "odd" }))
+        t:assertNil(Scan.arrowLevel(Scan.textureCoords("Interface\\Other:0:0:0:0:16:32:0:16:0:16")))
     end,
 
     ["grey names are on another level, until the colour ends"] = function(t)

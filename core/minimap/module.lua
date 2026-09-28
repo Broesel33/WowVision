@@ -709,6 +709,8 @@ end
 module.walk = Scan.Walk.new()
 module.centredOnce = false
 local lastReadText = nil
+-- The arrow atlases go into the log once a session, with the first arrow.
+local atlasNoted = false
 
 -- "Mailbox x2, Peacebloom below": a read's names with their counts and
 -- arrows, sorted. An arrow the game's atlases do not explain shows its
@@ -734,6 +736,24 @@ local function readText(dots)
         tinsert(parts, counts[key] > 1 and (key .. " x" .. counts[key]) or key)
     end
     return #parts > 0 and table.concat(parts, ", ") or "no names"
+end
+
+-- The game's above and below arrows as the scanner reads them.
+local function arrowAtlasText()
+    local parts = {}
+    local atlases = Engine.arrowAtlases()
+    for _, level in ipairs({ "above", "below" }) do
+        local a = atlases[level]
+        if a == nil then
+            tinsert(parts, level .. " not known")
+        else
+            tinsert(
+                parts,
+                string.format("%s %s, %.3f %.3f %.3f %.3f", level, tostring(a.file), a.left, a.right, a.top, a.bottom)
+            )
+        end
+    end
+    return "arrow atlases (left right top bottom): " .. table.concat(parts, "; ")
 end
 
 -- "above" or "below" when every dot of the name in the read has that
@@ -797,6 +817,15 @@ module.outdoorRadius = Scan.Walk.RADIUS
 function module:walkJudge(dots, indoors)
     local counts = Scan.counts(dots)
     local text = readText(dots)
+    if not atlasNoted then
+        for _, dot in ipairs(dots) do
+            if dot.arrow ~= nil then
+                atlasNoted = true
+                walkNote(arrowAtlasText())
+                break
+            end
+        end
+    end
     local where = indoors and "indoors" or "outdoors"
     if text .. where ~= lastReadText then
         lastReadText = text .. where
@@ -1198,24 +1227,6 @@ function module:listText()
         tinsert(lines, self:categoryLabel("poi") .. ": " .. table.concat(self.places, ", "))
     end
     return table.concat(lines, "\n")
-end
-
--- The game's above and below arrows as the scanner reads them.
-local function arrowAtlasText()
-    local parts = {}
-    local atlases = Engine.arrowAtlases()
-    for _, level in ipairs({ "above", "below" }) do
-        local a = atlases[level]
-        if a == nil then
-            tinsert(parts, level .. " not known")
-        else
-            tinsert(
-                parts,
-                string.format("%s %s, %.3f %.3f %.3f %.3f", level, tostring(a.file), a.left, a.right, a.top, a.bottom)
-            )
-        end
-    end
-    return "arrow atlases (left right top bottom): " .. table.concat(parts, "; ")
 end
 
 -- /wv mscan log: how the last scan went, then the walking check's log.

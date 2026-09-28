@@ -95,23 +95,19 @@ function Scan.textureCoords(spec)
     }
 end
 
--- "above", "below" or nil: which of the game's arrow atlases (atlases =
--- { above = { left, right, top, bottom }, below = ... }, from
--- C_Texture.GetAtlasInfo) cuts the same part of the texture.
-function Scan.arrowLevel(arrow, atlases)
-    if arrow == nil or arrow.top == nil or atlases == nil then
+-- "above", "below" or nil for a dot's arrow. Minimap-PositionArrows holds
+-- two arrows one over the other. Measured on Forever (2026-09-28): diving
+-- in a lake under a Silberblatt seen on the shore just before, the dot
+-- read with the top half; the bottom half showed from higher ground.
+-- (The atlases MiniMap-PositionArrowUp/Down did not match these halves.)
+function Scan.arrowLevel(arrow)
+    if arrow == nil or arrow.top == nil or not arrow.spec:find("PositionArrows", 1, true) then
         return nil
     end
-    for _, level in ipairs({ "above", "below" }) do
-        local a = atlases[level]
-        if a ~= nil
-            and math.abs(arrow.left - a.left) < 0.05
-            and math.abs(arrow.right - a.right) < 0.05
-            and math.abs(arrow.top - a.top) < 0.05
-            and math.abs(arrow.bottom - a.bottom) < 0.05
-        then
-            return level
-        end
+    if arrow.bottom <= 0.55 then
+        return "above"
+    elseif arrow.top >= 0.45 then
+        return "below"
     end
     return nil
 end
