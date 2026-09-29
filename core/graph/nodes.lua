@@ -223,13 +223,7 @@ function nodes.proxyContextActions(target, clickLabels)
         })
         add({
             label = L["Drag"],
-            onActivate = function()
-                local frame = type(target) == "function" and target() or target
-                local script = frame ~= nil and frame.GetScript ~= nil and frame:GetScript("OnDragStart") or nil
-                if script ~= nil then
-                    script(frame)
-                end
-            end,
+            onActivate = nodes.dragScript(target),
         })
     end
 end
@@ -695,18 +689,25 @@ function nodes.joinLabel(...)
     return table.concat(out, ", ")
 end
 
--- A drag handler that picks up with the game API instead of running the
--- frame's OnDragStart as the addon (modern engine drag scripts are often
--- unreachable through GetScript, and running them writes addon-tainted state
--- onto Blizzard frames). isReference marks what lands on the cursor: a spell,
--- toy, pet, or action is a reference that the Destroy Cursor Item binding
--- just clears, a bag item goes through the destroy confirmation (see the
--- cursor module's pickupIsActionBar flag).
-function nodes.pickupAction(pickup, isReference)
+-- A drag handler that runs the frame's own OnDragStart, the way a mouse
+-- drag does, so the game's rules decide what lands on the cursor (locked
+-- bars, unlearned spells, revoked pets). target is a frame, or a function
+-- returning the frame that shows the entry now.
+function nodes.dragScript(target)
     return function()
-        WowVision.cursor = WowVision.cursor or {}
-        WowVision.cursor.pickupIsActionBar = isReference == true
-        pickup()
+        local frame = target
+        if type(target) == "function" then
+            -- Not "target() or target": a finder that finds nothing must
+            -- not leave the finder itself standing in for the frame.
+            frame = target()
+        end
+        if type(frame) ~= "table" or frame.GetScript == nil then
+            return
+        end
+        local script = frame:GetScript("OnDragStart")
+        if script ~= nil then
+            script(frame)
+        end
     end
 end
 
@@ -723,7 +724,7 @@ end
 --   selected = function() -> bool?,
 --   tooltip = function(tooltip, frame)?,
 --   rightClick = false?,           -- the right button does nothing here
---   drag = function()?,            -- a nodes.pickupAction handler
+--   drag = true?,                  -- Drag runs the found button's drag script
 -- }
 function nodes.proxyFoundButton(config)
     local find = config.find
@@ -750,24 +751,25 @@ function nodes.proxyFoundButton(config)
     if config.rightClick ~= false then
         tinsert(bindings, { binding = "rightClick", type = "Click", emulatedKey = "RightButton", target = find })
     end
-    if config.drag ~= nil then
-        tinsert(bindings, { binding = "drag", type = "Function", func = config.drag })
+    if config.drag then
+        tinsert(bindings, { binding = "drag", type = "Function", func = nodes.dragScript(find) })
     end
-    -- The standard click entries, and Drag only through config.drag (the
-    -- default Drag entry would run OnDragStart).
+    -- The standard click entries, and the standard Drag entry only when the
+    -- caller asked for drag.
     local clickActions = nodes.proxyContextActions(find)
     local vtable = {
         controlType = graph.controlTypes.button,
         contextActions = function(add)
             clickActions(function(entry)
                 local click = entry.click
-                if click ~= nil and (config.rightClick ~= false or click.emulatedKey ~= "RightButton") then
+                if click == nil then
+                    if config.drag then
+                        add(entry)
+                    end
+                elseif config.rightClick ~= false or click.emulatedKey ~= "RightButton" then
                     add(entry)
                 end
             end)
-            if config.drag ~= nil then
-                add({ label = L["Drag"], onActivate = config.drag })
-            end
         end,
         announcements = announcements,
         bindings = bindings,

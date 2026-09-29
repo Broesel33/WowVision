@@ -63,12 +63,7 @@ local function spellNode(book, bank, actionID)
             local item = button:GetParent()
             tooltip:SetSpellBookItem(item.slotIndex, item.spellBank)
         end,
-        drag = nodes.pickupAction(function()
-            local item = findItem(book, bank, actionID)
-            if item ~= nil then
-                C_SpellBook.PickupSpellBookItem(item.slotIndex, item.spellBank)
-            end
-        end, true),
+        drag = true,
     })
 end
 

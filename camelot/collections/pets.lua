@@ -55,14 +55,13 @@ local function petRow(data, index, helpers)
         onFocusTick = helpers.onFocusTick,
         onUnfocus = helpers.onUnfocus,
     }
-    -- Only owned pets can be picked up (to an action bar).
+    -- Only owned pets can be picked up (to an action bar): the row's own
+    -- drag script picks up the pet it shows.
     if data.petID ~= nil then
         tinsert(vtable.bindings, {
             binding = "drag",
             type = "Function",
-            func = nodes.pickupAction(function()
-                C_PetJournal.PickupPet(data.petID)
-            end, true),
+            func = nodes.dragScript(helpers.target),
         })
     end
     return vtable

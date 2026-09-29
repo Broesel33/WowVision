@@ -44,12 +44,7 @@ local function spellNode(button)
             end
         end,
         rightClick = false,
-        drag = nodes.pickupAction(function()
-            local slot = find() ~= nil and ProfessionsBook_GetSpellBookItemSlot(button) or nil
-            if slot ~= nil then
-                C_SpellBook.PickupSpellBookItem(slot, Enum.SpellBookSpellBank.Player)
-            end
-        end, true),
+        drag = true,
     })
 end
 

@@ -666,18 +666,23 @@ testRunner:addSuite("GraphFoundButton", {
     end,
 
     ["proxyFoundButton rightClick=false drops the right click everywhere"] = function(t)
-        local dragged = false
+        local dragged = nil
+        local frame = {
+            GetScript = function(self, name)
+                return name == "OnDragStart" and function(owner)
+                    dragged = owner
+                end or nil
+            end,
+        }
         local vtable = graph.nodes.proxyFoundButton({
             find = function()
-                return {}
+                return frame
             end,
             label = function()
                 return "Tab"
             end,
             rightClick = false,
-            drag = function()
-                dragged = true
-            end,
+            drag = true,
         })
         for _, binding in ipairs(vtable.bindings) do
             t:assertNotEqual(binding.binding, "rightClick")
@@ -688,15 +693,36 @@ testRunner:addSuite("GraphFoundButton", {
         end)
         t:assertEqual(#labels, 2, "left click and drag")
         labels[2].onActivate()
-        t:assertEqual(dragged, true)
+        t:assertEqual(dragged, frame, "drag runs the found frame's own drag script")
+        dragged = nil
+        vtable.bindings[#vtable.bindings].func()
+        t:assertEqual(dragged, frame)
     end,
 
-    ["pickupAction records a reference pickup"] = function(t)
-        local picked = false
-        graph.nodes.pickupAction(function()
-            picked = true
-        end, true)()
-        t:assertEqual(picked, true)
-        t:assertEqual(WowVision.cursor.pickupIsActionBar, true)
+    ["proxyFoundButton without drag offers no Drag entry"] = function(t)
+        local vtable = graph.nodes.proxyFoundButton({
+            find = function()
+                return {}
+            end,
+            label = function()
+                return "Tab"
+            end,
+        })
+        local count = 0
+        vtable.contextActions(function()
+            count = count + 1
+        end)
+        t:assertEqual(count, 2, "left and right click only")
+        for _, binding in ipairs(vtable.bindings) do
+            t:assertNotEqual(binding.binding, "drag")
+        end
+    end,
+
+    ["dragScript tolerates a missing frame or script"] = function(t)
+        graph.nodes.dragScript(function()
+            return nil
+        end)()
+        graph.nodes.dragScript({})()
+        t:assertTrue(true)
     end,
 })

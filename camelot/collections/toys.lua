@@ -44,9 +44,7 @@ local function toyNode(itemID)
         tooltip = function(tooltip)
             tooltip:SetToyByItemID(itemID)
         end,
-        drag = nodes.pickupAction(function()
-            C_ToyBox.PickupToyBoxItem(itemID)
-        end, true),
+        drag = true,
     })
 end
 
