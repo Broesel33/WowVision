@@ -69,8 +69,7 @@ local function serviceLabel(index)
     return label
 end
 
-local function emitService(builder, data, position, helpers)
-    local index = servicePayload(data).skillIndex
+local function serviceAnnouncements(index)
     local category = getServiceInfo(index).category
 
     local announcements = {
@@ -102,10 +101,13 @@ local function emitService(builder, data, position, helpers)
             live = "focus",
         })
     end
+    return announcements
+end
 
+local function emitService(builder, data, position, helpers)
     builder:addItem(helpers.id, {
         controlType = graph.controlTypes.button,
-        announcements = announcements,
+        announcements = serviceAnnouncements(servicePayload(data).skillIndex),
         bindings = {
             { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
         },
@@ -185,6 +187,25 @@ local function render(builder, screen)
         return
     end
     builder:pushContext("trainer", ClassTrainerNameText ~= nil and ClassTrainerNameText:GetText() or L["Training"])
+
+    -- WoW: Forever lifts the profession's next rank (Apprentice Cooking for
+    -- someone who has not learned it yet) out of the service list into its
+    -- own button above it; the list never contains that service.
+    local stepButton = ClassTrainerFrame.skillStepButton
+    local stepIndex = GetTrainerServiceStepIndex ~= nil and GetTrainerServiceStepIndex() or nil
+    if stepButton ~= nil and stepButton:IsShown() and stepIndex ~= nil then
+        builder:beginStop("step")
+        builder:addItem(
+            ControlId.structural("step"),
+            nodes.attachHover({
+                controlType = graph.controlTypes.button,
+                announcements = serviceAnnouncements(stepIndex),
+                bindings = {
+                    { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = stepButton },
+                },
+            }, stepButton)
+        )
+    end
 
     builder:beginStop("services")
     if ClassTrainerFrame.ScrollBox ~= nil then
