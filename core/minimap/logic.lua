@@ -172,7 +172,12 @@ function Scan.rawLines(data, isSecret)
         elseif text ~= nil then
             local hex = "none"
             if type(color) == "table" and color.r ~= nil then
-                hex = string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255)
+                hex = string.format(
+                    "%02x%02x%02x",
+                    math.floor(color.r * 255 + 0.5),
+                    math.floor(color.g * 255 + 0.5),
+                    math.floor(color.b * 255 + 0.5)
+                )
             end
             local shown = tostring(text):gsub("|", "||"):gsub("\n", "\\n")
             tinsert(out, "[" .. hex .. "] " .. shown)
