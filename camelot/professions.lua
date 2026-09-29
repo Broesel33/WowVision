@@ -11,7 +11,7 @@ local ControlId = graph.ControlId
 -- card per profession (two primary, then cooking, fishing, first aid) with
 -- the rank, the profession's spells (Find Herbs, Find Minerals, the
 -- crafting windows), and unlearn on the primary cards. The same frame hosts
--- the retail crafting page, which is not covered yet.
+-- the crafting page (crafting.lua).
 --
 -- The side tabs are left out: they are plain frames with no secure click,
 -- and switching pages as the addon would rebuild the cards tainted, so the
@@ -102,9 +102,9 @@ local function render(builder, screen)
     if frame == nil or not frame:IsShown() then
         return
     end
-    builder:pushContext("professions", L["Professions"])
     local book = frame.BookPage
-    if book ~= nil and book:IsShown() then
+    if book:IsShown() then
+        builder:pushContext("professions", L["Professions"])
         local content = book.ProfessionsContentFrame
         for _, key in ipairs(CARDS) do
             local card = content[key]
@@ -112,11 +112,10 @@ local function render(builder, screen)
                 renderCard(builder, key, card)
             end
         end
-    else
-        builder:beginStop("unimplemented")
-        builder:addItem(ControlId.structural("unimplemented"), nodes.text({ label = L["Not implemented yet"] }))
+        builder:popContext()
+    elseif frame.CraftingPage:IsShown() then
+        module.renderCraftingPage(builder, frame)
     end
-    builder:popContext()
 end
 
 module:registerWindow({
