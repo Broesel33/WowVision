@@ -189,3 +189,27 @@ module:registerBinding({
         WowVision.UIHost:openWindow("bars")
     end,
 })
+
+-- Unlock the action bars once per character. With Lock Action Bars on (the
+-- game's default) dragging an action off a bar does nothing unless the
+-- pick up key is held, and nothing says so; players took that for a broken
+-- drag. The lock is a plain console variable on every client (the game
+-- reads it live through Settings.GetValue("lockActionBars")), so setting it
+-- leaves no taint. Done once: a player who locks the bars again keeps them
+-- locked on this character.
+local settings = module:hasSettings()
+settings:add({
+    type = "Bool",
+    key = "actionBarsUnlocked",
+    default = false,
+    global = false,
+    showInUI = false,
+})
+
+function module:onFullEnable()
+    local getCVar = C_CVar ~= nil and C_CVar.GetCVar or GetCVar
+    local setCVar = C_CVar ~= nil and C_CVar.SetCVar or SetCVar
+    if WowVision.actionBarLock.unlockOnce(self.settings, getCVar, setCVar) then
+        print(L["WowVision unlocked your action bars so that dragging works. You can lock them again in the game options under Action Bars."])
+    end
+end

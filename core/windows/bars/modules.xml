@@ -1,6 +1,8 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\..\FrameXML\UI.xsd">
 
+  <Script file="lock.lua" />
+  <Script file="tests.lua" />
   <Script file="bars.lua" />
   <Script file="MainActionBar.lua" />
   <Script file="PetActionBar.lua" />
