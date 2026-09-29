@@ -43,6 +43,38 @@ local function getServiceInfo(index)
     return { name = a, rank = b, category = c, isExpanded = d }
 end
 
+-- The "Requires" line Blizzard prints under each row: level, profession rank
+-- (Cooking (50)) and abilities, built from the same globals the row uses so
+-- it reads in the client's language.
+local function serviceRequirements(index, info)
+    local parts = {}
+    local levelReq = info.levelReq
+    if levelReq == nil and GetTrainerServiceLevelReq ~= nil then
+        levelReq = GetTrainerServiceLevelReq(index)
+    end
+    if levelReq ~= nil and levelReq > 1 then
+        tinsert(parts, format(TRAINER_REQ_LEVEL, levelReq))
+    end
+    if GetTrainerServiceSkillReq ~= nil then
+        local skill, rank = GetTrainerServiceSkillReq(index)
+        if skill ~= nil and skill ~= "" then
+            tinsert(parts, format(TRAINER_REQ_SKILL_RANK, skill, rank))
+        end
+    end
+    if GetTrainerServiceNumAbilityReq ~= nil then
+        for i = 1, GetTrainerServiceNumAbilityReq(index) or 0 do
+            local ability = GetTrainerServiceAbilityReq(index, i)
+            if ability ~= nil and ability ~= "" then
+                tinsert(parts, ability)
+            end
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    return REQUIRES_LABEL .. " " .. table.concat(parts, PLAYER_LIST_DELIMITER)
+end
+
 local function serviceLabel(index)
     local info = getServiceInfo(index)
     if info.name == nil then
@@ -62,15 +94,17 @@ local function serviceLabel(index)
         if cost ~= nil and cost > 0 then
             label = label .. ", " .. C_CurrencyInfo.GetCoinText(cost)
         end
-        if info.category == "unavailable" and info.levelReq ~= nil and info.levelReq > 0 then
-            label = label .. ", " .. L["Level"] .. " " .. tostring(info.levelReq)
+        if info.category ~= "used" then
+            local requirements = serviceRequirements(index, info)
+            if requirements ~= nil then
+                label = label .. ", " .. requirements
+            end
         end
     end
     return label
 end
 
-local function emitService(builder, data, position, helpers)
-    local index = servicePayload(data).skillIndex
+local function serviceAnnouncements(index)
     local category = getServiceInfo(index).category
 
     local announcements = {
@@ -102,10 +136,13 @@ local function emitService(builder, data, position, helpers)
             live = "focus",
         })
     end
+    return announcements
+end
 
+local function emitService(builder, data, position, helpers)
     builder:addItem(helpers.id, {
         controlType = graph.controlTypes.button,
-        announcements = announcements,
+        announcements = serviceAnnouncements(servicePayload(data).skillIndex),
         bindings = {
             { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = helpers.target },
         },
@@ -185,6 +222,25 @@ local function render(builder, screen)
         return
     end
     builder:pushContext("trainer", ClassTrainerNameText ~= nil and ClassTrainerNameText:GetText() or L["Training"])
+
+    -- WoW: Forever lifts the profession's next rank (Apprentice Cooking for
+    -- someone who has not learned it yet) out of the service list into its
+    -- own button above it; the list never contains that service.
+    local stepButton = ClassTrainerFrame.skillStepButton
+    local stepIndex = GetTrainerServiceStepIndex ~= nil and GetTrainerServiceStepIndex() or nil
+    if stepButton ~= nil and stepButton:IsShown() and stepIndex ~= nil then
+        builder:beginStop("step")
+        builder:addItem(
+            ControlId.structural("step"),
+            nodes.attachHover({
+                controlType = graph.controlTypes.button,
+                announcements = serviceAnnouncements(stepIndex),
+                bindings = {
+                    { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = stepButton },
+                },
+            }, stepButton)
+        )
+    end
 
     builder:beginStop("services")
     if ClassTrainerFrame.ScrollBox ~= nil then
