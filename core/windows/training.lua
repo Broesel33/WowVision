@@ -43,6 +43,38 @@ local function getServiceInfo(index)
     return { name = a, rank = b, category = c, isExpanded = d }
 end
 
+-- The "Requires" line Blizzard prints under each row: level, profession rank
+-- (Cooking (50)) and abilities, built from the same globals the row uses so
+-- it reads in the client's language.
+local function serviceRequirements(index, info)
+    local parts = {}
+    local levelReq = info.levelReq
+    if levelReq == nil and GetTrainerServiceLevelReq ~= nil then
+        levelReq = GetTrainerServiceLevelReq(index)
+    end
+    if levelReq ~= nil and levelReq > 1 then
+        tinsert(parts, format(TRAINER_REQ_LEVEL, levelReq))
+    end
+    if GetTrainerServiceSkillReq ~= nil then
+        local skill, rank = GetTrainerServiceSkillReq(index)
+        if skill ~= nil and skill ~= "" then
+            tinsert(parts, format(TRAINER_REQ_SKILL_RANK, skill, rank))
+        end
+    end
+    if GetTrainerServiceNumAbilityReq ~= nil then
+        for i = 1, GetTrainerServiceNumAbilityReq(index) or 0 do
+            local ability = GetTrainerServiceAbilityReq(index, i)
+            if ability ~= nil and ability ~= "" then
+                tinsert(parts, ability)
+            end
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    return REQUIRES_LABEL .. " " .. table.concat(parts, PLAYER_LIST_DELIMITER)
+end
+
 local function serviceLabel(index)
     local info = getServiceInfo(index)
     if info.name == nil then
@@ -62,8 +94,11 @@ local function serviceLabel(index)
         if cost ~= nil and cost > 0 then
             label = label .. ", " .. C_CurrencyInfo.GetCoinText(cost)
         end
-        if info.category == "unavailable" and info.levelReq ~= nil and info.levelReq > 0 then
-            label = label .. ", " .. L["Level"] .. " " .. tostring(info.levelReq)
+        if info.category ~= "used" then
+            local requirements = serviceRequirements(index, info)
+            if requirements ~= nil then
+                label = label .. ", " .. requirements
+            end
         end
     end
     return label
