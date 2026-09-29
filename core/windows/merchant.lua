@@ -18,13 +18,13 @@ settings:add({
     type = "Bool",
     key = "autoSellPoorItems",
     label = L["Automatically Sell Poor Items"],
-    default = true,
+    default = false,
 })
 settings:add({
     type = "Bool",
     key = "autoRepair",
     label = L["Automatically Repair If Possible"],
-    default = true,
+    default = false,
 })
 
 -- Vendor sell price for a bag item, in copper; nil when the item isn't
