@@ -4,6 +4,10 @@ local tts = WowVision.alerts:createOutput("TTS")
 tts:addFields({
     { key = "buildMessage" },
     { key = "message" },
+    -- A game TTS voice index: the text is spoken by the game with that voice (at the speech
+    -- module's rate and volume) instead of through the speech module. For announcements made while
+    -- walking: a screen reader cuts its own speech off at every key press.
+    { key = "voice" },
     {
         key = "interrupt",
         default = false,
@@ -18,14 +22,16 @@ tts:addFields({
 
 function tts:initialize(info)
     Output.initialize(self, info)
-    self:addParameter({
-        key = "interrupt",
-        type = "Bool",
-        label = L["Priority Message (interrupts)"],
-        default = function()
-            return self.defaultInterrupt
-        end,
-    })
+    if self.voice == nil then
+        self:addParameter({
+            key = "interrupt",
+            type = "Bool",
+            label = L["Priority Message (interrupts)"],
+            default = function()
+                return self.defaultInterrupt
+            end,
+        })
+    end
     if not self.buildMessage then
         self:addParameter({
             key = "message",
@@ -48,6 +54,12 @@ function tts:onFire(message)
         text = message.text
     end
     if not text then
+        return
+    end
+    if self.voice ~= nil then
+        local settings = WowVision.base.speech.settings
+        local volume = math.max(0, math.min(100, settings.speechVolume or 100))
+        C_VoiceChat.SpeakText(self.voice, WowVision.ttsCacheBust.bust(text), settings.speechRate, volume, false)
         return
     end
     if self.db.interrupt then
