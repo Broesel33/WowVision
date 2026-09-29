@@ -10,12 +10,12 @@ local kinds = graph.kinds
 -- when a profession's spell opens its crafting window. It is the retail
 -- crafting page without the retail extras (no specializations, no orders):
 -- the profession tabs, the rank, a search box and filter menu over a
--- collapsible recipe tree, the selected recipe (output, requirements,
--- description, reagents), and the create controls. The screen follows the
--- Mists trade skill screen: search, filter, recipes, details, quantity,
--- create buttons.
+-- collapsible recipe tree (a recipe's tooltip adds its tools and reagents),
+-- the selected recipe (output, requirements, description), and the create
+-- controls. The screen follows the Mists trade skill screen: search,
+-- filter, recipes, details, quantity, create buttons.
 --
--- Nothing here runs the page's own mouse scripts: rows, reagents, and
+-- Nothing here runs the page's own mouse scripts: rows, checkboxes, and
 -- buttons are secure clicks on the real frames, and tooltips are filled
 -- from the recipe data.
 
@@ -152,6 +152,75 @@ local function renderProfession(builder, page)
     end
 end
 
+-- ---- recipe data ----
+
+local function requirementsLabel(recipeID)
+    local requirements = C_TradeSkillUI.GetRecipeRequirements(recipeID)
+    if requirements == nil or #requirements == 0 then
+        return nil
+    end
+    local parts = {}
+    for _, requirement in ipairs(requirements) do
+        local part = requirement.name
+        if not requirement.met then
+            part = part .. " (" .. L["Missing"] .. ")"
+        end
+        tinsert(parts, part)
+    end
+    return PROFESSIONS_REQUIRED_TOOLS:format(table.concat(parts, ", "))
+end
+
+-- An item's name may not be cached yet; asking for it loads it for the
+-- next read.
+local function reagentName(reagent)
+    if reagent.itemID ~= nil then
+        local name = C_Item.GetItemNameByID(reagent.itemID)
+        if name == nil then
+            C_Item.RequestLoadItemDataByID(reagent.itemID)
+        end
+        return name or UNKNOWN
+    end
+    return Professions.GetReagentName(reagent)
+end
+
+-- The recipe's tools and required reagents, added under the output item's
+-- tooltip so a recipe reads what it needs without the details stop. A
+-- reagent reads like the game's reagent slot, name first: "Peacebloom 3/2"
+-- (have, then need), counted the way the reagent slot counts.
+local function addRecipeLines(tooltip, recipeID)
+    local requirements = requirementsLabel(recipeID)
+    if requirements ~= nil then
+        tooltip:AddLine(requirements, 1, 1, 1, true)
+    end
+    local schematic = C_TradeSkillUI.GetRecipeSchematic(recipeID, false)
+    if schematic == nil then
+        return
+    end
+    local lines = {}
+    for _, slot in ipairs(schematic.reagentSlotSchematics) do
+        local shown = not slot.hiddenInCraftingForm and #slot.reagents > 0
+        if shown and ProfessionsUtil.IsReagentSlotBasicRequired(slot) then
+            local have = ProfessionsUtil.AccumulateReagentsInPossession(slot.reagents, false)
+            tinsert(lines, reagentName(slot.reagents[1]) .. " " .. have .. "/" .. slot.quantityRequired)
+        end
+    end
+    if #lines == 0 then
+        return
+    end
+    tooltip:AddLine(PROFESSIONS_REAGENT_CONTAINER_LABEL)
+    for _, line in ipairs(lines) do
+        tooltip:AddLine(line, 1, 1, 1)
+    end
+end
+
+local function recipeTooltip(recipeID)
+    return gameTooltip(function(tooltip)
+        tooltip:SetRecipeResultItem(recipeID)
+        addRecipeLines(tooltip, recipeID)
+        tooltip:Show()
+    end)
+end
+
 -- ---- the recipe list ----
 
 local function recipeLabel(recipeInfo)
@@ -234,9 +303,7 @@ local function emitRecipeRow(list)
                         end,
                         kind = kinds.selected,
                     },
-                }, gameTooltip(function(tooltip)
-                    tooltip:SetRecipeResultItem(recipeInfo.recipeID)
-                end))
+                }, recipeTooltip(recipeInfo.recipeID))
             )
         elseif data.isDivider then
             builder:addItem(
@@ -268,80 +335,14 @@ end
 
 -- ---- the selected recipe ----
 
-local function requirementsLabel(recipeID)
-    local requirements = C_TradeSkillUI.GetRecipeRequirements(recipeID)
-    if requirements == nil or #requirements == 0 then
-        return nil
-    end
-    local parts = {}
-    for _, requirement in ipairs(requirements) do
-        local part = requirement.name
-        if not requirement.met then
-            part = part .. " (" .. L["Missing"] .. ")"
-        end
-        tinsert(parts, part)
-    end
-    return PROFESSIONS_REQUIRED_TOOLS:format(table.concat(parts, ", "))
-end
-
--- The game writes "3/2 Peacebloom" (have/need, then the name); the Mists
--- screen reads the name first, so the count moves behind it. Optional slots
--- write no name line; they read their slot text.
-local function reagentLabel(slot)
-    local text = slot.Name:IsShown() and slot.Name:GetText() or nil
-    if text == nil or text == "" then
-        local schematic = slot:GetReagentSlotSchematic()
-        return schematic ~= nil and schematic.slotInfo ~= nil and schematic.slotInfo.slotText or nil
-    end
-    text = stripColors(text)
-    local count, name = text:match("^(%d+/%d+) (.+)$")
-    if count ~= nil then
-        return name .. " " .. count
-    end
-    return text
-end
-
-local function reagentNode(recipeID, slot)
-    return nodes.proxyButton({
-        target = slot.Button,
-        hover = false,
-        label = function()
-            return reagentLabel(slot)
-        end,
-        tooltip = gameTooltip(function(tooltip)
-            local reagent = slot.Button:GetReagent()
-            local schematic = slot:GetReagentSlotSchematic()
-            if reagent ~= nil and reagent.currencyID ~= nil then
-                tooltip:SetCurrencyByID(reagent.currencyID)
-            elseif schematic ~= nil then
-                tooltip:SetRecipeReagentItem(recipeID, schematic.dataSlotIndex)
-            end
-        end),
-    })
-end
-
--- A reagent section (required, then optional) under its own heading.
-local function renderReagents(builder, form, recipeID, key, container, reagentType)
-    local slots = form:GetSlotsByReagentType(reagentType)
-    if not container:IsShown() or slots == nil or #slots == 0 then
-        return
-    end
-    builder:pushContext(key, nodes.shownText(container.Label) or SPELL_REAGENTS or "")
-    for index, slot in ipairs(slots) do
-        if slot:IsShown() then
-            builder:addItem(ControlId.structural(key .. ":" .. index), reagentNode(recipeID, slot))
-        end
-    end
-    builder:popContext()
-end
-
 local function detailText(builder, key, label)
     builder:addItem(ControlId.structural(key), nodes.text({ label = label }))
 end
 
 -- One stop reading the form top to bottom: the output item, favorite, the
 -- requirement and cooldown lines, where an unlearned recipe comes from, the
--- description, the reagents, and the tracking checkboxes.
+-- description, and the tracking checkboxes. The reagents are left out: the
+-- recipe's tooltip reads them, here and in the list.
 local function renderRecipe(builder, form)
     local recipeInfo = form:GetRecipeInfo()
     if not form:IsShown() or recipeInfo == nil then
@@ -361,16 +362,14 @@ local function renderRecipe(builder, form)
                 label = function()
                     return nodes.joinLabel(nodes.shownText(form.OutputText), nodes.shownText(output.Count))
                 end,
-                tooltip = gameTooltip(function(tooltip)
-                    tooltip:SetRecipeResultItem(recipeID)
-                end),
+                tooltip = recipeTooltip(recipeID),
             })
         )
     end
     if form.FavoriteButton:IsShown() then
         builder:addItem(
             ControlId.forObject(form.FavoriteButton),
-            nodes.proxyCheckButton({ target = form.FavoriteButton, label = FAVORITE, hover = false })
+            nodes.proxyCheckButton({ target = form.FavoriteButton, label = L["Favorite"], hover = false })
         )
     end
     if form.OutputSubText:IsShown() then
@@ -409,19 +408,21 @@ local function renderRecipe(builder, form)
         end)
     end
 
-    renderReagents(builder, form, recipeID, "reagents", form.Reagents, Enum.CraftingReagentType.Basic)
-    renderReagents(
-        builder,
-        form,
-        recipeID,
-        "optionalReagents",
-        form.OptionalReagents,
-        Enum.CraftingReagentType.Modifying
-    )
-
+    -- Labels come from each checkbox's own text line, named directly.
     for _, checkbox in ipairs({ form.AllocateBestQualityCheckbox, form.TrackRecipeCheckbox }) do
         if checkbox:IsShown() then
-            builder:addItem(ControlId.forObject(checkbox), nodes.proxyCheckButton({ target = checkbox }))
+            local captured = checkbox
+            builder:addItem(
+                ControlId.forObject(captured),
+                nodes.proxyCheckButton({
+                    target = captured,
+                    hover = false,
+                    label = function()
+                        local text = nodes.shownText(captured.Text)
+                        return text ~= nil and stripColors(text) or nil
+                    end,
+                })
+            )
         end
     end
     builder:popContext()
