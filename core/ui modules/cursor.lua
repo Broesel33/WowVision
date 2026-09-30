@@ -13,6 +13,19 @@ local ITEM_QUALITY_HEIRLOOM = LE_ITEM_QUALITY_HEIRLOOM or (Enum.ItemQuality and 
 WowVision.cursor = WowVision.cursor or {}
 WowVision.cursor.pickupIsActionBar = false
 
+-- Only the drag bindings set the flag, but the cursor is also filled by
+-- plain clicks (Enter on a bag slot). Once the cursor is empty whatever the
+-- last drag picked up is gone, so the flag goes back to false; otherwise a
+-- bag item clicked up after a bar drag would read as a bar reference and
+-- Delete would only clear it instead of offering to destroy it.
+module:registerEvent("event", "CURSOR_CHANGED")
+
+function module:onEvent(event)
+    if event == "CURSOR_CHANGED" and GetCursorInfo() == nil then
+        WowVision.cursor.pickupIsActionBar = false
+    end
+end
+
 module:registerBinding({
     type = "Function",
     key = "destroyCursorItem",
