@@ -34,7 +34,7 @@ testRunner:addSuite("GroupHealth", {
             t:assertEqual(heard[14], heard[15], key)
             for i = 3, 14 do
                 local fall = heard[i - 1] - heard[i]
-                t:assertTrue(fall >= 0.8, key .. ": step into " .. i .. " falls only " .. fall)
+                t:assertTrue(fall >= 0.95, key .. ": step into " .. i .. " falls only " .. fall)
             end
         end
     end,

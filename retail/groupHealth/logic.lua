@@ -45,25 +45,29 @@ GroupHealth.MAX_RAID_GROUPS = 8
 -- HIGH copy last (falling: the healthy part). The HIGH copy starts about
 -- 0.15 seconds after the LOW one would have. 13 levels (the two lowest and
 -- the two highest 7 percent steps share a level) about 1 to 1.5 semitones
--- apart: about 14.5 semitones on Hedda, 16.6 on Zira.
+-- apart by their peak: about 15 semitones on Hedda, 16 on Zira.
 --
 -- Each voice's melody differs, so each measured voice has its own scale:
 -- the pitch per 7 percent step (index 1 is the lowest health; the copy not
 -- in use carries the same value, as when measured), and the step from
--- which the HIGH copy speaks. `heard` is the measured result per step
+-- which the HIGH copy speaks. `heard` is the measured PEAK pitch per step
 -- (semitones against the voice's plain absmiddle 0, fitted line), kept for
--- the tests. A voice not measured uses Hedda's.
+-- the tests. The peak, not the average: the ear follows where a rising or
+-- falling number reaches. Chosen by average, Zira's switch from the flat
+-- LOW copy to the falling HIGH copy moved only 0.6 semitones at its peak
+-- and sounded like a step the wrong way (heard in game, 2026-10-03). A
+-- voice not measured uses Hedda's.
 GroupHealth.PITCH_STEPS = 15
 GroupHealth.VOICE_PROFILES = {
     hedda = {
         scale = { 10, 10, 8, 5, 3, 0, -2, -5, -7, -10, -3, -6, -8, -10, -10 },
         highFrom = 11,
-        heard = { 8.57, 8.57, 7.58, 6.11, 5.13, 3.66, 2.67, 1.2, 0.22, -1.26, -2.07, -3.73, -4.84, -5.95, -5.95 },
+        heard = { 10.25, 10.25, 9.26, 7.77, 6.77, 5.28, 4.28, 2.79, 1.79, 0.3, -1.46, -2.98, -3.99, -5.0, -5.0 },
     },
     zira = {
-        scale = { 10, 10, 7, 5, 2, -1, -4, -6, -9, 1, -2, -5, -7, -10, -10 },
-        highFrom = 10,
-        heard = { 12.59, 12.59, 11.06, 10.04, 8.51, 6.98, 5.45, 4.43, 2.9, 1.65, 0.11, -1.43, -2.46, -4.01, -4.01 },
+        scale = { 10, 10, 7, 5, 2, 0, -3, -6, -8, -10, -2, -5, -7, -10, -10 },
+        highFrom = 11,
+        heard = { 12.79, 12.79, 11.26, 10.24, 8.71, 7.69, 6.16, 4.63, 3.61, 2.59, 0.97, -0.55, -1.56, -3.08, -3.08 },
     },
 }
 GroupHealth.DEFAULT_PROFILE = "hedda"
