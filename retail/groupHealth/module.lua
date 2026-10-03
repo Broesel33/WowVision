@@ -82,18 +82,14 @@ local ROLE_DEFAULTS = {
 
 -- Settings ----------------------------------------------------------------------
 
-local voiceSetting = settings:add({
+-- Saved by the voice's name: the pitch scales are tuned per voice, and
+-- installing a voice moves the game's voice numbers.
+settings:add({
     key = "voice",
-    type = "Choice",
+    type = "TtsVoice",
     label = L["Voice"],
     default = 0,
 })
-for _, v in ipairs(C_VoiceChat.GetTtsVoices() or {}) do
-    voiceSetting:addChoice({
-        label = v.name,
-        value = v.voiceID,
-    })
-end
 
 settings:add({
     key = "rate",
