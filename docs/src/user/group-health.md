@@ -35,7 +35,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 ## Other settings
 
-- **Enabled**: the monitor is off until you turn it on.
+- **Enabled**: the monitor is off until you turn it on. Off, it says nothing and its key does nothing.
 - **Voice**, **Speech Rate**, **Speech Volume**: the monitor's own voice.
 - **Time Between Numbers**: how far apart two announcements start.
 - **Include Yourself**, **Watch Party**, **Watch Raid**.
@@ -44,7 +44,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 ## The snapshot key
 
-**Speak Group Health** (default key: Ö) speaks every member once, in number order, at their current pitch. It works even when the monitor is off. On keyboards without an Ö key, set your own key with `/wv bind`.
+**Speak Group Health** (default key: Ö) speaks every member once, in number order, at their current pitch. On keyboards without an Ö key, set your own key with `/wv bind`.
 
 ## Limits
 

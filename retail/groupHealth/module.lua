@@ -3,6 +3,9 @@ local GroupHealth = WowVision.groupHealth
 local module = WowVision.base:createModule("groupHealth")
 local L = module.L
 module:setLabel(L["Group Health Monitor"])
+-- Off until the player turns it on (the module's own Enabled toggle, which
+-- also switches its events and the snapshot key): it speaks on its own.
+module.enabled = false
 local settings = module:hasSettings()
 
 -- The group health monitor: a hurt group member is spoken as their number,
@@ -78,13 +81,6 @@ local ROLE_DEFAULTS = {
 }
 
 -- Settings ----------------------------------------------------------------------
-
-local enabledField = settings:add({
-    key = "enabled",
-    type = "Bool",
-    label = L["Enabled"],
-    default = false,
-})
 
 local voiceSetting = settings:add({
     key = "voice",
@@ -423,16 +419,8 @@ function module:rebuild()
         return
     end
     self.rosterDirty = false
-    local members, aliases = {}, {}
-    if self.settings.enabled then
-        members, aliases = self:collect()
-    end
     self.raidMode = raid
-    self.members = members
-    self.aliases = aliases
-    if not self.settings.enabled then
-        self:clearQueue()
-    end
+    self.members, self.aliases = self:collect()
 end
 
 function module:memberFor(unit)
@@ -453,8 +441,8 @@ function module:clearQueue()
     self.queued = {}
 end
 
--- `force` entries play even when the member is not (or no longer) watched:
--- the snapshot works with the monitor off.
+-- `force` entries play even when a roster update dropped the member: the
+-- snapshot finishes what it started.
 function module:enqueue(member, lane, force)
     local key = entryKey(member, lane)
     if self.queued[key] then
@@ -575,9 +563,6 @@ function module:silenced()
 end
 
 function module:onHealth(unit)
-    if not self.settings.enabled then
-        return
-    end
     local member = self:memberFor(unit)
     if member == nil then
         return
@@ -614,7 +599,7 @@ function module:checkRepeats()
         return
     end
     self.nextRepeatCheck = now + REPEAT_CHECK
-    if not self.settings.enabled or self:silenced() then
+    if self:silenced() then
         return
     end
     for _, member in pairs(self.members) do
@@ -628,14 +613,10 @@ function module:checkRepeats()
     end
 end
 
--- Everyone once, in number order, ungated. Works with the monitor off.
+-- Everyone once, in number order, ungated.
 function module:snapshot()
-    local members = self.members
-    if not self.settings.enabled then
-        members = self:collect()
-    end
     local list = {}
-    for _, member in pairs(members) do
+    for _, member in pairs(self.members) do
         tinsert(list, member)
     end
     if #list == 0 then
@@ -678,15 +659,17 @@ function module:onEvent(event, ...)
     end
 end
 
-enabledField.events.valueChange:subscribe(nil, function()
-    module:rebuild()
-end)
-
 function module:onEnable()
     self:hasUpdate(function(self)
         self:checkRepeats()
     end)
     self:rebuild()
+end
+
+function module:onDisable()
+    self:clearQueue()
+    self.members = {}
+    self.aliases = {}
 end
 
 module:registerBinding({
