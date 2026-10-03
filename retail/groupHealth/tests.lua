@@ -51,6 +51,18 @@ testRunner:addSuite("GroupHealth", {
         t:assertEqual(key, "katja")
         _, key = GroupHealth.profileFor("Microsoft Stefan - German (Germany)")
         t:assertEqual(key, "hedda")
+        -- The longest matching key wins (a more specific profile).
+        GroupHealth.VOICE_PROFILES["hedda desktop"] = GroupHealth.VOICE_PROFILES.katja
+        local ok, err = pcall(function()
+            _, key = GroupHealth.profileFor("Microsoft Hedda Desktop - German")
+            t:assertEqual(key, "hedda desktop")
+            _, key = GroupHealth.profileFor("Microsoft Hedda - German (Germany)")
+            t:assertEqual(key, "hedda")
+        end)
+        GroupHealth.VOICE_PROFILES["hedda desktop"] = nil
+        if not ok then
+            error(err, 0)
+        end
         _, key = GroupHealth.profileFor("Some Other Voice")
         t:assertEqual(key, "hedda")
         _, key = GroupHealth.profileFor(nil)
