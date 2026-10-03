@@ -289,7 +289,7 @@ local function curveFor(points)
     return curve
 end
 
--- The pitch scale of the chosen voice (logic.lua), looked up by its name.
+-- The voice profile of the chosen voice (voices.lua), looked up by its name.
 local profileCache = {}
 
 function module:profile()
@@ -302,7 +302,7 @@ function module:profile()
                 name = v.name
             end
         end
-        local profile = GroupHealth.profileFor(name)
+        local profile = GroupHealth.voices:forVoice(name)
         cached = { profile = profile, pitch = GroupHealth.pitchPoints(profile) }
         profileCache[voice] = cached
     end

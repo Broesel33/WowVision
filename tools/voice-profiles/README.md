@@ -3,8 +3,9 @@
 The group health monitor (`retail/groupHealth`) says each member's health
 as a number whose pitch rises as health falls. Every SAPI voice has its own
 melody on top of the pitch the monitor asks for, so each voice needs its
-own scale: a profile in `GroupHealth.VOICE_PROFILES` in
-`retail/groupHealth/logic.lua`. A voice without a profile uses Hedda's.
+own scale: a profile, one `voices:register({...})` call in
+`retail/groupHealth/voices.lua`. A voice without a profile uses the
+fallback profile (Hedda's).
 
 These tools make a profile for a new voice on Windows, offline, without
 the game. Everything runs from a terminal and prints plain text.
@@ -34,10 +35,10 @@ py -m venv .venv
    ```
 
 2. Render the voice. Give a part of its name that matches exactly one
-   voice; lowercased, it becomes the profile key, and the monitor uses the
-   profile when the key is part of the voice's name in game (the longest
-   matching key wins). Pick a key that does not also match other voices
-   ("katja", not "microsoft"). Rendering Hedda Desktop alongside checks
+   voice; lowercased, it becomes the profile's `match`: the monitor uses
+   the profile when it is part of the voice's name in game (the longest
+   match wins). Pick one that does not also match other voices ("katja",
+   not "microsoft"). Rendering Hedda Desktop alongside checks
    the setup: its numbers should match the "Check" section below.
 
    ```
@@ -53,19 +54,36 @@ py -m venv .venv
    .venv\Scripts\python measure.py katja
    ```
 
-   For each voice it prints the measured lines, then either a Lua block to
-   paste into `GroupHealth.VOICE_PROFILES`, or REJECTED with the reason.
+   For each voice it prints the measured lines, then either a
+   `voices:register({...})` call or REJECTED with the reason. Katja's:
 
-4. Paste the block into `retail/groupHealth/logic.lua`, add the voice to
-   the name test in `retail/groupHealth/tests.lua`
-   ("profiles: chosen by voice name"), and run the offline tests from the
-   repository root:
+   ```
+   voices:register({
+       key = "katja",
+       match = "katja",
+       low = { 10, 8, 5, 3, 0, -2, -4, -6, -8, -10 },
+       high = { -6, -8, -10 },
+       measured = { low = { 3.07, 0.506 }, high = { -0.21, 0.507 } },
+   })
+   ```
+
+   `low` and `high` are the pitch levels (SAPI absmiddle) of the two copies,
+   lowest health first, 13 in all; `measured` keeps the measured lines so
+   the tests can check the steps.
+
+4. Paste the call into `retail/groupHealth/voices.lua`, with a comment line
+   above it (when measured, anything worth knowing about the voice). Add
+   the voice's name to the test "voices: the game's voices get their
+   profiles" in `retail/groupHealth/tests.lua`, and run the offline tests
+   from the repository root:
 
    ```
    luajit tools/headless-tests.lua GroupHealth
    ```
 
-   The tests check that every step falls at least 0.95 semitones.
+   Registration refuses a malformed profile with a message; the tests
+   check that every level falls at least 0.95 semitones below the one
+   before.
 
 5. Listen in game: choose the voice in the monitor's Voice setting and
    lose health slowly (or press the snapshot key at different health).
@@ -104,7 +122,7 @@ and the same smallest step. The same holds for Zira (LOW about
 
 ## Measured voices
 
-- Microsoft Hedda Desktop, Microsoft Zira Desktop: profiles chosen by ear
+- Microsoft Hedda Desktop (the fallback), Microsoft Zira Desktop: profiles chosen by ear
   in game on 2026-10-03 (the method was built on them).
 - Microsoft Hedda (OneCore): the same sound as Hedda Desktop, byte for
   byte; uses Hedda's profile by name.

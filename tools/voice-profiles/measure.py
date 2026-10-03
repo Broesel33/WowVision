@@ -34,12 +34,13 @@ Per voice, from the files render.ps1 made:
    reproduces the scales chosen by ear for Hedda and Zira (same switch,
    same smallest fall).
 
-Prints a Lua block for GroupHealth.VOICE_PROFILES in
-retail/groupHealth/logic.lua and writes render/profiles.json.
+Prints the register call to paste into retail/groupHealth/voices.lua and
+writes render/profiles.json.
 """
 
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -162,9 +163,10 @@ def design(low, high):
     heard = [value[n] for n in path]
     falls = [heard[i] - heard[i + 1] for i in range(len(heard) - 1)]
     return dict(
-        scale=[lows[0]] + lows + highs + [highs[-1]],
-        highFrom=len(lows) + 2,
-        heard=[round(h, 2) for h in [heard[0]] + heard + [heard[-1]]],
+        low=lows,
+        high=highs,
+        switch=round((len(lows) + 1) / 15 * 100),
+        heard=[round(h, 2) for h in heard],
         falls=[round(f, 2) for f in falls],
     )
 
@@ -173,8 +175,8 @@ def lua_list(values):
     return "{ " + ", ".join(str(v) for v in values) + " }"
 
 
-def lua_key(key):
-    return key if key.isidentifier() else f'["{key}"]'
+def lua_key(match):
+    return re.sub(r"[^a-z0-9]+", "_", match).strip("_")
 
 
 def main(keys):
@@ -209,15 +211,16 @@ def main(keys):
                 print(f"   REJECTED, no profile: no scale with every fall {MIN_FALL} semitones or more (smallest {smallest})")
                 result["rejected"] = ["range too small"]
             else:
-                switch = round((profile["highFrom"] - 1) / 15 * 100)
                 print(f"   scale falls {min(profile['falls']):.2f} to {max(profile['falls']):.2f} semitones, "
-                      f"{profile['heard'][0] - profile['heard'][-1]:.1f} in all, HIGH copy from {switch} percent")
-                print("   For GroupHealth.VOICE_PROFILES in retail/groupHealth/logic.lua:")
-                print(f"    {lua_key(key)} = {{")
-                print(f"        scale = {lua_list(profile['scale'])},")
-                print(f"        highFrom = {profile['highFrom']},")
-                print(f"        heard = {lua_list(profile['heard'])},")
-                print("    },")
+                      f"{profile['heard'][0] - profile['heard'][-1]:.1f} in all, HIGH copy from {profile['switch']} percent")
+                print("   For retail/groupHealth/voices.lua:")
+                print("voices:register({")
+                print(f'    key = "{lua_key(key)}",')
+                print(f'    match = "{key}",')
+                print(f"    low = {lua_list(profile['low'])},")
+                print(f"    high = {lua_list(profile['high'])},")
+                print(f"    measured = {{ low = {{ {low['a']:.2f}, {low['b']:.3f} }}, high = {{ {high['a']:.2f}, {high['b']:.3f} }} }},")
+                print("})")
                 result["profile"] = profile
         results[key] = result
         print()

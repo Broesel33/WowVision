@@ -30,9 +30,8 @@ GroupHealth.MAX_RAID_GROUPS = 8
 -- Sku's monitor uses 15 pitch steps of about 7 percent, the highest pitch
 -- at the lowest health; Sku's recordings span 12.6 semitones, about one per
 -- step. What a SAPI voice allows (2026-10-03; absmiddle takes whole numbers
--- only, "2.5" made a line silent in game; the rest measured offline on
--- Microsoft Hedda and Microsoft Zira at rate 7, rendered through SAPI with
--- exactly this markup):
+-- only, "2.5" made a line silent in game; the rest measured offline,
+-- rendered through SAPI with exactly this markup):
 -- - absmiddle -10 to 10 moves the voice about half a semitone per unit,
 --   10 semitones in all; nothing goes past either end.
 -- - The voice's own melody comes on top. A number that ends the sentence
@@ -43,77 +42,90 @@ GroupHealth.MAX_RAID_GROUPS = 8
 -- So every announcement carries the number twice, each behind a volume
 -- gate: the LOW copy first (rising: the urgent part of the scale), the
 -- HIGH copy last (falling: the healthy part). The HIGH copy starts about
--- 0.15 seconds after the LOW one would have. 13 levels (the two lowest and
--- the two highest 7 percent steps share a level) about 1 to 1.5 semitones
--- apart by their peak: about 15 semitones on Hedda, 16 on Zira.
+-- 0.15 seconds after the LOW one would have. 13 levels, about 1 to 1.5
+-- semitones apart: the two lowest and the two highest 7 percent steps
+-- share a level.
 --
--- Each voice's melody differs, so each measured voice has its own scale:
--- the pitch per 7 percent step (index 1 is the lowest health; the copy not
--- in use carries the same value, as when measured), and the step from
--- which the HIGH copy speaks. `heard` is the measured PEAK pitch per step
--- (semitones against the voice's plain absmiddle 0, fitted line), kept for
--- the tests. The peak, not the average: the ear follows where a rising or
--- falling number reaches. Chosen by average, Zira's switch from the flat
--- LOW copy to the falling HIGH copy moved only 0.6 semitones at its peak
--- and sounded like a step the wrong way (heard in game, 2026-10-03). A
--- voice not measured uses Hedda's.
---
--- New profiles come from tools/voice-profiles (render.ps1, then
--- measure.py; the README there has the procedure, measure.py the method).
--- If the markup in GroupHealth.segment or the sentence shape changes, the
--- tool must change with it and every voice be measured again.
---
--- The OneCore voices (Windows' Narrator voices, usable in game once copied
--- into the SAPI voice list), measured with that tool on 2026-10-03:
--- - Microsoft Hedda (OneCore) renders the very same sound as Hedda Desktop;
---   the name match gives it Hedda's scale.
--- - Microsoft Katja: her HIGH copy sits only about 3.3 semitones below her
---   LOW copy (Hedda 5.1, Zira 5.7), so the LOW copy carries ten levels and
---   the HIGH copy speaks from 73 percent; 13.4 semitones in all. Her HIGH
---   copy opens with a short quieter onset at the LOW pitch: measured on
---   the loud vowel, which the ear follows.
--- - Microsoft Stefan has no scale of his own: below his middle pitch his
---   voice turns creaky (the pitch jumps between 55 and 90 Hz from one
---   moment to the next), so steps down there cannot be heard reliably. He
---   falls back to Hedda's scale.
--- - SAPI2SR (a bridge to the screen reader) renders nothing and ignores
---   pitch: no scale can work.
+-- Each voice's melody differs, so each voice has its own levels: a voice
+-- profile (voices.lua; made with tools/voice-profiles). A voice without
+-- one uses the fallback profile.
 GroupHealth.PITCH_STEPS = 15
-GroupHealth.VOICE_PROFILES = {
-    hedda = {
-        scale = { 10, 10, 8, 5, 3, 0, -2, -5, -7, -10, -3, -6, -8, -10, -10 },
-        highFrom = 11,
-        heard = { 10.25, 10.25, 9.26, 7.77, 6.77, 5.28, 4.28, 2.79, 1.79, 0.3, -1.46, -2.98, -3.99, -5.0, -5.0 },
-    },
-    zira = {
-        scale = { 10, 10, 7, 5, 2, 0, -3, -6, -8, -10, -2, -5, -7, -10, -10 },
-        highFrom = 11,
-        heard = { 12.79, 12.79, 11.26, 10.24, 8.71, 7.69, 6.16, 4.63, 3.61, 2.59, 0.97, -0.55, -1.56, -3.08, -3.08 },
-    },
-    katja = {
-        scale = { 10, 10, 8, 5, 3, 0, -2, -4, -6, -8, -10, -6, -8, -10, -10 },
-        highFrom = 12,
-        heard = { 8.12, 8.12, 7.11, 5.6, 4.58, 3.07, 2.05, 1.04, 0.03, -0.98, -1.99, -3.25, -4.26, -5.28, -5.28 },
-    },
-}
-GroupHealth.DEFAULT_PROFILE = "hedda"
 
--- The profile for a voice by its name ("Microsoft Zira Desktop - English"):
--- the longest key that is part of the name, so a more specific key ("hedda
--- desktop") wins over a shorter one ("hedda").
-function GroupHealth.profileFor(voiceName)
-    local name = string.lower(voiceName or "")
-    local found
-    for key in pairs(GroupHealth.VOICE_PROFILES) do
-        if string.find(name, key, 1, true) and (found == nil or #key > #found) then
-            found = key
+local VoiceProfiles = WowVision.Class("GroupHealthVoiceProfiles")
+GroupHealth.VoiceProfiles = VoiceProfiles
+
+function VoiceProfiles:initialize()
+    self.profiles = {}
+    self.fallback = nil
+end
+
+local function checkLevels(info, copy)
+    local levels = info[copy]
+    if type(levels) ~= "table" or #levels == 0 then
+        error("Voice profile " .. tostring(info.key) .. " needs " .. copy .. " levels")
+    end
+    for i, pitch in ipairs(levels) do
+        if pitch ~= math.floor(pitch) or pitch < -10 or pitch > 10 then
+            error("Voice profile " .. info.key .. ": " .. copy .. " level " .. i .. " is not a whole number in -10..10")
+        end
+        if i > 1 and pitch >= levels[i - 1] then
+            error("Voice profile " .. info.key .. ": " .. copy .. " levels must fall")
         end
     end
-    if found ~= nil then
-        return GroupHealth.VOICE_PROFILES[found], found
-    end
-    return GroupHealth.VOICE_PROFILES[GroupHealth.DEFAULT_PROFILE], GroupHealth.DEFAULT_PROFILE
 end
+
+-- info: key; match (lowercase part of the game's voice name); low and high
+-- (absmiddle per level of each copy, lowest health first; PITCH_STEPS - 2
+-- levels in all, as the two lowest and the two highest steps share one);
+-- measured (the voice's peak pitch line per copy, { a, b } = a + b *
+-- absmiddle semitones, for the tests); fallback (true for the profile of
+-- voices without one). The profile gets its pitch per step (scale) and the
+-- first step of the HIGH copy (highFrom).
+function VoiceProfiles:register(info)
+    checkLevels(info, "low")
+    checkLevels(info, "high")
+    if #info.low + #info.high ~= GroupHealth.PITCH_STEPS - 2 then
+        error("Voice profile " .. info.key .. " needs " .. (GroupHealth.PITCH_STEPS - 2) .. " levels in all")
+    end
+    if type(info.match) ~= "string" or info.match ~= string.lower(info.match) then
+        error("Voice profile " .. info.key .. " needs a lowercase match")
+    end
+    local scale = { info.low[1] }
+    for _, pitch in ipairs(info.low) do
+        tinsert(scale, pitch)
+    end
+    for _, pitch in ipairs(info.high) do
+        tinsert(scale, pitch)
+    end
+    tinsert(scale, info.high[#info.high])
+    info.scale = scale
+    info.highFrom = #info.low + 2
+    self.profiles[info.key] = info
+    if info.fallback then
+        self.fallback = info
+    end
+    return info
+end
+
+function VoiceProfiles:get(key)
+    return self.profiles[key]
+end
+
+-- The profile for a game voice by its name ("Microsoft Zira Desktop -
+-- English"): the longest match that is part of the name, so a specific
+-- profile ("hedda desktop") wins over a general one ("hedda").
+function VoiceProfiles:forVoice(voiceName)
+    local name = string.lower(voiceName or "")
+    local found
+    for _, profile in pairs(self.profiles) do
+        if string.find(name, profile.match, 1, true) and (found == nil or #profile.match > #found.match) then
+            found = profile
+        end
+    end
+    return found or self.fallback
+end
+
+GroupHealth.voices = VoiceProfiles:new()
 
 -- The health from which the HIGH copy speaks.
 function GroupHealth.split(profile)

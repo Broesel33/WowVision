@@ -15,62 +15,82 @@ local function evaluate(points, x)
 end
 
 testRunner:addSuite("GroupHealth", {
-    ["pitch: every voice has fifteen whole-number steps inside -10..10"] = function(t)
-        for key, profile in pairs(GroupHealth.VOICE_PROFILES) do
-            t:assertEqual(#profile.scale, 15, key)
-            t:assertEqual(#profile.heard, 15, key)
-            for _, pitch in ipairs(profile.scale) do
-                t:assertEqual(pitch, math.floor(pitch), key)
-                t:assertTrue(pitch >= -10 and pitch <= 10, key)
-            end
+    ["voices: every profile has fifteen steps and a HIGH copy split"] = function(t)
+        for key, profile in pairs(GroupHealth.voices.profiles) do
+            t:assertEqual(#profile.scale, GroupHealth.PITCH_STEPS, key)
+            t:assertEqual(profile.scale[1], profile.scale[2], key)
+            t:assertEqual(profile.scale[14], profile.scale[15], key)
+            t:assertEqual(profile.scale[profile.highFrom], profile.high[1], key)
         end
+        t:assertNotNil(GroupHealth.voices.fallback)
     end,
 
-    ["pitch: heard pitch falls step by step, about a semitone or more"] = function(t)
-        for key, profile in pairs(GroupHealth.VOICE_PROFILES) do
-            local heard = profile.heard
-            -- The two lowest and the two highest steps share a level.
-            t:assertEqual(heard[1], heard[2], key)
-            t:assertEqual(heard[14], heard[15], key)
-            for i = 3, 14 do
+    ["voices: every level heard about a semitone or more below the one before"] = function(t)
+        for key, profile in pairs(GroupHealth.voices.profiles) do
+            local heard = {}
+            for _, copy in ipairs({ "low", "high" }) do
+                local line = profile.measured[copy]
+                for _, pitch in ipairs(profile[copy]) do
+                    tinsert(heard, line[1] + line[2] * pitch)
+                end
+            end
+            for i = 2, #heard do
                 local fall = heard[i - 1] - heard[i]
-                t:assertTrue(fall >= 0.95, key .. ": step into " .. i .. " falls only " .. fall)
+                t:assertTrue(fall >= 0.95, key .. ": level " .. i .. " falls only " .. fall)
             end
         end
     end,
 
-    ["profiles: chosen by voice name, Hedda for unknown voices"] = function(t)
-        local _, key = GroupHealth.profileFor("Microsoft Zira Desktop - English (United States)")
-        t:assertEqual(key, "zira")
-        _, key = GroupHealth.profileFor("Microsoft Hedda Desktop - German")
-        t:assertEqual(key, "hedda")
-        -- The OneCore voices, as named once copied into the SAPI list.
-        _, key = GroupHealth.profileFor("Microsoft Hedda - German (Germany)")
-        t:assertEqual(key, "hedda")
-        _, key = GroupHealth.profileFor("Microsoft Katja - German (Germany)")
-        t:assertEqual(key, "katja")
-        _, key = GroupHealth.profileFor("Microsoft Stefan - German (Germany)")
-        t:assertEqual(key, "hedda")
-        -- The longest matching key wins (a more specific profile).
-        GroupHealth.VOICE_PROFILES["hedda desktop"] = GroupHealth.VOICE_PROFILES.katja
-        local ok, err = pcall(function()
-            _, key = GroupHealth.profileFor("Microsoft Hedda Desktop - German")
-            t:assertEqual(key, "hedda desktop")
-            _, key = GroupHealth.profileFor("Microsoft Hedda - German (Germany)")
-            t:assertEqual(key, "hedda")
+    ["voices: registration refuses a profile that cannot work"] = function(t)
+        local voices = GroupHealth.VoiceProfiles:new()
+        local good = { 10, 8, 5, 3, 0, -2, -5, -7, -10 }
+        t:assertError(function()
+            voices:register({ key = "short", match = "short", low = good, high = { -3, -6, -10 } })
         end)
-        GroupHealth.VOICE_PROFILES["hedda desktop"] = nil
-        if not ok then
-            error(err, 0)
+        t:assertError(function()
+            voices:register({ key = "rising", match = "rising", low = good, high = { -3, -6, -10, -8 } })
+        end)
+        t:assertError(function()
+            voices:register({ key = "half", match = "half", low = good, high = { -3, -6.5, -8, -10 } })
+        end)
+        t:assertError(function()
+            voices:register({ key = "case", match = "Case", low = good, high = { -3, -6, -8, -10 } })
+        end)
+    end,
+
+    ["voices: chosen by voice name, the longest match, else the fallback"] = function(t)
+        local voices = GroupHealth.VoiceProfiles:new()
+        local function add(key, match, fallback)
+            voices:register({
+                key = key,
+                match = match,
+                fallback = fallback,
+                low = { 10, 8, 5, 3, 0, -2, -5, -7, -10 },
+                high = { -3, -6, -8, -10 },
+            })
         end
-        _, key = GroupHealth.profileFor("Some Other Voice")
-        t:assertEqual(key, "hedda")
-        _, key = GroupHealth.profileFor(nil)
-        t:assertEqual(key, "hedda")
+        add("hedda", "hedda", true)
+        add("hedda_desktop", "hedda desktop")
+        add("zira", "zira")
+        t:assertEqual(voices:forVoice("Microsoft Zira Desktop - English (United States)").key, "zira")
+        t:assertEqual(voices:forVoice("Microsoft Hedda Desktop - German").key, "hedda_desktop")
+        t:assertEqual(voices:forVoice("Microsoft Hedda - German (Germany)").key, "hedda")
+        t:assertEqual(voices:forVoice("Some Other Voice").key, "hedda")
+        t:assertEqual(voices:forVoice(nil).key, "hedda")
+    end,
+
+    ["voices: the game's voices get their profiles"] = function(t)
+        local voices = GroupHealth.voices
+        t:assertEqual(voices:forVoice("Microsoft Hedda Desktop - German").key, "hedda")
+        t:assertEqual(voices:forVoice("Microsoft Zira Desktop - English (United States)").key, "zira")
+        -- The OneCore voices, as named once copied into the SAPI list.
+        t:assertEqual(voices:forVoice("Microsoft Hedda - German (Germany)").key, "hedda")
+        t:assertEqual(voices:forVoice("Microsoft Katja - German (Germany)").key, "katja")
+        t:assertEqual(voices:forVoice("Microsoft Stefan - German (Germany)").key, "hedda")
     end,
 
     ["copy ranges: below the split the LOW copy, from it the HIGH copy"] = function(t)
-        local profile = GroupHealth.VOICE_PROFILES.hedda
+        local profile = GroupHealth.voices:get("hedda")
         local split = GroupHealth.split(profile)
         local lowCopy, highCopy = GroupHealth.copyRanges(0, 0.35, profile)
         t:assertEqual(lowCopy[2], 0.35)
@@ -94,7 +114,7 @@ testRunner:addSuite("GroupHealth", {
     end,
 
     ["copy ranges: above 1 the HIGH copy includes full health"] = function(t)
-        local _, highCopy = GroupHealth.copyRanges(0, 2, GroupHealth.VOICE_PROFILES.zira)
+        local _, highCopy = GroupHealth.copyRanges(0, 2, GroupHealth.voices:get("zira"))
         t:assertEqual(evaluate(GroupHealth.bandPoints(highCopy[1], highCopy[2]), 1), 100)
     end,
 
