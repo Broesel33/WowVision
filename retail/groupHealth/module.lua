@@ -507,22 +507,23 @@ function module:unavailable()
     end
 end
 
--- The gated volume for a lane, or nil when the game refused the unit.
-function module:laneVolume(member, lane)
+-- The health range [low, high) a lane speaks in; a high above 1 includes
+-- full health.
+function module:laneRange(member, lane)
     local role = member.role
     local start = GroupHealth.fraction(roleSetting(role, "startThreshold"))
     local urgent = GroupHealth.fraction(roleSetting(role, "urgentThreshold"))
     if lane == "urgent" then
-        return through(member.unit, GroupHealth.belowPoints(urgent))
+        return 0, urgent
     elseif lane == "normal" then
-        return through(member.unit, GroupHealth.bandPoints(urgent, start))
+        return urgent, start
     elseif lane == "repeat" then
-        return through(member.unit, GroupHealth.belowPoints(GroupHealth.fraction(roleSetting(role, "repeatThreshold"))))
+        return 0, GroupHealth.fraction(roleSetting(role, "repeatThreshold"))
     elseif lane == "snapshot" and self.settings.announceFull then
         -- At full health the snapshot says "<number> full" instead.
-        return through(member.unit, GroupHealth.belowPoints(1))
+        return 0, 1
     end
-    return 100
+    return 0, 2
 end
 
 function module:announce(member, lane)
@@ -536,24 +537,26 @@ function module:announce(member, lane)
         return
     end
     local pitch = through(member.unit, pitchPoints)
-    local volume = self:laneVolume(member, lane)
-    if pitch == nil or volume == nil then
+    local lowRange, highRange = GroupHealth.copyRanges(self:laneRange(member, lane))
+    local lowVolume = through(member.unit, GroupHealth.bandPoints(lowRange[1], lowRange[2]))
+    local highVolume = through(member.unit, GroupHealth.bandPoints(highRange[1], highRange[2]))
+    if pitch == nil or lowVolume == nil or highVolume == nil then
         self:unavailable()
         return
     end
-    -- Every announcement has the same shape: the number, then "<number>
-    -- full" (audible only on the normal lane and the snapshot, at exactly
-    -- full health). A SAPI voice drops its pitch at the end of a sentence; a
-    -- number that
-    -- ended its sentence on one lane and not on the other sounded lower
-    -- below the urgent threshold although its pitch was higher (heard on
-    -- Forever, 2026-10-03).
+    -- Every announcement has the same three parts (logic.lua): the LOW copy
+    -- (rising, the urgent half of the scale), "<number> full" (fast, audible
+    -- only on the normal lane and the snapshot at exactly full health), the
+    -- HIGH copy last (falling, the healthy part). The volume gates pick the
+    -- copy; the sentence shape never changes, so the voice's melody adds the
+    -- same to every number of a copy.
     local full = 0
     if (lane == "normal" or lane == "snapshot") and self.settings.announceFull then
         full = through(member.unit, fullPoints) or 0
     end
-    local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
-        .. GroupHealth.segment(full, pitch, number .. " " .. L["full"])
+    local text = GroupHealth.segment(lowVolume, pitch, number .. self:nextPad())
+        .. GroupHealth.segment(full, GroupHealth.PITCH_SCALE[#GroupHealth.PITCH_SCALE], number .. " " .. L["full"], GroupHealth.FAST_RATE)
+        .. GroupHealth.segment(highVolume, pitch, number)
     self:speak(text)
 end
 

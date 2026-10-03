@@ -15,45 +15,62 @@ local function evaluate(points, x)
 end
 
 testRunner:addSuite("GroupHealth", {
-    ["pitch: lowest health highest, full health lowest, fifteen steps"] = function(t)
-        local points = GroupHealth.pitchPoints()
-        t:assertEqual(#points, 15)
-        t:assertEqual(evaluate(points, 0), 10)
-        t:assertEqual(evaluate(points, 0.03), 10)
-        t:assertEqual(evaluate(points, 1), -10)
-        t:assertEqual(evaluate(points, 0.95), -10)
-        -- Monotonic: never higher at more health.
-        local last = 11
-        for i = 0, 100 do
-            local pitch = evaluate(points, i / 100)
-            t:assertTrue(pitch <= last)
-            last = pitch
-        end
-    end,
-
-    ["pitch: outermost pairs share a pitch, every other neighbour differs"] = function(t)
+    ["pitch: fifteen whole-number steps inside -10..10"] = function(t)
         local scale = GroupHealth.PITCH_SCALE
-        t:assertEqual(scale[1], scale[2])
-        t:assertEqual(scale[#scale], scale[#scale - 1])
-        for i = 3, #scale - 1 do
-            t:assertTrue(scale[i - 1] > scale[i], "step into " .. i)
+        t:assertEqual(#scale, 15)
+        for _, pitch in ipairs(scale) do
+            t:assertEqual(pitch, math.floor(pitch))
+            t:assertTrue(pitch >= -10 and pitch <= 10)
         end
     end,
 
-    ["pitch: whole numbers inside -10..10, two units per step from 40 to 80 percent"] = function(t)
-        local points = GroupHealth.pitchPoints()
-        for _, point in ipairs(points) do
-            t:assertEqual(point[2], math.floor(point[2]))
-            t:assertTrue(point[2] >= -10 and point[2] <= 10)
+    -- What the steps sound like: medians measured on Hedda (voice 0) in the
+    -- monitor's own arrangement, semitones against plain absmiddle 0, by
+    -- copy and absmiddle value.
+    ["pitch: heard pitch falls step by step, about a semitone or more"] = function(t)
+        local lowCopy = { [10] = 9.10, [8] = 7.87, [5] = 6.53, [3] = 5.46, [0] = 4.12, [-3] = 2.59, [-5] = 1.59, [-7] = 0.58, [-10] = -0.92 }
+        local highCopy = { [-3] = -2.24, [-5] = -3.21, [-8] = -4.86, [-10] = -5.93 }
+        local scale = GroupHealth.PITCH_SCALE
+        local heard = {}
+        for i, pitch in ipairs(scale) do
+            local table = i < GroupHealth.HIGH_COPY_FROM and lowCopy or highCopy
+            heard[i] = table[pitch]
+            t:assertNotNil(heard[i], "step " .. i .. " was not measured")
         end
-        -- Every step boundary above 40 up to 80 percent moves two units (the
-        -- 20 units leave no room for the step into 40 as well).
-        for i = 2, #points do
-            local x = points[i][1]
-            if x > 0.41 and x < 0.81 then
-                t:assertEqual(points[i - 1][2] - points[i][2], 2, "step at " .. x)
+        -- The two lowest and the two highest steps share a level.
+        t:assertEqual(heard[1], heard[2])
+        t:assertEqual(heard[14], heard[15])
+        for i = 3, 14 do
+            local fall = heard[i - 1] - heard[i]
+            t:assertTrue(fall >= 0.95, "step into " .. i .. " falls only " .. fall)
+        end
+    end,
+
+    ["copy ranges: below the split the LOW copy, from it the HIGH copy"] = function(t)
+        local lowCopy, highCopy = GroupHealth.copyRanges(0, 0.35)
+        t:assertEqual(lowCopy[2], 0.35)
+        t:assertTrue(highCopy[1] >= highCopy[2]) -- nothing for the HIGH copy
+        lowCopy, highCopy = GroupHealth.copyRanges(0.35, 0.9)
+        t:assertEqual(lowCopy[1], 0.35)
+        t:assertEqual(lowCopy[2], GroupHealth.SPLIT)
+        t:assertEqual(highCopy[1], GroupHealth.SPLIT)
+        t:assertEqual(highCopy[2], 0.9)
+        -- Every health in a lane plays exactly one copy.
+        for i = 0, 100 do
+            local x = i / 100
+            local a = evaluate(GroupHealth.bandPoints(lowCopy[1], lowCopy[2]), x)
+            local b = evaluate(GroupHealth.bandPoints(highCopy[1], highCopy[2]), x)
+            if x >= 0.35 and x < 0.9 then
+                t:assertEqual(a + b, 100, "health " .. x)
+            else
+                t:assertEqual(a + b, 0, "health " .. x)
             end
         end
+    end,
+
+    ["copy ranges: above 1 the HIGH copy includes full health"] = function(t)
+        local _, highCopy = GroupHealth.copyRanges(0, 2)
+        t:assertEqual(evaluate(GroupHealth.bandPoints(highCopy[1], highCopy[2]), 1), 100)
     end,
 
     ["below gate: audible under the threshold only"] = function(t)
@@ -126,6 +143,10 @@ testRunner:addSuite("GroupHealth", {
         t:assertEqual(
             GroupHealth.segment(100, -4, "3"),
             '<volume level="100"><pitch absmiddle="-4">3</pitch></volume>'
+        )
+        t:assertEqual(
+            GroupHealth.segment(0, -10, "3 full", 10),
+            '<volume level="0"><rate absspeed="10"><pitch absmiddle="-10">3 full</pitch></rate></volume>'
         )
     end,
 
