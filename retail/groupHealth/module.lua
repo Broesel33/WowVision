@@ -676,7 +676,11 @@ module:registerBinding({
     type = "Function",
     key = "groupHealth/snapshot",
     label = L["Speak Group Health"],
-    inputs = { "Ö" },
+    -- A letter key: the game names keys by the character the keyboard
+    -- layout produces, so only letters (and function keys) exist on every
+    -- layout. "Ö" never fired, and "#" is a different key on English and
+    -- French layouts. H for health.
+    inputs = { "ALT-H" },
     func = function()
         module:snapshot()
     end,
