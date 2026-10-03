@@ -44,7 +44,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 ## The snapshot key
 
-**Speak Group Health** (default key: Alt+H) speaks every member once, in number order, at their current pitch. Change the key with `/wv bind`.
+**Speak Group Health** (default key: Alt+H) speaks every member once, in number order, at their current pitch; a member at full health as "number full" when **Announce Full Health** is on. Change the key with `/wv bind`.
 
 ## The log
 

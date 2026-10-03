@@ -518,6 +518,9 @@ function module:laneVolume(member, lane)
         return through(member.unit, GroupHealth.bandPoints(urgent, start))
     elseif lane == "repeat" then
         return through(member.unit, GroupHealth.belowPoints(GroupHealth.fraction(roleSetting(role, "repeatThreshold"))))
+    elseif lane == "snapshot" and self.settings.announceFull then
+        -- At full health the snapshot says "<number> full" instead.
+        return through(member.unit, GroupHealth.belowPoints(1))
     end
     return 100
 end
@@ -539,13 +542,14 @@ function module:announce(member, lane)
         return
     end
     -- Every announcement has the same shape: the number, then "<number>
-    -- full" (audible only on the normal lane at exactly full health). A
+    -- full" (audible only on the normal lane and the snapshot, at exactly
+    -- full health). A
     -- SAPI voice drops its pitch at the end of a sentence; a number that
     -- ended its sentence on one lane and not on the other sounded lower
     -- below the urgent threshold although its pitch was higher (heard on
     -- Forever, 2026-10-03).
     local full = 0
-    if lane == "normal" and self.settings.announceFull then
+    if (lane == "normal" or lane == "snapshot") and self.settings.announceFull then
         full = through(member.unit, fullPoints) or 0
     end
     local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
