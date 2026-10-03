@@ -35,11 +35,14 @@ GroupHealth.MAX_RAID_GROUPS = 8
 --   per unit, nearly even. Nothing goes past either end, a nested relative
 --   <pitch middle> included.
 -- - Sku's pitched recordings span 12.6 semitones, about one per step.
--- 15 steps of a full semitone do not fit, so the scale spends two units
--- (about one semitone, as in Sku) on each step from 40 to 80 percent, where
--- steps sounded alike, and one unit on the rest. Index 1 is the lowest
+-- 15 steps of a full semitone do not fit. The scale keeps Sku's 15 steps
+-- of about 7 percent, but the two outermost pairs share a pitch (0 to 13
+-- percent is one level, ultra urgent; 87 to 100 another): 13 levels, 12
+-- moves over 20 units. Two units (about a semitone, as in Sku) per step from
+-- 40 to 80 percent, two and one alternating below 40 (one unit everywhere
+-- sounded too uniform there), one unit at the top. Index 1 is the lowest
 -- health.
-GroupHealth.PITCH_SCALE = { 10, 9, 8, 7, 6, 5, 4, 2, 0, -2, -4, -6, -8, -9, -10 }
+GroupHealth.PITCH_SCALE = { 10, 10, 8, 7, 5, 4, 3, 1, -1, -3, -5, -7, -9, -10, -10 }
 GroupHealth.PITCH_STEPS = #GroupHealth.PITCH_SCALE
 
 -- Step k covers health k/steps up to (k+1)/steps; full health falls into

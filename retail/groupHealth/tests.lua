@@ -31,6 +31,15 @@ testRunner:addSuite("GroupHealth", {
         end
     end,
 
+    ["pitch: outermost pairs share a pitch, every other neighbour differs"] = function(t)
+        local scale = GroupHealth.PITCH_SCALE
+        t:assertEqual(scale[1], scale[2])
+        t:assertEqual(scale[#scale], scale[#scale - 1])
+        for i = 3, #scale - 1 do
+            t:assertTrue(scale[i - 1] > scale[i], "step into " .. i)
+        end
+    end,
+
     ["pitch: whole numbers inside -10..10, two units per step from 40 to 80 percent"] = function(t)
         local points = GroupHealth.pitchPoints()
         for _, point in ipairs(points) do
