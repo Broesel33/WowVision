@@ -48,7 +48,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 ## The log
 
-`/wv ghlog on` prints every announcement to chat as it plays: the time, the number, the role, the lane (urgent, normal, repeat, snapshot), how long after the health change it came, and whether a pause held it back. `/wv ghlog off` stops it, `/wv ghlog show` lists the last 200, `/wv ghlog clear` empties it. The log also lists the announcements the game kept silent: the monitor cannot know which ones were audible.
+`/wv ghlog on` records every announcement as it plays: the time, the number, the role, the lane (urgent, normal, repeat, snapshot), how long after the health change it came, and whether a pause held it back. `/wv ghlog off` stops it, `/wv ghlog show` opens the last 200 in a window, `/wv ghlog clear` empties it. The log also lists the announcements the game kept silent: the monitor cannot know which ones were audible.
 
 ## Limits
 

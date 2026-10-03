@@ -528,19 +528,28 @@ function module:announce(member, lane)
         self:speak(bust(number .. " " .. L["dead"]))
         return
     end
+    -- A member who died while this waited gets no number.
+    if plainTrue(UnitIsDeadOrGhost, member.unit) then
+        return
+    end
     local pitch = through(member.unit, pitchPoints)
     local volume = self:laneVolume(member, lane)
     if pitch == nil or volume == nil then
         self:unavailable()
         return
     end
-    local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
+    -- Every announcement has the same shape: the number, then "<number>
+    -- full" (audible only on the normal lane at exactly full health). A
+    -- SAPI voice drops its pitch at the end of a sentence; a number that
+    -- ended its sentence on one lane and not on the other sounded lower
+    -- below the urgent threshold although its pitch was higher (heard on
+    -- Forever, 2026-10-03).
+    local full = 0
     if lane == "normal" and self.settings.announceFull then
-        local full = through(member.unit, fullPoints)
-        if full ~= nil then
-            text = text .. GroupHealth.segment(full, pitch, number .. " " .. L["full"])
-        end
+        full = through(member.unit, fullPoints) or 0
     end
+    local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
+        .. GroupHealth.segment(full, pitch, number .. " " .. L["full"])
     self:speak(text)
 end
 
@@ -654,8 +663,8 @@ end
 -- Log (/wv ghlog) ---------------------------------------------------------------
 -- Every announcement as it plays: time, number, lane, how long after the
 -- health change that woke it, whether a pause held it back. The health
--- itself is secret and cannot be logged. Printed to chat while on; the
--- last entries stay for /wv ghlog show.
+-- itself is secret and cannot be logged. Recorded quietly while on (in chat
+-- it was too much in a fight); /wv ghlog show opens the last entries.
 
 local LOG_MAX = 200
 module.log = {}
@@ -694,12 +703,11 @@ function module:logPlay(entry)
     while #self.log > LOG_MAX do
         tremove(self.log, 1)
     end
-    chat(line)
 end
 
 module:registerCommand({
     name = "ghlog",
-    description = "Group health monitor log: 'on' prints every announcement to chat, 'off' stops, 'show' lists the last ones, 'clear' empties it",
+    description = "Group health monitor log: 'on' records every announcement, 'off' stops, 'show' lists the last ones, 'clear' empties it",
     func = function(args)
         local word = (args or ""):lower():match("^%s*(%S+)")
         local text
@@ -716,9 +724,7 @@ module:registerCommand({
             if #module.log == 0 then
                 text = "Group health log is empty"
             else
-                local all = table.concat(module.log, "\n")
-                chat(all)
-                WowVision.testing.showResults(all)
+                WowVision.testing.showResults(table.concat(module.log, "\n"))
                 return
             end
         end
