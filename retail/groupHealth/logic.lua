@@ -29,40 +29,65 @@ GroupHealth.MAX_RAID_GROUPS = 8
 
 -- Sku's monitor uses 15 pitch steps of about 7 percent, the highest pitch
 -- at the lowest health; Sku's recordings span 12.6 semitones, about one per
--- step. What a SAPI voice allows (2026-10-03; absmiddle whole numbers only,
--- "2.5" made a line silent in game; the rest measured offline on Microsoft
--- Hedda, voice 0, rendered through SAPI with exactly this markup):
+-- step. What a SAPI voice allows (2026-10-03; absmiddle takes whole numbers
+-- only, "2.5" made a line silent in game; the rest measured offline on
+-- Microsoft Hedda and Microsoft Zira at rate 7, rendered through SAPI with
+-- exactly this markup):
 -- - absmiddle -10 to 10 moves the voice about half a semitone per unit,
 --   10 semitones in all; nothing goes past either end.
 -- - The voice's own melody comes on top. A number that ends the sentence
---   falls; a number followed by anything, even silent words, rises: the
---   same absmiddle sounds about 4.5 semitones higher. Punctuation and "?"
---   change nothing; <emph> replaces the pitch instead of adding to it.
+--   falls; a number followed by anything, even a silent word, rises: the
+--   same absmiddle sounds about 4 semitones higher on Hedda, 6.5 on Zira.
+--   Punctuation and "?" change nothing on Hedda; <emph> replaces the pitch
+--   instead of adding to it.
 -- So every announcement carries the number twice, each behind a volume
--- gate: the LOW copy first (rising: the urgent half of the scale), then
--- the silent "<number> full" part, then the HIGH copy last (falling: the
--- healthy part). Together about 15 semitones, 13 levels (the two lowest
--- and the two highest 7 percent steps share a level) about 1.0 to 1.6
--- semitones apart. The "full" part is spoken fast, so the HIGH copy starts
--- only about half a second after the LOW one would have.
+-- gate: the LOW copy first (rising: the urgent part of the scale), the
+-- HIGH copy last (falling: the healthy part). The HIGH copy starts about
+-- 0.15 seconds after the LOW one would have. 13 levels (the two lowest and
+-- the two highest 7 percent steps share a level) about 1 to 1.5 semitones
+-- apart: about 14.5 semitones on Hedda, 16.6 on Zira.
 --
--- Per 7 percent step (index 1 is the lowest health), the pitch of each
--- copy; the copy not in use carries the same value, as when measured.
--- Measured medians (semitones against plain absmiddle 0), lowest health
--- first: 9.1, 9.1, 7.9, 6.5, 5.5, 4.1, 2.6, 1.6, 0.6, -0.9 (LOW copy),
--- -2.2, -3.2, -4.9, -5.9, -5.9 (HIGH copy).
-GroupHealth.PITCH_SCALE = { 10, 10, 8, 5, 3, 0, -3, -5, -7, -10, -3, -5, -8, -10, -10 }
-GroupHealth.PITCH_STEPS = #GroupHealth.PITCH_SCALE
--- Steps from this one on (index 11, from 10/15 health) use the HIGH copy.
-GroupHealth.HIGH_COPY_FROM = 11
-GroupHealth.SPLIT = (GroupHealth.HIGH_COPY_FROM - 1) / GroupHealth.PITCH_STEPS
--- The fast rate for the silent part between the copies.
-GroupHealth.FAST_RATE = 10
+-- Each voice's melody differs, so each measured voice has its own scale:
+-- the pitch per 7 percent step (index 1 is the lowest health; the copy not
+-- in use carries the same value, as when measured), and the step from
+-- which the HIGH copy speaks. `heard` is the measured result per step
+-- (semitones against the voice's plain absmiddle 0, fitted line), kept for
+-- the tests. A voice not measured uses Hedda's.
+GroupHealth.PITCH_STEPS = 15
+GroupHealth.VOICE_PROFILES = {
+    hedda = {
+        scale = { 10, 10, 8, 5, 3, 0, -2, -5, -7, -10, -3, -6, -8, -10, -10 },
+        highFrom = 11,
+        heard = { 8.57, 8.57, 7.58, 6.11, 5.13, 3.66, 2.67, 1.2, 0.22, -1.26, -2.07, -3.73, -4.84, -5.95, -5.95 },
+    },
+    zira = {
+        scale = { 10, 10, 7, 5, 2, -1, -4, -6, -9, 1, -2, -5, -7, -10, -10 },
+        highFrom = 10,
+        heard = { 12.59, 12.59, 11.06, 10.04, 8.51, 6.98, 5.45, 4.43, 2.9, 1.65, 0.11, -1.43, -2.46, -4.01, -4.01 },
+    },
+}
+GroupHealth.DEFAULT_PROFILE = "hedda"
+
+-- The profile for a voice by its name ("Microsoft Zira Desktop - English").
+function GroupHealth.profileFor(voiceName)
+    local name = string.lower(voiceName or "")
+    for key, profile in pairs(GroupHealth.VOICE_PROFILES) do
+        if string.find(name, key, 1, true) then
+            return profile, key
+        end
+    end
+    return GroupHealth.VOICE_PROFILES[GroupHealth.DEFAULT_PROFILE], GroupHealth.DEFAULT_PROFILE
+end
+
+-- The health from which the HIGH copy speaks.
+function GroupHealth.split(profile)
+    return (profile.highFrom - 1) / GroupHealth.PITCH_STEPS
+end
 
 -- Step k covers health k/steps up to (k+1)/steps; full health falls into
 -- the last step.
-function GroupHealth.pitchPoints()
-    local scale = GroupHealth.PITCH_SCALE
+function GroupHealth.pitchPoints(profile)
+    local scale = profile.scale
     local steps = #scale
     local points = {}
     for k = 0, steps - 1 do
@@ -72,10 +97,10 @@ function GroupHealth.pitchPoints()
 end
 
 -- A lane's health range [low, high) split between the copies: the LOW copy
--- below SPLIT, the HIGH copy from SPLIT up. A `high` above 1 includes full
--- health.
-function GroupHealth.copyRanges(low, high)
-    local split = GroupHealth.SPLIT
+-- below the profile's split, the HIGH copy from it up. A `high` above 1
+-- includes full health.
+function GroupHealth.copyRanges(low, high, profile)
+    local split = GroupHealth.split(profile)
     local lowCopy = { low, math.min(high, split) }
     local highCopy = { math.max(low, split), high }
     return lowCopy, highCopy
@@ -144,14 +169,9 @@ function GroupHealth.nextFire(now, lastFire, delay, pause)
 end
 
 -- One spoken part: the words at a volume and a pitch, either of which may
--- be a secret curve result, optionally at a fixed fast rate. Plain
--- concatenation only, which secrets allow.
-function GroupHealth.segment(volume, pitch, words, rate)
-    local inner = '<pitch absmiddle="' .. pitch .. '">' .. words .. "</pitch>"
-    if rate ~= nil then
-        inner = '<rate absspeed="' .. rate .. '">' .. inner .. "</rate>"
-    end
-    return '<volume level="' .. volume .. '">' .. inner .. "</volume>"
+-- be a secret curve result. Plain concatenation only, which secrets allow.
+function GroupHealth.segment(volume, pitch, words)
+    return '<volume level="' .. volume .. '"><pitch absmiddle="' .. pitch .. '">' .. words .. "</pitch></volume>"
 end
 
 -- The engine caches the audio of every text it speaks and replays it when

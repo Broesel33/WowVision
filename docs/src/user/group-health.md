@@ -17,6 +17,8 @@ The idea and the numbering come from Sku's health monitor.
 
 The monitor speaks with a game voice of its own, chosen in its settings. Pitch only works with a real Windows (SAPI) voice. A screen reader bridge voice, such as the NVDA SAPI bridge, speaks the numbers but ignores the pitch. The monitor does not need a screen reader at all.
 
+Every voice shapes its sentences differently, so the pitch scale is tuned per voice. Microsoft Hedda and Microsoft Zira are measured; any other voice uses Hedda's scale and may sound less even.
+
 ## When something is said
 
 The monitor speaks only when a member's health changes. It never reads health on a timer, unless you turn on the repeat.

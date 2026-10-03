@@ -99,7 +99,8 @@ settings:add({
     key = "rate",
     type = "Number",
     label = L["Speech Rate"],
-    default = 2,
+    -- Short numbers: five hurt members fit in little time.
+    default = 7,
     min = -10,
     max = 10,
 })
@@ -292,7 +293,25 @@ local function curveFor(points)
     return curve
 end
 
-local pitchPoints = GroupHealth.pitchPoints()
+-- The pitch scale of the chosen voice (logic.lua), looked up by its name.
+local profileCache = {}
+
+function module:profile()
+    local voice = self.settings.voice or 0
+    local cached = profileCache[voice]
+    if cached == nil then
+        local name
+        for _, v in ipairs(C_VoiceChat.GetTtsVoices() or {}) do
+            if v.voiceID == voice then
+                name = v.name
+            end
+        end
+        local profile = GroupHealth.profileFor(name)
+        cached = { profile = profile, pitch = GroupHealth.pitchPoints(profile) }
+        profileCache[voice] = cached
+    end
+    return cached.profile, cached.pitch
+end
 local fullPoints = GroupHealth.fullPoints()
 
 -- The member's health through a curve; nil when the game refuses the unit
@@ -536,28 +555,33 @@ function module:announce(member, lane)
     if plainTrue(UnitIsDeadOrGhost, member.unit) then
         return
     end
+    local profile, pitchPoints = self:profile()
     local pitch = through(member.unit, pitchPoints)
-    local lowRange, highRange = GroupHealth.copyRanges(self:laneRange(member, lane))
+    local low, high = self:laneRange(member, lane)
+    local lowRange, highRange = GroupHealth.copyRanges(low, high, profile)
     local lowVolume = through(member.unit, GroupHealth.bandPoints(lowRange[1], lowRange[2]))
     local highVolume = through(member.unit, GroupHealth.bandPoints(highRange[1], highRange[2]))
     if pitch == nil or lowVolume == nil or highVolume == nil then
         self:unavailable()
         return
     end
-    -- Every announcement has the same three parts (logic.lua): the LOW copy
-    -- (rising, the urgent half of the scale), "<number> full" (fast, audible
-    -- only on the normal lane and the snapshot at exactly full health), the
-    -- HIGH copy last (falling, the healthy part). The volume gates pick the
-    -- copy; the sentence shape never changes, so the voice's melody adds the
-    -- same to every number of a copy.
-    local full = 0
+    -- Every announcement has the same two parts (logic.lua): the LOW copy
+    -- (rising, the urgent part of the scale) and the HIGH copy last
+    -- (falling, the healthy part). The volume gates pick the copy; the
+    -- sentence shape never changes, so the voice's melody adds the same to
+    -- every number of a copy.
+    self:speak(GroupHealth.segment(lowVolume, pitch, number .. self:nextPad())
+        .. GroupHealth.segment(highVolume, pitch, number))
+    -- "<number> full" is its own utterance at the same moment, silent
+    -- unless the member is at exactly full health (when both copies above
+    -- are silent): spoken at the normal rate, and it keeps the copies short.
     if (lane == "normal" or lane == "snapshot") and self.settings.announceFull then
-        full = through(member.unit, fullPoints) or 0
+        local full = through(member.unit, fullPoints)
+        if full ~= nil then
+            local bottom = profile.scale[#profile.scale]
+            self:speak(GroupHealth.segment(full, bottom, number .. " " .. L["full"] .. self:nextPad()))
+        end
     end
-    local text = GroupHealth.segment(lowVolume, pitch, number .. self:nextPad())
-        .. GroupHealth.segment(full, GroupHealth.PITCH_SCALE[#GroupHealth.PITCH_SCALE], number .. " " .. L["full"], GroupHealth.FAST_RATE)
-        .. GroupHealth.segment(highVolume, pitch, number)
-    self:speak(text)
 end
 
 -- Lanes -------------------------------------------------------------------------
