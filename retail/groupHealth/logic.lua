@@ -57,6 +57,20 @@ GroupHealth.MAX_RAID_GROUPS = 8
 -- LOW copy to the falling HIGH copy moved only 0.6 semitones at its peak
 -- and sounded like a step the wrong way (heard in game, 2026-10-03). A
 -- voice not measured uses Hedda's.
+--
+-- The OneCore voices (Windows' Narrator voices, usable in game once copied
+-- into the SAPI voice list), measured the same way on 2026-10-03:
+-- - Microsoft Hedda (OneCore) renders the very same sound as Hedda Desktop;
+--   the name match gives it Hedda's scale.
+-- - Microsoft Katja: her HIGH copy sits only about 3.3 semitones below her
+--   LOW copy (Hedda 5.1, Zira 5.7), so the LOW copy carries ten levels and
+--   the HIGH copy speaks from 73 percent; 13.4 semitones in all. Her HIGH
+--   copy opens with a short quieter onset at the LOW pitch: measured on
+--   the loud vowel, which the ear follows.
+-- - Microsoft Stefan has no scale of his own: below his middle pitch his
+--   voice turns creaky (the pitch jumps between 55 and 90 Hz from one
+--   moment to the next), so steps down there cannot be heard reliably. He
+--   falls back to Hedda's scale.
 GroupHealth.PITCH_STEPS = 15
 GroupHealth.VOICE_PROFILES = {
     hedda = {
@@ -68,6 +82,11 @@ GroupHealth.VOICE_PROFILES = {
         scale = { 10, 10, 7, 5, 2, 0, -3, -6, -8, -10, -2, -5, -7, -10, -10 },
         highFrom = 11,
         heard = { 12.79, 12.79, 11.26, 10.24, 8.71, 7.69, 6.16, 4.63, 3.61, 2.59, 0.97, -0.55, -1.56, -3.08, -3.08 },
+    },
+    katja = {
+        scale = { 10, 10, 8, 6, 4, 2, -1, -3, -5, -8, -10, -6, -8, -10, -10 },
+        highFrom = 12,
+        heard = { 8.13, 8.13, 7.12, 6.11, 5.09, 4.08, 2.56, 1.55, 0.54, -0.98, -1.99, -3.25, -4.27, -5.28, -5.28 },
     },
 }
 GroupHealth.DEFAULT_PROFILE = "hedda"

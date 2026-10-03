@@ -44,6 +44,13 @@ testRunner:addSuite("GroupHealth", {
         t:assertEqual(key, "zira")
         _, key = GroupHealth.profileFor("Microsoft Hedda Desktop - German")
         t:assertEqual(key, "hedda")
+        -- The OneCore voices, as named once copied into the SAPI list.
+        _, key = GroupHealth.profileFor("Microsoft Hedda - German (Germany)")
+        t:assertEqual(key, "hedda")
+        _, key = GroupHealth.profileFor("Microsoft Katja - German (Germany)")
+        t:assertEqual(key, "katja")
+        _, key = GroupHealth.profileFor("Microsoft Stefan - German (Germany)")
+        t:assertEqual(key, "hedda")
         _, key = GroupHealth.profileFor("Some Other Voice")
         t:assertEqual(key, "hedda")
         _, key = GroupHealth.profileFor(nil)
