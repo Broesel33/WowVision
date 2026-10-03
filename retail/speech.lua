@@ -16,6 +16,29 @@ local oldSpeak = C_VoiceChat.SpeakText
 module.queue = {}
 module.speaking = false
 
+-- Speech beside the queue (module:speakAside) plays at once and may overlap
+-- anything; its playback events must not end the queue's turn. WoW: Forever
+-- sends only playback started and finished with an utterance id, no text
+-- update naming the call (measured 2026-10-03), so each start is matched to
+-- the calls in the order they were made. A call whose start has not come
+-- within two seconds is dropped from the line.
+local START_WAIT = 2
+local pendingStarts = {}
+local asideUtterances = {}
+
+local function expectStart(owner)
+    tinsert(pendingStarts, { owner = owner, at = GetTime() })
+end
+
+local function takeStart()
+    local now = GetTime()
+    while pendingStarts[1] ~= nil and now - pendingStarts[1].at > START_WAIT do
+        tremove(pendingStarts, 1)
+    end
+    local entry = tremove(pendingStarts, 1)
+    return entry ~= nil and entry.owner or nil
+end
+
 local function pollQueue()
     if module.speaking then
         return
@@ -27,6 +50,7 @@ local function pollQueue()
     -- Mark busy immediately so a poll triggered before PLAYBACK_STARTED arrives
     -- does not dispatch a second utterance on top of this one.
     module.speaking = true
+    expectStart("queue")
     oldSpeak(item.voice, item.text, item.rate, item.volume, true)
 end
 
@@ -96,8 +120,16 @@ WowVision.speechSounds.attach(module, settings, L)
 
 local function frame_OnEvent(frame, event, utteranceID)
     if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
+        if takeStart() == "aside" then
+            asideUtterances[utteranceID] = true
+            return
+        end
         module.speaking = true
     elseif event == "VOICE_CHAT_TTS_PLAYBACK_FINISHED" or event == "VOICE_CHAT_TTS_PLAYBACK_FAILED" then
+        if asideUtterances[utteranceID] then
+            asideUtterances[utteranceID] = nil
+            return
+        end
         -- FAILED fires instead of FINISHED for rejected utterances (too short,
         -- too long, internal error). Without handling it the queue stalls forever.
         module.speaking = false
@@ -154,6 +186,22 @@ function module:speak(text)
     -- original SpeakText runs directly. Busted here so both paths get it.
     text = WowVision.ttsCacheBust.bust(text)
     C_VoiceChat.SpeakText(self.settings.voiceID, text, self.settings.speechRate, volume, false)
+end
+
+-- Speaks straight through the engine with overlap, beside the queue: for
+-- announcements that must not wait behind other speech and are mostly
+-- silent (the group health monitor gates its numbers by volume, and a
+-- silent word takes as long as a spoken one). The caller picks the voice:
+-- markup like <pitch> needs a real SAPI voice. The text is passed as is,
+-- so the caller busts the engine's audio cache itself.
+function module:speakAside(voice, text, rate, volume)
+    if volume == nil or volume > 100 then
+        volume = 100
+    elseif volume < 0 then
+        volume = 0
+    end
+    expectStart("aside")
+    oldSpeak(voice, text, rate or 0, volume, true)
 end
 
 function module:stop()
