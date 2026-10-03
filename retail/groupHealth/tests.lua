@@ -18,12 +18,12 @@ testRunner:addSuite("GroupHealth", {
     ["pitch: lowest health highest, full health lowest, fifteen steps"] = function(t)
         local points = GroupHealth.pitchPoints()
         t:assertEqual(#points, 15)
-        t:assertEqual(evaluate(points, 0), 10)
-        t:assertEqual(evaluate(points, 0.03), 10)
+        t:assertEqual(evaluate(points, 0), 15)
+        t:assertEqual(evaluate(points, 0.03), 15)
         t:assertEqual(evaluate(points, 1), -10)
         t:assertEqual(evaluate(points, 0.95), -10)
         -- Monotonic: never higher at more health.
-        local last = 11
+        local last = 16
         for i = 0, 100 do
             local pitch = evaluate(points, i / 100)
             t:assertTrue(pitch <= last)
@@ -31,10 +31,26 @@ testRunner:addSuite("GroupHealth", {
         end
     end,
 
-    ["pitch: every step is a whole number inside the SAPI range"] = function(t)
-        for _, point in ipairs(GroupHealth.pitchPoints()) do
-            t:assertEqual(point[2], math.floor(point[2]))
-            t:assertTrue(point[2] >= -10 and point[2] <= 10)
+    ["pitch: whole numbers, two units per step in the middle"] = function(t)
+        local scale = GroupHealth.PITCH_SCALE
+        for i, pitch in ipairs(scale) do
+            t:assertEqual(pitch, math.floor(pitch))
+            t:assertTrue(pitch >= -10 and pitch <= 15)
+            if i > 2 and i < #scale - 1 then
+                t:assertEqual(scale[i - 1] - pitch, 2, "step into " .. i)
+            end
+        end
+    end,
+
+    ["pitch: absmiddle part capped at 10, the rest nested"] = function(t)
+        local abs = GroupHealth.pitchPoints("abs")
+        local extra = GroupHealth.pitchPoints("extra")
+        for i = 0, 100 do
+            local x = i / 100
+            local a, e = evaluate(abs, x), evaluate(extra, x)
+            t:assertTrue(a <= 10 and a >= -10)
+            t:assertTrue(e >= 0 and e <= 5)
+            t:assertEqual(a + e, evaluate(GroupHealth.pitchPoints(), x))
         end
     end,
 
@@ -106,8 +122,8 @@ testRunner:addSuite("GroupHealth", {
 
     ["segment text carries volume, pitch and words"] = function(t)
         t:assertEqual(
-            GroupHealth.segment(100, -4, "3"),
-            '<volume level="100"><pitch absmiddle="-4">3</pitch></volume>'
+            GroupHealth.segment(100, -4, 0, "3"),
+            '<volume level="100"><pitch absmiddle="-4"><pitch middle="0">3</pitch></pitch></volume>'
         )
     end,
 

@@ -292,7 +292,8 @@ local function curveFor(points)
     return curve
 end
 
-local pitchPoints = GroupHealth.pitchPoints()
+local pitchAbsPoints = GroupHealth.pitchPoints("abs")
+local pitchExtraPoints = GroupHealth.pitchPoints("extra")
 local fullPoints = GroupHealth.fullPoints()
 
 -- The member's health through a curve; nil when the game refuses the unit
@@ -535,16 +536,17 @@ function module:announce(member, lane)
     if plainTrue(UnitIsDeadOrGhost, member.unit) then
         return
     end
-    local pitch = through(member.unit, pitchPoints)
+    local pitch = through(member.unit, pitchAbsPoints)
+    local extra = through(member.unit, pitchExtraPoints)
     local volume = self:laneVolume(member, lane)
-    if pitch == nil or volume == nil then
+    if pitch == nil or extra == nil or volume == nil then
         self:unavailable()
         return
     end
     -- Every announcement has the same shape: the number, then "<number>
     -- full" (audible only on the normal lane and the snapshot, at exactly
-    -- full health). A
-    -- SAPI voice drops its pitch at the end of a sentence; a number that
+    -- full health). A SAPI voice drops its pitch at the end of a sentence; a
+    -- number that
     -- ended its sentence on one lane and not on the other sounded lower
     -- below the urgent threshold although its pitch was higher (heard on
     -- Forever, 2026-10-03).
@@ -552,8 +554,8 @@ function module:announce(member, lane)
     if (lane == "normal" or lane == "snapshot") and self.settings.announceFull then
         full = through(member.unit, fullPoints) or 0
     end
-    local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
-        .. GroupHealth.segment(full, pitch, number .. " " .. L["full"])
+    local text = GroupHealth.segment(volume, pitch, extra, number .. self:nextPad())
+        .. GroupHealth.segment(full, pitch, extra, number .. " " .. L["full"])
     self:speak(text)
 end
 

@@ -27,25 +27,37 @@ WowVision.groupHealth = GroupHealth
 GroupHealth.ROLES = { "TANK", "HEALER", "DAMAGER", "NONE" }
 GroupHealth.MAX_RAID_GROUPS = 8
 
--- Sku's monitor uses 15 pitch steps, the highest pitch at the lowest
--- health. The SAPI pitch range is -10 to 10.
-GroupHealth.PITCH_STEPS = 15
-GroupHealth.PITCH_HIGH = 10
-GroupHealth.PITCH_LOW = -10
-
-local function round(value)
-    return math.floor(value + 0.5)
-end
+-- Sku's monitor uses 15 pitch steps of about 7 percent, the highest pitch
+-- at the lowest health. Measured with a real SAPI voice on Forever
+-- (2026-10-03, /wv sprobe pitch):
+-- - absmiddle takes whole numbers only; "2.5" made the line silent.
+-- - One unit is barely audible; 2 and 3 sounded alike.
+-- - Nothing goes below -10, but a relative <pitch middle="5"> nested in
+--   absmiddle 10 sounded higher than 10 alone; about 15 is the ceiling.
+-- So the scale runs from 15 down to -10, two units per step through the
+-- middle, one unit only for the outermost steps, where the pitch is
+-- strong already. Index 1 is the lowest health.
+GroupHealth.PITCH_SCALE = { 15, 14, 12, 10, 8, 6, 4, 2, 0, -2, -4, -6, -8, -9, -10 }
+GroupHealth.PITCH_STEPS = #GroupHealth.PITCH_SCALE
+-- absmiddle reaches 10; the rest goes into the nested relative pitch.
+GroupHealth.ABS_PITCH_MAX = 10
 
 -- Step k covers health k/steps up to (k+1)/steps; full health falls into
--- the last step. Step 0 (the lowest health) gets the highest pitch.
-function GroupHealth.pitchPoints(steps)
-    steps = steps or GroupHealth.PITCH_STEPS
+-- the last step. `part` picks "abs" (the absmiddle value, capped at 10) or
+-- "extra" (the nested relative pitch above 10); nil gives the full value.
+function GroupHealth.pitchPoints(part)
+    local scale = GroupHealth.PITCH_SCALE
+    local steps = #scale
+    local cap = GroupHealth.ABS_PITCH_MAX
     local points = {}
-    local span = GroupHealth.PITCH_HIGH - GroupHealth.PITCH_LOW
     for k = 0, steps - 1 do
-        local pitch = GroupHealth.PITCH_HIGH - (steps > 1 and k * span / (steps - 1) or 0)
-        tinsert(points, { k / steps, round(pitch) })
+        local pitch = scale[k + 1]
+        if part == "abs" then
+            pitch = math.min(pitch, cap)
+        elseif part == "extra" then
+            pitch = math.max(pitch - cap, 0)
+        end
+        tinsert(points, { k / steps, pitch })
     end
     return points
 end
@@ -112,10 +124,19 @@ function GroupHealth.nextFire(now, lastFire, delay, pause)
     return at
 end
 
--- One spoken part: the words at a volume and a pitch, either of which may
--- be a secret curve result. Plain concatenation only, which secrets allow.
-function GroupHealth.segment(volume, pitch, words)
-    return '<volume level="' .. volume .. '"><pitch absmiddle="' .. pitch .. '">' .. words .. "</pitch></volume>"
+-- One spoken part: the words at a volume and a pitch (absmiddle plus a
+-- nested relative pitch above 10), any of which may be a secret curve
+-- result. Plain concatenation only, which secrets allow.
+function GroupHealth.segment(volume, pitch, extra, words)
+    return '<volume level="'
+        .. volume
+        .. '"><pitch absmiddle="'
+        .. pitch
+        .. '"><pitch middle="'
+        .. extra
+        .. '">'
+        .. words
+        .. "</pitch></pitch></volume>"
 end
 
 -- The engine caches the audio of every text it speaks and replays it when
