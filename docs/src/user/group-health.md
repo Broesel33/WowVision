@@ -46,6 +46,10 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 **Speak Group Health** (default key: Alt+H) speaks every member once, in number order, at their current pitch. Change the key with `/wv bind`.
 
+## The log
+
+`/wv ghlog on` prints every announcement to chat as it plays: the time, the number, the role, the lane (urgent, normal, repeat, snapshot), how long after the health change it came, and whether a pause held it back. `/wv ghlog off` stops it, `/wv ghlog show` lists the last 200, `/wv ghlog clear` empties it. The log also lists the announcements the game kept silent: the monitor cannot know which ones were audible.
+
 ## Limits
 
 - The game keeps group health secret from addons. The monitor never knows anyone's health: it prepares the possible announcements and the game plays the one that matches. That is why it cannot announce "only when health moved by 10 percent", and why incoming heals cannot be counted in.

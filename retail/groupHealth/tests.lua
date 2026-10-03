@@ -117,6 +117,18 @@ testRunner:addSuite("GroupHealth", {
         )
     end,
 
+    ["unique padding: never repeats, only spaces"] = function(t)
+        local seen = {}
+        for n = 0, 20000 do
+            local pad = GroupHealth.uniquePad(n)
+            t:assertNil(seen[pad], "padding repeats at " .. n)
+            seen[pad] = true
+            t:assertNil(pad:gsub("\194\160", ""):find("[^ ]"), "only spaces")
+        end
+        -- About fifty invisible characters even at a million utterances.
+        t:assertTrue(#GroupHealth.uniquePad(1000000) < 120)
+    end,
+
     ["fraction clamps percent"] = function(t)
         t:assertEqual(GroupHealth.fraction(150), 1)
         t:assertEqual(GroupHealth.fraction(-5), 0)

@@ -443,13 +443,13 @@ end
 
 -- `force` entries play even when a roster update dropped the member: the
 -- snapshot finishes what it started.
-function module:enqueue(member, lane, force)
+function module:enqueue(member, lane, force, info)
     local key = entryKey(member, lane)
     if self.queued[key] then
         return
     end
     self.queued[key] = true
-    tinsert(self.queue, { member = member, lane = lane, key = key, force = force })
+    tinsert(self.queue, { member = member, lane = lane, key = key, force = force, info = info, queuedAt = GetTime() })
     self:pump()
 end
 
@@ -464,6 +464,7 @@ function module:pump()
     self.queued[entry.key] = nil
     -- A member dropped by a roster update is skipped.
     if entry.force or self:memberFor(entry.member.unit) == entry.member then
+        self:logPlay(entry)
         self:announce(entry.member, entry.lane)
     end
     self.pumping = true
@@ -477,6 +478,18 @@ end
 
 local function bust(words)
     return WowVision.ttsCacheBust.bust(words)
+end
+
+-- The utterance counter behind the unique padding (logic.lua). Kept in the
+-- character's saved data: the engine's audio cache outlives a /reload.
+function module:nextPad()
+    local data = self.data
+    if data == nil then
+        self.fallbackCount = (self.fallbackCount or math.floor(GetTime() * 1000)) + 1
+        return GroupHealth.uniquePad(self.fallbackCount)
+    end
+    data.utterances = (data.utterances or 0) + 1
+    return GroupHealth.uniquePad(data.utterances)
 end
 
 function module:speak(text)
@@ -521,11 +534,11 @@ function module:announce(member, lane)
         self:unavailable()
         return
     end
-    local text = GroupHealth.segment(volume, pitch, bust(number))
+    local text = GroupHealth.segment(volume, pitch, number .. self:nextPad())
     if lane == "normal" and self.settings.announceFull then
         local full = through(member.unit, fullPoints)
         if full ~= nil then
-            text = text .. GroupHealth.segment(full, pitch, bust(number .. " " .. L["full"]))
+            text = text .. GroupHealth.segment(full, pitch, number .. " " .. L["full"])
         end
     end
     self:speak(text)
@@ -548,13 +561,15 @@ function module:wake(member, lane)
     local now = GetTime()
     local at = GroupHealth.nextFire(now, state.last, delay, pause)
     state.pending = true
+    -- For the log: a lane held back by its pause is a follow-up.
+    local info = { wokeAt = now, followUp = at > now + delay + 0.01 }
     C_Timer.After(math.max(0, at - now), function()
         state.pending = false
         if self:memberFor(member.unit) ~= member then
             return
         end
         state.last = GetTime()
-        self:enqueue(member, lane)
+        self:enqueue(member, lane, nil, info)
     end)
 end
 
@@ -635,6 +650,82 @@ function module:snapshot()
         end
     end
 end
+
+-- Log (/wv ghlog) ---------------------------------------------------------------
+-- Every announcement as it plays: time, number, lane, how long after the
+-- health change that woke it, whether a pause held it back. The health
+-- itself is secret and cannot be logged. Printed to chat while on; the
+-- last entries stay for /wv ghlog show.
+
+local LOG_MAX = 200
+module.log = {}
+
+local function chat(text)
+    for line in tostring(text):gmatch("[^\n]+") do
+        print("WowVision group health: " .. line)
+    end
+end
+
+function module:logPlay(entry)
+    if not self.logging then
+        return
+    end
+    local now = GetTime()
+    local member = entry.member
+    local parts = {
+        date("%H:%M:%S") .. string.format(".%d", math.floor((now % 1) * 10)),
+        "number " .. tostring(member.number),
+        string.lower(member.role),
+        entry.lane,
+    }
+    local info = entry.info
+    if info ~= nil then
+        tinsert(parts, string.format("%.1f s after the change", now - info.wokeAt))
+        if info.followUp then
+            tinsert(parts, "follow-up after the pause")
+        end
+    end
+    local queued = now - (entry.queuedAt or now)
+    if queued > 0.05 then
+        tinsert(parts, string.format("waited %.1f s in the queue", queued))
+    end
+    local line = table.concat(parts, ", ")
+    tinsert(self.log, line)
+    while #self.log > LOG_MAX do
+        tremove(self.log, 1)
+    end
+    chat(line)
+end
+
+module:registerCommand({
+    name = "ghlog",
+    description = "Group health monitor log: 'on' prints every announcement to chat, 'off' stops, 'show' lists the last ones, 'clear' empties it",
+    func = function(args)
+        local word = (args or ""):lower():match("^%s*(%S+)")
+        local text
+        if word == "on" then
+            module.logging = true
+            text = "Group health log on"
+        elseif word == "off" then
+            module.logging = false
+            text = "Group health log off"
+        elseif word == "clear" then
+            module.log = {}
+            text = "Group health log cleared"
+        else
+            if #module.log == 0 then
+                text = "Group health log is empty"
+            else
+                local all = table.concat(module.log, "\n")
+                chat(all)
+                WowVision.testing.showResults(all)
+                return
+            end
+        end
+        chat(text)
+        WowVision:speak(text)
+    end,
+})
 
 -- Wiring ------------------------------------------------------------------------
 

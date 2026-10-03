@@ -118,6 +118,27 @@ function GroupHealth.segment(volume, pitch, words)
     return '<volume level="' .. volume .. '"><pitch absmiddle="' .. pitch .. '">' .. words .. "</pitch></volume>"
 end
 
+-- The engine caches the audio of every text it speaks and replays it when
+-- the same text comes again, keyed AFTER stripping the markup: a "3" at one
+-- pitch and a "3" at another are one key, and the replay keeps the old
+-- pitch and volume. Every utterance therefore gets a padding no other
+-- utterance of the session has: utterance number n written in base 8, each
+-- digit a run of 1 to 8 no-break spaces, the runs led by plain spaces.
+-- Inaudible (Sku measured U+00A0 on the client), and unlike the shared
+-- cache-buster's 512 variants per text it never repeats: a tank's number
+-- would reach 512 within one long fight.
+local NBSP = "\194\160"
+
+function GroupHealth.uniquePad(n)
+    local parts = {}
+    repeat
+        local digit = n % 8
+        tinsert(parts, " " .. string.rep(NBSP, digit + 1))
+        n = math.floor(n / 8)
+    until n == 0
+    return table.concat(parts)
+end
+
 -- Settings store thresholds in percent; curves take fractions.
 function GroupHealth.fraction(percent)
     if percent == nil then
