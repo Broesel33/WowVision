@@ -57,13 +57,21 @@ local function whereText(node)
     return m:whereText(node.x, node.y)
 end
 
+-- Enter on a placed node: the navigation window opens aimed at it, with the
+-- closest entry point and the node as destination preselected, so Enter
+-- there routes through the waypoint network (a straight beacon when the
+-- continent has no map data).
 local function beaconTo(node)
     local m = maps()
     if m == nil then
         return
     end
-    m:beaconTo(node.x, node.y, node.label, node.onArrive)
     WowVision.UIHost:closeWindow(WINDOW)
+    if m.openNavigationTo ~= nil then
+        m:openNavigationTo(node.x, node.y, node.label, node.onArrive)
+    else
+        m:beaconTo(node.x, node.y, node.label, node.onArrive)
+    end
 end
 
 local function pushDetails(node)

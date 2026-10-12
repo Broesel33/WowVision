@@ -32,7 +32,13 @@ local function entryLabel(entry)
     return table.concat(parts, ", ")
 end
 
--- Snapshot the network and the entry candidates once per open.
+-- Snapshot the network and the entry candidates once per open. A pending
+-- target (the scanner's Enter, module:openNavigationTo) joins the snapshot
+-- as a destination without links: the router ends the route with a straight
+-- leg to it. It heads the destination list and takes the landing focus, so
+-- the closest entry point and the target are both selected on open.
+local TARGET_ID = "navigation:target"
+
 local function ensureData(screen)
     if screen._waypoints ~= nil then
         return true
@@ -48,6 +54,17 @@ local function ensureData(screen)
         screen._entryId = screen._entries[1].waypoint.id
     end
     screen._search = ""
+    local target = module.pendingTarget
+    module.pendingTarget = nil
+    if target ~= nil then
+        local wp = { id = TARGET_ID, n = target.label, x = target.x, y = target.y, virtual = true, onArrive = target.onArrive }
+        screen._waypoints[TARGET_ID] = wp
+        screen._target = wp
+        screen._destIndex = 1
+        if screen.state ~= nil then
+            screen.state.nextSuggestedMove = ControlId.structural("destinations")
+        end
+    end
     return true
 end
 
@@ -61,8 +78,9 @@ local function destinations(screen)
     local foldCase = WowVision.utils.foldCase
     local needle = screen._search ~= "" and foldCase(screen._search) or nil
     local found = {}
+    local target = screen._target
     for _, wp in pairs(screen._waypoints) do
-        if wp.n ~= nil and (needle == nil or foldCase(wp.n):find(needle, 1, true) ~= nil) then
+        if wp ~= target and wp.n ~= nil and (needle == nil or foldCase(wp.n):find(needle, 1, true) ~= nil) then
             local dx = wp.x - screen._px
             local dy = wp.y - screen._py
             tinsert(found, { waypoint = wp, distance = math.sqrt(dx * dx + dy * dy) })
@@ -71,6 +89,12 @@ local function destinations(screen)
     table.sort(found, function(a, b)
         return a.distance < b.distance
     end)
+    -- The target the window was opened for always heads the list.
+    if target ~= nil then
+        local dx = target.x - screen._px
+        local dy = target.y - screen._py
+        table.insert(found, 1, { waypoint = target, distance = math.sqrt(dx * dx + dy * dy) })
+    end
     screen._destinations = found
     return found
 end
@@ -151,7 +175,13 @@ local function destinationCursor(screen)
                 return
             end
             WowVision.UIHost:closeWindow("atlas")
-            module:navigateTo(entry.waypoint.id, screen._waypoints, { entryId = screen._entryId })
+            local wp = entry.waypoint
+            local routed = module:navigateTo(wp.id, screen._waypoints, { entryId = screen._entryId, onArrive = wp.onArrive })
+            -- A target too far from the network for a last leg still gets a
+            -- straight beacon, as the scanner gave before.
+            if not routed and wp.virtual then
+                module:beaconTo(wp.x, wp.y, wp.n, wp.onArrive)
+            end
         end,
         bindings = {
             {
