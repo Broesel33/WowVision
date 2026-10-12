@@ -26,5 +26,9 @@
   <!-- The Legacy window: reward track, challenges, and the Legacy talent
        trees. -->
   <Include file="legacy\modules.xml" />
+  <!-- The group finder is the TBC tool on a newer build of the same
+       Blizzard addon; lfg.lua adds what that build changed. -->
+  <Script file="..\tbc\lfg.lua" />
+  <Script file="lfg.lua" />
 
 </Ui>
