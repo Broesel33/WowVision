@@ -9,6 +9,9 @@
        in camelot/); no retail window uses them yet. -->
   <Script file="talentTree.lua" />
   <Script file="spellSearch.lua" />
+  <!-- Retail's auction house is the same Blizzard_AuctionHouseUI as Mists
+       (also on WoW: Forever, which loads these modules too). -->
+  <Script file="..\mists\auction.lua" />
   <Script file="pitchLock.lua" />
   <Include file="containers/modules.xml" />
 
