@@ -29,6 +29,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * The TBC map data now ships inside the WowVision download as its own addon folder (WowVision_MapData_TBC), so there is nothing separate to install. It also loads on WoW Forever, where the old world routes apply. Other map data addons keep working beside it.
 * Bags in list shape read their slots in slot order again (slot 1 first); they had been read from the top left of the grid, which is the last slot.
 * Scanner: an in-progress quest now expands to its objectives, and each objective to the NPCs, objects or item sources it is about, with their spawns under those. A complete quest expands to its turn-in. Enter on the quest or an objective still beacons the first open target.
+* Trainer: the service filter (Available, Unavailable, Already Known) is a stop before the list. The game hides unavailable services by default on WoW Forever, so a new character heard only its one available skill.
 * Added two Merchant settings (Windows > Merchant): "Automatically Sell Poor Items" and "Automatically Repair If Possible", both off by default. When turned on, opening a vendor sells your grey items and repairs your gear on its own, with a chat message confirming what was sold or repaired. Repair is skipped if the vendor doesn't offer it or you can't afford it.
 * Fixed the compass's indoors/outdoors, flying, swimming, and diving announcements never firing inside dungeons and other instances, where the game does not report your facing.
 * Added Sku's Beacon 6 as a beacon sound.
