@@ -54,6 +54,10 @@ loadAddonFile("core/navigation/atlas/MapDataset.lua")
 loadAddonFile("core/navigation/atlas/datasetTests.lua")
 loadAddonFile("core/navigation/stuckMath.lua")
 loadAddonFile("core/navigation/stuckTests.lua")
+loadAddonFile("core/navigation/camera.lua")
+loadAddonFile("core/navigation/cameraTests.lua")
+loadAddonFile("core/navigation/maps/turnMath.lua")
+loadAddonFile("core/navigation/maps/turnTests.lua")
 loadAddonFile("core/quests/Adapter.lua")
 loadAddonFile("core/quests/tests.lua")
 loadAddonFile("core/minimap/logic.lua")
@@ -64,10 +68,16 @@ loadAddonFile("core/colors/colors.lua")
 loadAddonFile("core/colors/tests.lua")
 loadAddonFile("core/windows/bars/lock.lua")
 loadAddonFile("core/windows/bars/tests.lua")
+loadAddonFile("core/targeting/softTargeting.lua")
+loadAddonFile("core/targeting/softTargetingTests.lua")
 loadAddonFile("core/db.lua")
 loadAddonFile("core/dbTests.lua")
+loadAddonFile("core/utils.lua")
+loadAddonFile("core/utilsTests.lua")
 loadAddonFile("core/ttsCacheBust.lua")
 loadAddonFile("core/ttsCacheBustTests.lua")
+loadAddonFile("core/speechSounds.lua")
+loadAddonFile("core/speechSoundsTests.lua")
 loadAddonFile("core/chat/links.lua")
 loadAddonFile("core/chat/linkTests.lua")
 loadAddonFile("core/ClassTests.lua")
@@ -206,6 +216,7 @@ loadAddonFile("core/graph/KeyGraph.lua")
 loadAddonFile("core/graph/Builder.lua")
 loadAddonFile("core/graph/ControlTypes.lua")
 loadAddonFile("core/graph/nodes.lua")
+loadAddonFile("core/graph/dropdownMenu.lua")
 loadAddonFile("core/graph/scrollBox.lua")
 loadAddonFile("core/graph/settings.lua")
 loadAddonFile("core/graph/fieldControls.lua")
@@ -249,7 +260,9 @@ local parseOnly = {
     "classic/containers/Bank.lua",
     "retail/containers/containers.lua",
     "retail/containers/Bags.lua",
+    "retail/containers/Bank.lua",
     "retail/QuestLog.lua",
+    "retail/cooldownManager.lua",
     "core/windows/training.lua",
     "core/windows/ready.lua",
     "core/windows/taxi.lua",
@@ -290,7 +303,6 @@ local parseOnly = {
     "mists/socketing.lua",
     "mists/itemUpgrade.lua",
     "mists/QuestChoice.lua",
-    "core/graph/dropdownMenu.lua",
     "mists/collections/module.lua",
     "mists/collections/MountJournal.lua",
     "core/chat/ui.lua",

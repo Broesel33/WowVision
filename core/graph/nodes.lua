@@ -230,8 +230,10 @@ end
 
 -- A synthetic button: Enter runs the handler. An optional value part reads
 -- after the role word and is watched live while focused (an opener button
--- showing the value it edits).
--- config: { label = string|function, onActivate = function, value = string|function?, onSecondary = function?, stateText = function? }
+-- showing the value it edits). An optional selected function marks the
+-- button as the current pick, read like proxyFoundButton's (a tab drawn
+-- by plain frames).
+-- config: { label = string|function, onActivate = function, value = string|function?, onSecondary = function?, stateText = function?, selected = function? }
 function nodes.button(config)
     if config.label == nil then
         error("button requires a label")
@@ -242,6 +244,14 @@ function nodes.button(config)
     local announcements = { { text = config.label, kind = kinds.label } }
     if config.value ~= nil then
         tinsert(announcements, { text = config.value, kind = kinds.value, live = "focus" })
+    end
+    if config.selected ~= nil then
+        tinsert(announcements, {
+            text = function()
+                return config.selected() and L["selected"] or nil
+            end,
+            kind = kinds.selected,
+        })
     end
     return {
         controlType = graph.controlTypes.button,
@@ -423,8 +433,10 @@ end
 -- A real Blizzard edit box as a node: Enter hands it keyboard focus and its
 -- own handlers take over; the current text reads as the value. Tabbing TO
 -- the node also hands it keyboard focus, so typing starts immediately and
--- the tab pair flows through edit boxes (autoInput = false opts out); Tab is
--- hooked to leave the box and move graph focus (hookTab = false opts out);
+-- the tab pair flows through edit boxes (autoInput = false opts out); a new
+-- screen that LANDS on the node does the same, so a window opening on its
+-- search box takes typing at once. Tab is hooked to leave the box and move
+-- graph focus (hookTab = false opts out);
 -- fixAutoFocus = true turns off Blizzard's autofocus so the box cannot
 -- re-grab the keyboard on its own refreshes (icon selectors do).
 -- config: { editBox, label, autoInput?, hookTab?, fixAutoFocus? }
@@ -484,6 +496,7 @@ function nodes.proxyEditBox(config)
         vtable.onTabFocus = function()
             editBox:SetFocus()
         end
+        vtable.onOpenFocus = vtable.onTabFocus
     end
     return vtable
 end
@@ -518,13 +531,20 @@ function nodes.proxyDropdown(config)
             },
         },
         onActivate = function()
-            if target.OpenMenu ~= nil then
-                target:OpenMenu()
-            elseif target.Click ~= nil then
-                target:Click()
-            end
+            nodes.openDropdown(target)
         end,
     }, target)
+end
+
+-- Opens a Blizzard dropdown button's menu: OpenMenu where the frame has it
+-- (a plain click does not open these), a click otherwise. proxyDropdown's
+-- Enter, and any other entry that opens the same menu.
+function nodes.openDropdown(target)
+    if target.OpenMenu ~= nil then
+        target:OpenMenu()
+    elseif target.Click ~= nil then
+        target:Click()
+    end
 end
 
 -- A real Blizzard check button: clicks are genuine, the checked state reads
