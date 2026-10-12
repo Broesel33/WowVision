@@ -206,6 +206,54 @@ end
 
 -- A quest in progress points at the nearest target of its first
 -- unfinished objective, or the turn-in once complete.
+-- An in-progress quest expands to its objectives, and each objective to
+-- what it is about -- the NPCs, objects or item sources, with their spawns
+-- under them -- so the player hears WHAT to find before WHERE: "Kobold
+-- Vermin slain: 3/10", then "Kobold Vermin, 12 spawns", then the places. A
+-- complete quest expands to its turn-in instead. Enter on the quest or an
+-- objective still beacons the first open target.
+local function pointAtFirst(node, targets)
+    local first = firstTarget(targets)
+    if first ~= nil then
+        node.x, node.y = first.nearest.wx, first.nearest.wy
+        node.onArrive = first.onArrive
+    end
+    return first
+end
+
+local function objectiveNodes(entry, allDone)
+    return function()
+        local out = {}
+        if allDone then
+            for _, node in ipairs(targetNodes(quests:targets(entry.questId, Adapter.phases.finish))) do
+                node.key = "finish:" .. node.key
+                node.detail = node.detail ~= nil and (L["turn in"] .. ", " .. node.detail) or L["turn in"]
+                tinsert(out, node)
+            end
+            return out
+        end
+        for index, objective in ipairs(entry.objectives) do
+            local label = objective.text
+            if label == nil or label == "" then
+                label = objective.target ~= nil and objective.target.name or unknown()
+            end
+            local node = { key = "objective:" .. index, label = label }
+            if objective.finished then
+                node.detail = L["Complete"]
+            end
+            local targets = quests:objectiveTargets(entry.questId, index)
+            pointAtFirst(node, targets)
+            if targets ~= nil and #targets > 0 then
+                node.children = function()
+                    return targetNodes(targets)
+                end
+            end
+            tinsert(out, node)
+        end
+        return out
+    end
+end
+
 local function inProgressNode(entry)
     local node = {
         key = "quest:" .. entry.questId,
@@ -226,20 +274,17 @@ local function inProgressNode(entry)
         node.detail = string.format("%d %s %d", #entry.objectives - unfinished, L["of"], #entry.objectives)
     end
     if entry.known then
-        local target = nil
-        if entry.complete or unfinished == 0 then
-            target = firstTarget(quests:targets(entry.questId, Adapter.phases.finish))
+        local allDone = entry.complete or unfinished == 0
+        if allDone then
+            pointAtFirst(node, quests:targets(entry.questId, Adapter.phases.finish))
         else
             for index, objective in ipairs(entry.objectives) do
-                if not objective.finished then
-                    target = firstTarget(quests:objectiveTargets(entry.questId, index))
-                    if target ~= nil then
-                        break
-                    end
+                if not objective.finished and pointAtFirst(node, quests:objectiveTargets(entry.questId, index)) ~= nil then
+                    break
                 end
             end
         end
-        pointAt(node, target)
+        node.children = objectiveNodes(entry, allDone)
     end
     return node
 end
