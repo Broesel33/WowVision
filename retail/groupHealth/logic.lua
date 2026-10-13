@@ -280,17 +280,28 @@ function GroupHealth.pointsKey(points)
     return table.concat(parts, ",")
 end
 
--- Raid numbers as Sku gives them: (group - 1) * 5 + place in the group, the
--- place counted in raid index order. `roster` maps a raid index (1 to 40)
--- to its group number; holes are allowed. Returns raid index -> number.
+-- Raid numbers as Sku gives them, the key that targets the member in Sku's
+-- dial targeting: up to 10 members 1 to 10 in group order; from 11 on
+-- (group - 1) * 5 + place in the group. Within a group the place counts in
+-- raid index order. `roster` maps a raid index (1 to 40) to its group
+-- number; holes are allowed. Returns raid index -> number.
 function GroupHealth.raidNumbers(roster, maxIndex)
-    local numbers = {}
-    local counts = {}
+    local byGroup = {}
+    local count = 0
     for index = 1, maxIndex or 40 do
         local group = roster[index]
         if group ~= nil then
-            counts[group] = (counts[group] or 0) + 1
-            numbers[index] = (group - 1) * 5 + counts[group]
+            byGroup[group] = byGroup[group] or {}
+            tinsert(byGroup[group], index)
+            count = count + 1
+        end
+    end
+    local numbers = {}
+    local counted = 0
+    for group = 1, GroupHealth.MAX_RAID_GROUPS do
+        for place, index in ipairs(byGroup[group] or {}) do
+            counted = counted + 1
+            numbers[index] = count > 10 and (group - 1) * 5 + place or counted
         end
     end
     return numbers

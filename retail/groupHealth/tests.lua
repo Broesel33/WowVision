@@ -168,14 +168,35 @@ testRunner:addSuite("GroupHealth", {
         t:assertEqual(evaluate(points, 1), 100)
     end,
 
-    ["raid numbers: group times five plus place, holes skipped"] = function(t)
-        local numbers = GroupHealth.raidNumbers({ [1] = 1, [2] = 2, [3] = 1, [5] = 2, [6] = 8 }, 40)
+    ["raid numbers: up to 10 members 1 to 10 in group order, holes skipped"] = function(t)
+        -- A 10-man with someone in group 3: 1 to 10, never 11.
+        local roster = { [1] = 1, [2] = 2, [3] = 1, [5] = 2, [6] = 3 }
+        for index = 7, 11 do
+            roster[index] = index <= 9 and 1 or 2
+        end
+        local numbers = GroupHealth.raidNumbers(roster, 40)
         t:assertEqual(numbers[1], 1)
         t:assertEqual(numbers[3], 2)
+        t:assertEqual(numbers[7], 3)
+        t:assertEqual(numbers[9], 5)
         t:assertEqual(numbers[2], 6)
         t:assertEqual(numbers[5], 7)
-        t:assertEqual(numbers[6], 36)
+        t:assertEqual(numbers[11], 9)
+        t:assertEqual(numbers[6], 10)
         t:assertNil(numbers[4])
+    end,
+
+    ["raid numbers: from 11 members group times five plus place"] = function(t)
+        local roster = {}
+        for index = 1, 10 do
+            roster[index] = math.floor((index - 1) / 5) + 1
+        end
+        roster[11] = 8
+        local numbers = GroupHealth.raidNumbers(roster, 40)
+        t:assertEqual(numbers[1], 1)
+        t:assertEqual(numbers[6], 6)
+        t:assertEqual(numbers[10], 10)
+        t:assertEqual(numbers[11], 36)
     end,
 
     ["pitch levels: the shared ends are one level each, full is its own"] = function(t)

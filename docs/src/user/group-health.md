@@ -10,7 +10,9 @@ The idea and the numbering come from Sku's health monitor.
 
 - You are 1.
 - Your party members are 2 to 5, in party order.
-- In a raid, each member's number is their group times five, minus five, plus their place in the group. Group 1 is 1 to 5, group 2 is 6 to 10, up to 40.
+- In a raid of up to 10 members, they are numbered 1 to 10 in group order, whatever groups they are in.
+- In a raid of 11 or more, each member's number is their group times five, minus five, plus their place in the group. Group 1 is 1 to 5, group 2 is 6 to 10, up to 40.
+- These are the numbers Sku's dial targeting uses for the same members.
 - Raid numbers are only renumbered out of combat, so a number never changes during a fight.
 
 ## You need a real Windows voice

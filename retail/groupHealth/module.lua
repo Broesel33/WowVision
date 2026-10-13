@@ -11,8 +11,8 @@ local settings = module:hasSettings()
 -- The group health monitor: a hurt group member is spoken as their number,
 -- the pitch telling how hurt (the lower the health, the higher). The idea
 -- and the numbering come from Sku's health monitor: the player is 1, party
--- members 2 to 5, raid members (group - 1) * 5 + their place in the group,
--- numbered anew only out of combat so a number never moves during a fight.
+-- members 2 to 5, raid members by Sku's dial numbers (logic.lua), numbered
+-- anew only out of combat so a number never moves during a fight.
 --
 -- Health is secret here (see logic.lua), so the addon never decides
 -- whether someone is hurt: every announcement is prepared behind volume
