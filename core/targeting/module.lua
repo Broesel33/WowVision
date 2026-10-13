@@ -21,6 +21,24 @@ local markerNames = {
     L["Skull"],
 }
 
+-- Forever and Retail hand the raid target index out as a secret in addon
+-- code, always (GetRaidTargetIndex is SecretReturns): no comparison, table
+-- lookup or curve evaluation is possible on it, so the marker cannot be
+-- named. Concatenation carries the number into the spoken text, and speech
+-- accepts the result: the player hears "3" and maps it to Diamond.
+local secrets = WowVision.secrets
+
+local function markerName(unit)
+    local index = GetRaidTargetIndex(unit)
+    if not index then
+        return ""
+    end
+    if secrets.isSecret(index) then
+        return "" .. index
+    end
+    return markerNames[index] or ""
+end
+
 local hardTargetChange = module:addAlert({
     key = "hardTargetChange",
     label = L["Target Change"],
@@ -34,11 +52,14 @@ local hardTargetSpeak = hardTargetChange:addOutput({
     buildMessage = function(self, message)
         local targetString = ""
         if self.db.announceRaidMarker then
-            local index = GetRaidTargetIndex("target")
-            if index and index >= 1 and index <= 8 then
-                targetString = targetString .. markerNames[index] .. " "
+            local marker = markerName("target")
+            -- The marker text may be secret: no comparing it, only joining.
+            if secrets.hasText(marker) then
+                targetString = marker .. " "
             end
         end
+        -- The tooltip text may be secret: concatenation carries it through
+        -- and speech accepts it as is.
         targetString = targetString .. module.tooltips.hardTarget:getText()
         return targetString
     end,
@@ -260,7 +281,7 @@ local function addSoftTarget(info)
         interrupt = true,
         buildMessage = function(self, message)
             local text = info.tooltip:getText()
-            if text and #text > 1 then
+            if secrets.isSecret(text) or (text and #text > 1) then
                 return text
             end
             return message.name
@@ -395,6 +416,7 @@ function module:onEvent(event, a, b)
     -- Cache hard target GUID on event (avoids UnitGUID call every frame)
     if event == "PLAYER_TARGET_CHANGED" then
         self._cachedTargetGuid = UnitGUID("target")
+        self._targetDirty = true
         self:updateSoftTargetLock()
         return
     end
@@ -407,10 +429,13 @@ function module:onEvent(event, a, b)
         return
     end
 
+    -- The payload GUIDs can be secret (hidden identities on Forever and
+    -- Retail): then they cannot be compared, and the event itself is the
+    -- change.
     for _, v in ipairs(softTargets) do
         if event == v.event then
             local newGuid
-            if (a or b) and (a ~= b) then
+            if (a or b) and secrets.changed(a, b) then
                 newGuid = b
             else
                 newGuid = UnitGUID(v.unit)
@@ -423,11 +448,22 @@ end
 function module:updateHardTarget()
     -- Use cached GUID from PLAYER_TARGET_CHANGED event (avoids API call every frame)
     local target = self._cachedTargetGuid
-    if target == nil then
+    if not target then
         self.hardTarget = nil
+        self._targetDirty = false
         return
     end
-    if target ~= self.hardTarget then
+    -- A secret GUID cannot be compared with the last one, and this runs
+    -- every tick: while the identity is hidden, only the target change
+    -- event counts as a change.
+    local changed
+    if secrets.isSecret(target) then
+        changed = self._targetDirty == true
+    else
+        changed = secrets.changed(target, self.hardTarget)
+    end
+    self._targetDirty = false
+    if changed then
         self.hardTarget = target
         module.tooltips.hardTarget:set(nil, { type = "Unit", unit = "target" })
         hardTargetChange:fire({ target = target })
@@ -458,7 +494,7 @@ function module:updateSoftTarget(target, newGuid)
     if not target.alert:getEnabled() then
         return
     end
-    if newGuid ~= target.guid then
+    if secrets.changed(newGuid, target.guid) then
         if newGuid then
             target.tooltip:set(nil, { type = "Unit", unit = target.unit })
             target.alert:fire({ name = UnitName(target.unit) })

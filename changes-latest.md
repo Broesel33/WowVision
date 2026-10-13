@@ -36,6 +36,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added Sku's Beacon 6 as a beacon sound.
 
 ### Modern
+* Fixed errors on WoW: Forever and Retail when the game hides a unit's identity or raid marker from addons: the target change, soft target, range, tooltip and window announcements no longer fail, and the raid target marker is still announced on target change. Those clients hide which marker it is from addons entirely, so it is spoken as its number (1 Star, 2 Circle, 3 Diamond, 4 Triangle, 5 Moon, 6 Square, 7 X, 8 Skull) instead of its name.
 * Added support for the bags window.
 * Added the cooldown manager settings window (/cdm): the Spells, Auras and Group Buffs tabs, search, the gear menu, each category with its items, the layout dropdown and Revert Changes. Enter on an item picks it up and Enter on another item or on a category's empty slot drops it there; Backspace opens the item's menu for alerts and moves. The alert editor is its own window. Changes made with the keyboard take effect after the interface reloads, because the game rebuilds its on-screen cooldown data from them; the window says so and offers a Reload Interface button. Menu rows with attached buttons (play sample, edit, delete) now read as rows: right arrow reaches the buttons.
 * Fixed an entirely unnecessary 1.5 second delay when clicking on gossip options before the text refreshed. This was caused by retail changing which events fire for gossip dialogue.

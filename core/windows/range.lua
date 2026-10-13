@@ -20,9 +20,21 @@ rangeChange:addOutput({
 
 settings:addRef("announce", rangeChange.parameters)
 
+-- The target's GUID can be secret (hidden identities on Forever and Retail)
+-- and then cannot be compared tick to tick: the target change event stands
+-- in as the change signal while it is.
+module:registerEvent("event", "PLAYER_TARGET_CHANGED")
+
+function module:onEvent(event)
+    if event == "PLAYER_TARGET_CHANGED" then
+        self.targetDirty = true
+    end
+end
+
 function module:onEnable()
     self.target = nil
     self.targetRange = nil
+    self.targetDirty = false
 
     -- LibRangeCheck builds its per-class checker list on first init, which can
     -- run before the player's class/spells are available (producing only the
@@ -41,9 +53,10 @@ function module:onEnable()
 
     self:hasUpdate(function(self)
         local target = UnitGUID("target")
-        if target == nil then
+        if not target then
             self.target = nil
             self.targetRange = nil
+            self.targetDirty = false
             return
         end
         if InCombatLockdown() and UnitIsFriend("player", "target") then
@@ -54,7 +67,15 @@ function module:onEnable()
             self.targetRange = nil
             return
         end
-        if target ~= self.target or rangeMax ~= self.targetRange then
+        local secrets = WowVision.secrets
+        local targetChanged
+        if secrets.isSecret(target) then
+            targetChanged = self.targetDirty == true
+        else
+            targetChanged = secrets.changed(target, self.target)
+        end
+        self.targetDirty = false
+        if targetChanged or rangeMax ~= self.targetRange then
             rangeChange:fire({ range = rangeMax })
             self.target = target
             self.targetRange = rangeMax

@@ -93,7 +93,7 @@ function Tooltip:getText(lineNumber)
     elseif lines[lineNumber] ~= nil then
         tinsert(result, self.reader:formatLine(lines[lineNumber][1], lines[lineNumber][2]))
     end
-    return table.concat(result, "\n")
+    return self.reader:joinLines(result)
 end
 
 function Tooltip:speak(lineNumber)
@@ -101,7 +101,7 @@ function Tooltip:speak(lineNumber)
         return
     end
     local text = self:getText(lineNumber)
-    if text and text ~= "" then
+    if WowVision.secrets.hasText(text) then
         WowVision:speak(text)
     end
 end
@@ -137,6 +137,10 @@ function Tooltip:isBlank(line)
     local text = self.reader:formatLine(line[1], line[2])
     if not text then
         return true
+    end
+    -- A secret line cannot be inspected; it is taken to say something.
+    if WowVision.secrets.isSecret(text) then
+        return false
     end
     -- Strip WoW escape sequences: color codes, reset, textures, atlas, hyperlinks
     local stripped =
@@ -174,7 +178,7 @@ function Tooltip:moveLine(direction)
         return
     end
     local text = self.reader:formatLine(line[1], line[2])
-    if text and text ~= "" then
+    if WowVision.secrets.hasText(text) then
         WowVision:speak(text)
     end
 end
