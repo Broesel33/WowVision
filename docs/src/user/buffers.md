@@ -23,6 +23,8 @@ Out of the box, WowVision comes with a General group containing one buffer that 
 - **Time** — the game clock, following your clock settings (realm or local time, 12 or 24 hours)
 - **PvP Status** — whether you're flagged for PvP
 
+Characters made before these lines existed get the new ones added to their General buffer once, before the PvP line. Lines you remove afterwards stay removed.
+
 ## Navigating Buffers
 
 - **Alt+Up** and **Alt+Down** cycle through items in the current buffer. Each item is announced as you land on it (e.g., "250/500 Health").
