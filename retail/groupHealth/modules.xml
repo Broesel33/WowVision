@@ -2,6 +2,7 @@
 ..\FrameXML\UI.xsd">
 
   <Script file="logic.lua" />
+  <Script file="readback.lua" />
   <Script file="voices.lua" />
   <Script file="module.lua" />
   <Script file="tests.lua" />

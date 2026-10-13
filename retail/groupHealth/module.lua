@@ -34,6 +34,13 @@ local settings = module:hasSettings()
 -- Speech uses a game voice of its own, straight to the engine beside the
 -- speech queue (speech:speakAside): pitch needs a real SAPI voice, which an
 -- NVDA bridge voice is not.
+--
+-- With "only when health crosses a 10 percent step" (on by default) a
+-- health event does not wake the lanes itself: a silent sample reads which
+-- ten percent step the member is in (readback.lua), and only a step other
+-- than at the member's last announcement wakes them. That is what a healer
+-- sees on a health bar at one look; the number and pitch still come from
+-- the secret health as before.
 
 local ROLE_KEYS = { TANK = "tank", HEALER = "healer", DAMAGER = "damager", NONE = "none" }
 
@@ -151,6 +158,15 @@ settings:add({
     type = "Bool",
     label = L["Silent Out of Combat"],
     default = false,
+})
+-- Speak a member only when their health moved into another ten percent step
+-- (readback.lua), the way a healer reacts to a health bar: not on every
+-- small change.
+settings:add({
+    key = "onlyOnSteps",
+    type = "Bool",
+    label = L["Only When Health Crosses a 10 Percent Step"],
+    default = true,
 })
 
 local raidGroupFields = {}
@@ -361,10 +377,13 @@ local function newMember(unit, number, role, old)
         lanes = { urgent = {}, normal = {} },
         dead = false,
     }
-    -- The same person keeps their timing across a roster update.
+    -- The same person keeps their timing and steps across a roster update.
     if old ~= nil and old.number == number then
         member.lanes.urgent.last = old.lanes.urgent.last
         member.lanes.normal.last = old.lanes.normal.last
+        member.lanes.urgent.spokenStep = old.lanes.urgent.spokenStep
+        member.lanes.normal.spokenStep = old.lanes.normal.spokenStep
+        member.announcedStep = old.announcedStep
         member.lastRepeat = old.lastRepeat
         member.dead = old.dead
     end
@@ -434,6 +453,15 @@ function module:rebuild()
     self.rosterDirty = false
     self.raidMode = raid
     self.members, self.aliases = self:collect()
+    -- Everyone's step once: the baseline later steps are compared with.
+    local readback = self:stepReadback()
+    if readback ~= nil and not self:silenced() then
+        for unit, member in pairs(self.members) do
+            if not member.dead then
+                readback:request(unit)
+            end
+        end
+    end
 end
 
 function module:memberFor(unit)
@@ -495,14 +523,18 @@ end
 
 -- The utterance counter behind the unique padding (logic.lua). Kept in the
 -- character's saved data: the engine's audio cache outlives a /reload.
-function module:nextPad()
+function module:nextCount()
     local data = self.data
     if data == nil then
         self.fallbackCount = (self.fallbackCount or math.floor(GetTime() * 1000)) + 1
-        return GroupHealth.uniquePad(self.fallbackCount)
+        return self.fallbackCount
     end
     data.utterances = (data.utterances or 0) + 1
-    return GroupHealth.uniquePad(data.utterances)
+    return data.utterances
+end
+
+function module:nextPad()
+    return GroupHealth.uniquePad(self:nextCount())
 end
 
 function module:speak(text)
@@ -510,7 +542,72 @@ function module:speak(text)
     if speech == nil or speech.speakAside == nil then
         return
     end
-    speech:speakAside(self.settings.voice or 0, text, self.settings.rate, self.settings.volume)
+    local voice, rate, volume = self.settings.voice or 0, self.settings.rate, self.settings.volume
+    -- Beside the step readback its own speech takes a slot of the same
+    -- line, so its start is never taken for a sample's (readback.lua).
+    local readback = self:stepReadback()
+    if readback ~= nil then
+        readback:speakOwn(function()
+            speech:speakAside(voice, text, rate, volume)
+        end)
+        return
+    end
+    speech:speakAside(voice, text, rate, volume)
+end
+
+-- Step readback (readback.lua) ---------------------------------------------------
+
+-- The readback while the setting is on, made on first use; nil where it
+-- cannot work (no curves, no speech module).
+function module:stepReadback()
+    if not self.settings.onlyOnSteps then
+        return nil
+    end
+    if self.readback == nil then
+        local speech = WowVision.base.speech
+        if C_CurveUtil == nil or UnitHealthPercent == nil or speech == nil or speech.speakAside == nil then
+            return nil
+        end
+        self.readback = GroupHealth.Readback:new({
+            now = debugprofilestop,
+            after = C_Timer.After,
+            speak = function(text)
+                -- Silent: volume 0, at the rate the fixed values were measured at.
+                speech:speakAside(self.settings.voice or 0, text, GroupHealth.readbackConstants.RATE, 0)
+            end,
+            through = function(unit, points)
+                return through(unit, points)
+            end,
+            nextCount = function()
+                return self:nextCount()
+            end,
+            onReading = function(unit, reading)
+                self:onReading(unit, reading)
+            end,
+        })
+    end
+    return self.readback
+end
+
+-- A member in another step than at their last announcement wakes the lanes.
+function module:onReading(unit, reading)
+    local member = self:memberFor(unit)
+    if member == nil or member.dead then
+        return
+    end
+    if GroupHealth.stepChanged(member, reading.step) then
+        self:wake(member, "urgent")
+        self:wake(member, "normal")
+    end
+end
+
+-- Anyone stopping all speech cuts the samples out; they are thrown away.
+if C_VoiceChat ~= nil and C_VoiceChat.StopSpeakingText ~= nil then
+    hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
+        if module.readback ~= nil then
+            module.readback:onStop()
+        end
+    end)
 end
 
 function module:unavailable()
@@ -592,6 +689,11 @@ function module:wake(member, lane)
     else
         delay, pause = roleSetting(role, "delay"), roleSetting(role, "pause")
     end
+    -- A step reading has already settled what the delay waits for: in step
+    -- mode only the pause holds a lane back.
+    if self:stepReadback() ~= nil then
+        delay = 0
+    end
     local now = GetTime()
     local at = GroupHealth.nextFire(now, state.last, delay, pause)
     state.pending = true
@@ -600,6 +702,11 @@ function module:wake(member, lane)
     C_Timer.After(math.max(0, at - now), function()
         state.pending = false
         if self:memberFor(member.unit) ~= member then
+            return
+        end
+        -- With the step readback a lane speaks only for a step it has not
+        -- spoken yet: a flip there and back while it waited is nothing new.
+        if self:stepReadback() ~= nil and not GroupHealth.laneStepNew(state, member.announcedStep) then
             return
         end
         state.last = GetTime()
@@ -621,6 +728,11 @@ function module:onHealth(unit)
     if plainTrue(UnitIsDeadOrGhost, unit) then
         if not member.dead then
             member.dead = true
+            -- Dead is step 0 and the lanes start afresh: the resurrection
+            -- is a new step, heard whatever health it brings.
+            member.announcedStep = 0
+            member.lanes.urgent.spokenStep = nil
+            member.lanes.normal.spokenStep = nil
             if self.settings.announceDeaths and not self:silenced() then
                 self:enqueue(member, "dead")
             end
@@ -632,6 +744,12 @@ function module:onHealth(unit)
         return
     end
     if self:silenced() then
+        return
+    end
+    -- With the step readback only a new step wakes the lanes (onReading).
+    local readback = self:stepReadback()
+    if readback ~= nil then
+        readback:request(unit)
         return
     end
     self:wake(member, "urgent")
@@ -746,10 +864,29 @@ module:registerCommand({
             module.log = {}
             text = "Group health log cleared"
         else
-            if #module.log == 0 then
+            local lines = {}
+            for _, line in ipairs(module.log) do
+                tinsert(lines, line)
+            end
+            -- The step readback's counts, so its health shows next to the plays.
+            local readback = module.readback
+            if readback ~= nil then
+                local stats = readback.stats
+                local thrown = {}
+                for why, n in pairs(stats.discarded) do
+                    tinsert(thrown, why .. " " .. n)
+                end
+                table.sort(thrown)
+                tinsert(lines, string.format(
+                    "Step readback: %d samples, %d readings used, thrown away: %s; most at once %d",
+                    stats.samples, stats.readings, #thrown > 0 and table.concat(thrown, ", ") or "none", stats.maxInflight
+                ))
+            end
+            if #lines == 0 then
                 text = "Group health log is empty"
             else
-                WowVision.testing.showResults(table.concat(module.log, "\n"))
+                chat(lines[#lines])
+                WowVision.testing.showResults(table.concat(lines, "\n"))
                 return
             end
         end
@@ -765,9 +902,25 @@ module:registerEvent("event", "GROUP_ROSTER_UPDATE")
 module:registerEvent("event", "PLAYER_ROLES_ASSIGNED")
 module:registerEvent("event", "PLAYER_REGEN_ENABLED")
 module:registerEvent("event", "PLAYER_ENTERING_WORLD")
+-- The step readback times its silent samples by these.
+module:registerEvent("event", "VOICE_CHAT_TTS_PLAYBACK_STARTED")
+module:registerEvent("event", "VOICE_CHAT_TTS_PLAYBACK_FINISHED")
+module:registerEvent("event", "VOICE_CHAT_TTS_PLAYBACK_FAILED")
 
 function module:onEvent(event, ...)
-    if event == "UNIT_HEALTH" then
+    if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
+        if self.readback ~= nil then
+            self.readback:onStarted(...)
+        end
+    elseif event == "VOICE_CHAT_TTS_PLAYBACK_FINISHED" then
+        if self.readback ~= nil then
+            self.readback:onFinished(..., false)
+        end
+    elseif event == "VOICE_CHAT_TTS_PLAYBACK_FAILED" then
+        if self.readback ~= nil then
+            self.readback:onFinished(..., true)
+        end
+    elseif event == "UNIT_HEALTH" then
         self:onHealth(...)
     elseif event == "PLAYER_REGEN_ENABLED" then
         if self.rosterDirty then
@@ -792,6 +945,7 @@ function module:onDisable()
     self:clearQueue()
     self.members = {}
     self.aliases = {}
+    self.readback = nil
 end
 
 module:registerBinding({
