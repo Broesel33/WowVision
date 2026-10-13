@@ -43,6 +43,7 @@ function module:keepLog()
         readback = self.checks ~= nil and self.checks.readback.stats or nil,
         respoken = self.respoken,
         stopSources = self.stopSources,
+        stopStacks = self.stopStacks,
     }
 end
 
@@ -138,28 +139,52 @@ function module:trace(member, what, detail)
     end
 end
 
--- Who stopped all speech, while the log is on: the first addon file in the
--- call stack past the speech module (only the messenger), else the game's
--- own code (a key binding).
+-- Where a stack line points: an addon file (Blizzard's own included) with
+-- its line, or a code string (a key binding's body, a /run), else nil
+-- (game code without Lua, "[C]").
+local function stackPlace(line)
+    local file, lineNumber = line:match("AddOns[/\\]([^%]%[\"\n:]-%.%a+)[%]\"]*:(%d+)")
+    if file ~= nil then
+        return file .. ":" .. lineNumber
+    end
+    local code = line:match('%[string "([^"\n]*)"%]')
+    if code ~= nil then
+        return 'code "' .. code:sub(1, 60) .. '"'
+    end
+    return nil
+end
+
+-- Who stopped all speech, while the log is on: the first place in the call
+-- stack past the hooks and the speech module (only the messenger), with
+-- whether Ctrl was held (Blizzard's Ctrl stop, the "Stop Text to Speech"
+-- binding). Counted per source; each source's first stack is kept whole,
+-- and every stop gets a log line, to set beside lost checks.
 hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
     if not module.logging then
         return
     end
-    local stack = debugstack(2, 10, 0) or ""
+    local stack = debugstack(2, 20, 0) or ""
     local source = nil
-    for file, lineNumber in stack:gmatch("AddOns[/\\]([^%]%[\"\n]-%.%a+)[%]\"]*:(%d+)") do
-        if not file:find("groupHealth", 1, true) and not file:find("retail/speech.lua", 1, true) then
-            source = file .. ":" .. lineNumber
+    for line in stack:gmatch("[^\n]+") do
+        local place = stackPlace(line)
+        if place ~= nil and not place:find("groupHealth", 1, true) and not place:find("retail/speech.lua", 1, true) then
+            source = place
             break
         end
     end
     if source == nil then
-        local first = stack:match("[^\n]+")
-        source = first ~= nil and "the game: " .. first:sub(1, 100) or "the game"
+        source = "the game (no Lua on the stack)"
+    end
+    if IsControlKeyDown() then
+        source = source .. ", Ctrl held"
     end
     module.stopSources = module.stopSources or {}
     module.stopSources[source] = (module.stopSources[source] or 0) + 1
-    module:keepLog()
+    module.stopStacks = module.stopStacks or {}
+    if module.stopStacks[source] == nil then
+        module.stopStacks[source] = stack:sub(1, 1500)
+    end
+    append({ logTime(), "stop of all speech by " .. source })
 end)
 
 local function counts(list)
