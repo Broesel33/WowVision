@@ -1,6 +1,6 @@
 -- The group health monitor's game-independent half: the curve points that
--- turn a member's health into a pitch or a volume gate, raid numbering,
--- lane timing and the spoken text. No WoW API in here, so the headless
+-- turn a member's health into a pitch or a volume gate, the pitch levels,
+-- raid numbering and the spoken text. No WoW API in here, so the headless
 -- suite covers it (retail/groupHealth/tests.lua).
 --
 -- Health is a SECRET value on Retail and WoW: Forever: addon code cannot
@@ -144,6 +144,47 @@ function GroupHealth.pitchPoints(profile)
     return points
 end
 
+-- The pitch levels a listener tells apart, lowest health first, as health
+-- ranges { low, high }: one per step of the scale, except where neighbours
+-- in the same copy share a pitch (the two lowest, the two highest), and
+-- last "full" at exactly full health, a word of its own.
+function GroupHealth.pitchLevels(profile)
+    local scale = profile.scale
+    local steps = #scale
+    local levels = {}
+    for k = 0, steps - 1 do
+        local index = k + 1
+        local sameCopy = (index < profile.highFrom) == (index - 1 < profile.highFrom)
+        if k > 0 and sameCopy and scale[index] == scale[index - 1] then
+            levels[#levels][2] = (k + 1) / steps
+        else
+            tinsert(levels, { k / steps, (k + 1) / steps })
+        end
+    end
+    tinsert(levels, { 1, 1.01 })
+    return levels
+end
+
+-- Sku's "minimum pitch steps" as a band: the health that sounds less than
+-- `steps` levels away from the reference (whole percent), where a number
+-- stays silent. nil for no steps or no reference.
+function GroupHealth.pitchQuiet(levels, reference, steps)
+    if steps == nil or steps <= 0 or reference == nil then
+        return nil
+    end
+    local health = reference / 100
+    local at = #levels
+    for i, level in ipairs(levels) do
+        if health < level[2] then
+            at = i
+            break
+        end
+    end
+    local first = math.max(1, at - steps + 1)
+    local last = math.min(#levels, at + steps - 1)
+    return { levels[first][1], levels[last][2] }
+end
+
 -- A lane's health range [low, high) split between the copies: the LOW copy
 -- below the profile's split, the HIGH copy from it up. A `high` above 1
 -- includes full health.
@@ -255,16 +296,6 @@ function GroupHealth.raidNumbers(roster, maxIndex)
     return numbers
 end
 
--- When a lane may speak next: not before `delay` after the event that woke
--- it, and not within `pause` of its last announcement.
-function GroupHealth.nextFire(now, lastFire, delay, pause)
-    local at = now + (delay or 0)
-    if lastFire ~= nil and pause ~= nil and lastFire + pause > at then
-        at = lastFire + pause
-    end
-    return at
-end
-
 -- One spoken part: the words at a volume and a pitch, either of which may
 -- be a secret curve result. Plain concatenation only, which secrets allow.
 function GroupHealth.segment(volume, pitch, words)
@@ -275,11 +306,11 @@ end
 -- the same text comes again, keyed AFTER stripping the markup: a "3" at one
 -- pitch and a "3" at another are one key, and the replay keeps the old
 -- pitch and volume. Every utterance therefore gets a padding no other
--- utterance of the session has: utterance number n written in base 8, each
--- digit a run of 1 to 8 no-break spaces, the runs led by plain spaces.
--- Inaudible (Sku measured U+00A0 on the client), and unlike the shared
--- cache-buster's 512 variants per text it never repeats: a tank's number
--- would reach 512 within one long fight.
+-- utterance has, from one account-wide counter (module:nextCount): count n
+-- written in base 8, each digit a run of 1 to 8 no-break spaces, the runs
+-- led by plain spaces. Inaudible (Sku measured U+00A0 on the client), and
+-- unlike the shared cache-buster's 512 variants per text it never repeats:
+-- a tank's number would reach 512 within one long fight.
 local NBSP = "\194\160"
 
 function GroupHealth.uniquePad(n)
@@ -289,6 +320,19 @@ function GroupHealth.uniquePad(n)
         tinsert(parts, " " .. string.rep(NBSP, digit + 1))
         n = math.floor(n / 8)
     until n == 0
+    return table.concat(parts)
+end
+
+-- The readback's silent samples (readback.lua) need a padding of their
+-- own: all of the same length, so the text is identical in all but its
+-- code and plays the same time. 24 positions of a no-break space followed
+-- by a space or a second no-break space.
+function GroupHealth.readbackPad(n)
+    local parts = {}
+    for _ = 1, 24 do
+        tinsert(parts, n % 2 == 1 and (NBSP .. NBSP) or (NBSP .. " "))
+        n = math.floor(n / 2)
+    end
     return table.concat(parts)
 end
 

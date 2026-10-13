@@ -147,18 +147,18 @@ testRunner:addSuite("GroupHealth", {
         t:assertEqual(evaluate(points, 1), 0)
     end,
 
-    ["band gate: urgent at or above the start leaves nothing"] = function(t)
+    ["band gate: an empty band leaves nothing"] = function(t)
         local points = GroupHealth.bandPoints(0.8, 0.8)
         t:assertEqual(evaluate(points, 0.5), 0)
         t:assertEqual(evaluate(points, 0.9), 0)
     end,
 
-    ["urgent and normal gates never sound together"] = function(t)
-        local urgent = GroupHealth.belowPoints(0.35)
-        local normal = GroupHealth.bandPoints(0.35, 0.9)
+    ["neighbouring gates never sound together"] = function(t)
+        local below = GroupHealth.belowPoints(0.35)
+        local above = GroupHealth.bandPoints(0.35, 0.9)
         for i = 0, 100 do
             local x = i / 100
-            t:assertTrue(evaluate(urgent, x) + evaluate(normal, x) <= 100)
+            t:assertTrue(evaluate(below, x) + evaluate(above, x) <= 100)
         end
     end,
 
@@ -178,10 +178,35 @@ testRunner:addSuite("GroupHealth", {
         t:assertNil(numbers[4])
     end,
 
-    ["lane timing: delay after the event, pause after the last one"] = function(t)
-        t:assertEqual(GroupHealth.nextFire(10, nil, 1, 2), 11)
-        t:assertEqual(GroupHealth.nextFire(10, 9.5, 0, 2), 11.5)
-        t:assertEqual(GroupHealth.nextFire(10, 5, 0.5, 2), 10.5)
+    ["pitch levels: the shared ends are one level each, full is its own"] = function(t)
+        local levels = GroupHealth.pitchLevels(GroupHealth.voices:get("hedda"))
+        -- 15 steps, two pairs sharing a pitch, plus full.
+        t:assertEqual(#levels, 14)
+        t:assertEqual(levels[1][1], 0)
+        t:assertTrue(math.abs(levels[1][2] - 2 / 15) < 1e-9)
+        t:assertTrue(math.abs(levels[13][1] - 13 / 15) < 1e-9)
+        t:assertEqual(levels[13][2], 1)
+        t:assertEqual(levels[14][1], 1)
+    end,
+
+    ["pitch steps: the band of health within the steps of the reference"] = function(t)
+        local levels = GroupHealth.pitchLevels(GroupHealth.voices:get("hedda"))
+        t:assertNil(GroupHealth.pitchQuiet(levels, 61, 0))
+        t:assertNil(GroupHealth.pitchQuiet(levels, nil, 1))
+        -- 61 percent is step 9 (60 to 66.7): one step keeps only that level.
+        local one = GroupHealth.pitchQuiet(levels, 61, 1)
+        t:assertTrue(math.abs(one[1] - 9 / 15) < 1e-9)
+        t:assertTrue(math.abs(one[2] - 10 / 15) < 1e-9)
+        -- Two steps: one level each way.
+        local two = GroupHealth.pitchQuiet(levels, 61, 2)
+        t:assertTrue(math.abs(two[1] - 8 / 15) < 1e-9)
+        t:assertTrue(math.abs(two[2] - 11 / 15) < 1e-9)
+        -- 95 percent: the shared top level, never full health.
+        local top = GroupHealth.pitchQuiet(levels, 95, 1)
+        t:assertTrue(math.abs(top[1] - 13 / 15) < 1e-9)
+        t:assertEqual(top[2], 1)
+        -- At full health one step keeps only full.
+        t:assertEqual(GroupHealth.pitchQuiet(levels, 100, 1)[1], 1)
     end,
 
     ["segment text carries volume, pitch and words"] = function(t)

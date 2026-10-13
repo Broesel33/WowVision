@@ -8,14 +8,14 @@
 -- ours, C_VoiceChat speech at volume 0, its playback events and
 -- debugprofilestop().
 --
--- How (camelot/secretSpeechProbe.lua, measured on WoW: Forever 2026-10-13):
+-- How (measured on WoW: Forever 1.60.1, 2026-10-13, with a developer probe):
 -- UnitHealthPercent(unit, true, curve) turns the health into a silence
 -- length, 'a<silence msec="..."/>' is spoken at volume 0 and rate 10, and the
 -- time from PLAYBACK_STARTED to PLAYBACK_FINISHED gives the length back:
 -- - 74 clean samples over five runs lie on one line, played = 190 ms +
 --   0.3314 * silence (rate 10 shortens the silence too); on the lengths used
 --   here every sample was within 0.27 of a level. Fixed values, no
---   calibration: if another machine differs, /wv sprobe timing measures it.
+--   calibration; two more machines' headsets and speakers timed the same.
 --   Offline (SAPI to a file, 2026-10-13) Hedda, Katja, Stefan and Zira all
 --   shorten silence to exactly a third at rate 10, their "a" within 16 ms
 --   of Hedda's; the simulation keeps reading up to about 20 ms off.
@@ -29,7 +29,7 @@
 --   digits both in BACKGROUND_MS are thrown away. Laptop speakers and two
 --   headsets timed the same in front.
 -- - Volume 0 plays in real time; a secret works inside <silence msec>; ten
---   silent utterances side by side keep their timing (/wv sprobe tpar 10).
+--   silent utterances side by side keep their timing.
 -- - Other speech beside ours does no harm. A stop of all speech
 --   (C_VoiceChat.StopSpeakingText, which takes no arguments: nobody can stop
 --   only their own speech) cuts every utterance short, and so may speech
@@ -40,11 +40,12 @@
 -- is the sample's PLAN: the health split into bands, each band a value,
 -- the value written in the plan's base. The events carry only an utterance
 -- id; ids count up in call order, so the lower id is the first digit
--- (checked in game by /wv sprobe tpair).
+-- (checked in game).
 -- - change plan (the monitor): bands around the member's reference, the
 --   health at their last announcement. The middle band is "moved less than
---   the threshold", its edges exactly reference -/+ threshold (the game
---   evaluates the curve, so the edge is exact); seven bands on each side,
+--   the threshold", its edges exactly reference -/+ threshold, widened to
+--   the pitch levels within the minimum pitch steps (the game evaluates
+--   the curve, so the edge is exact); seven bands on each side,
 --   the nearest a quarter threshold wide, the farther wider, the last open;
 --   full health is a band of its own. Base 4, the likeliest answers on the
 --   shortest silences: "moved less" plays about 0.22 seconds, the nearest
@@ -54,8 +55,8 @@
 --   reference at the start (zooming into 0 to 100) and after a jump past
 --   the outer bands (zooming into the open band read): one zoom splits 100
 --   percent into about 6 percent parts, a second into parts below half a
---   percent. It never announces by itself.
--- - step plan: ten percent steps plus full, base 4 (the probe's watch).
+--   percent. It never announces by itself. The default of a readback
+--   without plans of its own: zooming into 0 to 100.
 --
 -- Every engine call of ours goes through one slot line (SLOT_MS apart, or
 -- longer for a slot with more utterances: the engine prepares one after
@@ -164,26 +165,39 @@ local function newPlan(kind, base, points, extra)
     return plan
 end
 
-local stepPlan
-local changePlans = {}
+-- A plan of the caller's own (kind, base, points as newPlan takes them).
+GroupHealth.readbackPlan = newPlan
 
--- Ten percent steps (step k from k/10, full health is step 10).
-function GroupHealth.stepPlan()
-    if stepPlan == nil then
-        local points = {}
-        for k = 0, 10 do
-            tinsert(points, { k / 10, k })
-        end
-        stepPlan = newPlan("steps", 4, points)
-    end
-    return stepPlan
+-- Plans are kept for reuse (and with them the game's curve objects, see
+-- module.lua). A simulated two hours of raid fighting made about 300 change
+-- plans and 1200 zoom plans, the zoom plans still growing; past
+-- PLANS_MAX a cache starts afresh (samples out keep their plan).
+local PLANS_MAX = 512
+
+local function newCache()
+    return { plans = {}, count = 0 }
 end
+
+local function cached(cache, key)
+    return cache.plans[key]
+end
+
+local function keep(cache, key, plan)
+    if cache.count >= PLANS_MAX then
+        cache.plans, cache.count = {}, 0
+    end
+    cache.plans[key] = plan
+    cache.count = cache.count + 1
+    return plan
+end
+
+local changePlans = newCache()
 
 -- The band from `lo` to `hi` percent in equal parts (16 less one for each
 -- band outside it: below `lo` when lo > 0, above `hi` when hi < 100; at
 -- 100 the top part includes full health). Edges round outward to whole
 -- percent, so the plans (and the game's curve objects) stay few.
-local zoomPlans = {}
+local zoomPlans = newCache()
 
 function GroupHealth.zoomPlan(lo, hi)
     lo, hi = math.max(0, math.floor(lo + EPS)), math.min(100, math.ceil(hi - EPS))
@@ -192,7 +206,7 @@ function GroupHealth.zoomPlan(lo, hi)
         lo = hi - 1
     end
     local key = lo .. ":" .. hi
-    local plan = zoomPlans[key]
+    local plan = cached(zoomPlans, key)
     if plan ~= nil then
         return plan
     end
@@ -210,8 +224,7 @@ function GroupHealth.zoomPlan(lo, hi)
     -- band: what the plan's inner parts cover; at 100 it takes in full
     -- health (the top part is closed), hence just past 1.
     plan = newPlan("zoom", 4, points, { band = { lo / 100, hi < 100 and hi / 100 or 1.01 } })
-    zoomPlans[key] = plan
-    return plan
+    return keep(zoomPlans, key, plan)
 end
 
 -- The first zoom of a member without a reference.
@@ -219,18 +232,21 @@ function GroupHealth.locatePlan()
     return GroupHealth.zoomPlan(0, 100)
 end
 
--- The plan of a member's next sample.
-function GroupHealth.planFor(member, threshold)
+-- The plan of a member's next sample; `pitchQuiet` (optional) widens the
+-- quiet band by the role's minimum pitch steps (GroupHealth.pitchQuiet).
+function GroupHealth.planFor(member, threshold, pitchQuiet)
     if member.reference == nil then
         return GroupHealth.locatePlan()
     end
     -- Zooming covers the band and its widening (LOCATE_WIDEN), so a
-    -- reading in the zoom's outer bands lies wholly past both.
+    -- reading in the zoom's outer bands lies wholly past both. The pitch
+    -- steps are left out here: widening the zoom by them made the
+    -- reference coarser and slow changes late (simulation, 2026-10-13).
     if member.locate and member.locateBand ~= nil then
         local widen = threshold * GroupHealth.LOCATE_WIDEN
         return GroupHealth.zoomPlan(member.locateBand[1] * 100 - widen, member.locateBand[2] * 100 + widen)
     end
-    return GroupHealth.changePlan(member.reference, threshold)
+    return GroupHealth.changePlan(member.reference, threshold, pitchQuiet)
 end
 
 -- Values by how long their longer digit plays, shortest first: base 4
@@ -281,18 +297,23 @@ GroupHealth.changeRank = {
 }
 
 -- The bands around `reference` (whole percent) for a threshold in percent.
--- The middle band, "moved less than the threshold", is reference -/+
--- threshold. Seven bands on each side (CHANGE_WIDTHS), the outer ones
--- open; bands outside 0 to 1 drop out. Below a full reference, full
--- health is a band of its own, so a heal to full sets the reference to
--- exactly 100. The answers get their silences by GroupHealth.changeRank.
-function GroupHealth.changePlan(reference, threshold)
-    local key = reference .. ":" .. threshold
-    local plan = changePlans[key]
+-- The middle band, "moved less", is reference -/+ threshold, widened to
+-- `pitchQuiet` when given (Sku's two rules, both must pass to announce).
+-- Seven bands on each side of it (CHANGE_WIDTHS), the outer ones open;
+-- bands outside 0 to 1 drop out. Below a full reference, full health is a
+-- band of its own, so a heal to full sets the reference to exactly 100.
+-- The answers get their silences by GroupHealth.changeRank.
+function GroupHealth.changePlan(reference, threshold, pitchQuiet)
+    local r, a = reference / 100, threshold / 100
+    local low, high = r - a, r + a
+    if pitchQuiet ~= nil then
+        low, high = math.min(low, pitchQuiet[1]), math.max(high, pitchQuiet[2])
+    end
+    local key = reference .. ":" .. threshold .. ":" .. low .. ":" .. high
+    local plan = cached(changePlans, key)
     if plan ~= nil then
         return plan
     end
-    local r, a = reference / 100, threshold / 100
     local w = a / 4
     -- Rising: { lower edge, rank } (GroupHealth.changeRank; full health last).
     -- far[k]: how far band k's outer edge lies past the threshold, in w.
@@ -304,11 +325,11 @@ function GroupHealth.changePlan(reference, threshold)
     end
     local bands = {}
     for k = CHANGE_SIDE, 1, -1 do
-        tinsert(bands, { k == CHANGE_SIDE and -math.huge or r - a - far[k] * w, GroupHealth.changeRank.below(k) })
+        tinsert(bands, { k == CHANGE_SIDE and -math.huge or low - far[k] * w, GroupHealth.changeRank.below(k) })
     end
-    tinsert(bands, { r - a, GroupHealth.changeRank.middle })
+    tinsert(bands, { low, GroupHealth.changeRank.middle })
     for k = 1, CHANGE_SIDE do
-        tinsert(bands, { r + a + (k == 1 and 0 or far[k - 1]) * w, GroupHealth.changeRank.above(k) })
+        tinsert(bands, { high + (k == 1 and 0 or far[k - 1]) * w, GroupHealth.changeRank.above(k) })
     end
     local kept = { { 0, bands[1][2] } }
     for i = 2, #bands do
@@ -338,9 +359,8 @@ function GroupHealth.changePlan(reference, threshold)
     end
     -- quiet: the middle band itself, "moved less": exactly what the caller's
     -- volume gate keeps silent.
-    plan = newPlan("change", CHANGE_BASE, points, { reference = reference, threshold = threshold, quiet = { r - a, r + a } })
-    changePlans[key] = plan
-    return plan
+    plan = newPlan("change", CHANGE_BASE, points, { reference = reference, threshold = threshold, quiet = { low, high } })
+    return keep(changePlans, key, plan)
 end
 
 -- Decoding -----------------------------------------------------------------------
@@ -380,7 +400,7 @@ end
 -- event, and every event sends a number, so only a sample that carried one
 -- can tell a move. A plain sample (no number) only sets the reference or
 -- narrows it down.
--- - No reference yet (or a step reading): it sets the reference.
+-- - No reference yet: it sets the reference.
 -- - Carried: heard exactly when the band lies outside the quiet band the
 --   number went out behind (quietFor), whatever readings came in between.
 -- - A band wider than a quarter threshold (the wider outer bands, a first
@@ -401,15 +421,15 @@ function GroupHealth.judge(member, reading, threshold)
     local a = threshold / 100
     local function settle(heard)
         member.reference = math.floor((lo + hi) * 50 + 0.5)
-        member.locate = plan.kind ~= "steps" and hi - lo > a / 4 + EPS
+        member.locate = hi - lo > a / 4 + EPS
         member.locateBand = member.locate and band or nil
         return heard
     end
-    if member.reference == nil or plan.kind == "steps" then
+    if member.reference == nil then
         return settle(false)
     end
     if reading.carried then
-        if apart(lo, hi, GroupHealth.quietFor(member, plan, threshold)) then
+        if apart(lo, hi, GroupHealth.quietFor(plan)) then
             return settle(true)
         end
         if plan.kind == "zoom" and member.locate then
@@ -431,7 +451,7 @@ end
 -- change plan's middle band, or a zoom plan's whole inner band (planFor
 -- builds it over the band being located in, widened by LOCATE_WIDEN). From
 -- the plan alone, so the gate and judge always agree.
-function GroupHealth.quietFor(member, plan, threshold)
+function GroupHealth.quietFor(plan)
     return plan.quiet or plan.band
 end
 
@@ -443,41 +463,9 @@ end
 -- changes followed; half, 8 to 11 percent, 166; full, 10 percent, 158.
 GroupHealth.LOCATE_WIDEN = 0.5
 
--- When a lane fires (after its pause), it speaks only if the member's
--- reference moved at least half the threshold since this lane last spoke:
--- a move there and back while it waited is nothing new for the listener.
-function GroupHealth.laneRefNew(lane, reference, threshold)
-    if reference == nil then
-        return false
-    end
-    local spoken = lane.spokenRef
-    if spoken ~= nil and math.abs(reference - spoken) < threshold / 2 then
-        return false
-    end
-    lane.spokenRef = reference
-    return true
-end
-
--- The engine keys its audio cache on the text without markup: a repeat of
--- the same padding would replay an old silence. So every utterance gets
--- its own padding, and all paddings are the same length (24 positions of
--- a no-break space followed by a space or a second no-break space), so the
--- text is identical in all but its code.
-local NBSP = "\194\160"
-
-function GroupHealth.readbackPad(n)
-    local parts = {}
-    for _ = 1, 24 do
-        tinsert(parts, n % 2 == 1 and (NBSP .. NBSP) or (NBSP .. " "))
-        n = math.floor(n / 2)
-    end
-    return table.concat(parts)
-end
-
--- One slot line for every readback in the addon (the monitor's, the probe's):
--- two lines calling in the same frame put both starts into each other's
--- windows. Seen in game 2026-10-13: the probe's watch and the monitor, woken
--- by the same health event, lost 63 of 68 samples as ambiguous.
+-- One slot line for every readback in the addon: two lines calling in the
+-- same frame put both starts into each other's windows (seen in game: two
+-- readbacks woken by the same health event lost 63 of 68 samples).
 -- The line also records every start once, centrally: which slot's window it
 -- fell into and as which start of that slot. Only as many starts as the slot
 -- expects can be its own (two for a sample, one for the caller's speech);
@@ -494,10 +482,11 @@ GroupHealth.Readback = Readback
 -- R.RATE; through(unit, points, digit) the unit's health through a step
 -- curve of those points (may be secret, nil when the game refuses the
 -- unit); nextCount() a counter that never repeats, not even after a /reload;
--- onReading(unit, reading) with { value, plan, step (step plan only),
--- calledMs, rawHigh, rawLow, playedHigh, playedLow, carried (the sample
--- carried speech of the caller's, see request) }. Optional: plan(unit) the
--- plan of the unit's next sample (default the step plan); rerequest(unit)
+-- onReading(unit, reading) with { value, plan, calledMs, rawHigh, rawLow,
+-- playedHigh, playedLow, carried (the sample carried speech of the
+-- caller's, see request), recheck }. Optional: plan(unit) the plan of the
+-- unit's next sample (default locatePlan); priority(unit) who goes first
+-- when several wait (lower first); rerequest(unit)
 -- when the readback wants the unit read again (a retry, a stop, a health
 -- event while two samples were out; default a plain request);
 -- onDiscard(unit, why, sample); onPurge(why) after a purge, to read
@@ -510,6 +499,8 @@ function Readback:initialize(env)
     self.env = env
     self.line = env.line or GroupHealth.readbackLine
     self.units = {}
+    self.queue = {}
+    self.queueSeq = 0
     self.inflight = {}
     self.own = {}
     self.generation = 0
@@ -517,11 +508,8 @@ function Readback:initialize(env)
     self.lastPurgeMs = -math.huge
     self.failedSamples = 0
     self.recent = {}
-    -- carriedSent / carriedStarted: the caller's utterances carried by
-    -- samples, and how many of them the engine started (a gap would mean
-    -- the engine drops speech); carriedStartMs: how long after the call the
-    -- last ones started (a spoken number is heard from there).
-    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0, carriedSent = 0, carriedStarted = 0, carriedStartMs = {} }
+    -- Counts for the log and the simulation's report.
+    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0 }
 end
 
 -- Runs fn(slot) (engine calls) in the next free slot of the shared line;
@@ -599,8 +587,7 @@ function Readback:request(unit, opts)
         return false
     end
     state.out = state.out + 1
-    self.queueSeq = (self.queueSeq or 0) + 1
-    self.queue = self.queue or {}
+    self.queueSeq = self.queueSeq + 1
     tinsert(self.queue, { unit = unit, opts = opts, seq = self.queueSeq, generation = self.generation })
     self:schedule()
     return true
@@ -608,7 +595,7 @@ end
 
 -- The next batch goes out when the line is free.
 function Readback:schedule()
-    if self.scheduled or self.queue == nil or #self.queue == 0 then
+    if self.scheduled or #self.queue == 0 then
         return
     end
     local now = self.env.now()
@@ -626,14 +613,14 @@ end
 
 function Readback:runBatch()
     local now = self.env.now()
-    -- Another readback (the probe's) took the line meanwhile.
+    -- Another readback, or own speech, took the line meanwhile.
     if self.line.nextSlotMs > now then
         self:schedule()
         return
     end
     local env = self.env
     local queue = {}
-    for _, request in ipairs(self.queue or {}) do
+    for _, request in ipairs(self.queue) do
         -- Asked for before a purge: that member is read afresh already.
         if request.generation == self.generation then
             request.priority = env.priority ~= nil and env.priority(request.unit) or 0
@@ -665,7 +652,7 @@ end
 -- No slot reserved ahead and nobody waiting: a sample asked for now is
 -- called at once.
 function Readback:lineFree()
-    return self.line.nextSlotMs <= self.env.now() and (self.queue == nil or #self.queue == 0)
+    return self.line.nextSlotMs <= self.env.now() and #self.queue == 0
 end
 
 -- The readback asks for the unit again: the caller decides how.
@@ -675,10 +662,6 @@ function Readback:rerequest(unit)
     else
         self:request(unit)
     end
-end
-
-function Readback:forget()
-    self.units = {}
 end
 
 -- One slot for the batch, all in this frame, so every utterance reads the
@@ -692,7 +675,7 @@ function Readback:sampleBatch(batch)
     local ready = {}
     for _, request in ipairs(batch) do
         local opts = request.opts
-        local plan = (opts ~= nil and opts.plan) or (env.plan ~= nil and env.plan(request.unit)) or GroupHealth.stepPlan()
+        local plan = (opts ~= nil and opts.plan) or (env.plan ~= nil and env.plan(request.unit)) or GroupHealth.locatePlan()
         local m = { unit = request.unit, plan = plan, calledMs = now, owner = self, slot = slot, opts = opts }
         self.stats.samples = self.stats.samples + 1
         local silences = {}
@@ -732,7 +715,6 @@ function Readback:sampleBatch(batch)
             local ok, count = pcall(opts.carry, m.plan)
             if ok and type(count) == "number" then
                 slot.carried = slot.carried + count
-                self.stats.carriedSent = self.stats.carriedSent + count
             elseif not ok and env.onError ~= nil then
                 env.onError(count)
             end
@@ -855,16 +837,6 @@ function Readback:slotRun(slot)
         end
     end
     slot.run = sorted
-    -- The carried utterances (the run's start): counted, with how long
-    -- after the call they started (a spoken number is heard from there).
-    local stats = self.stats
-    for k = 1, slot.carried do
-        stats.carriedStarted = stats.carriedStarted + 1
-        tinsert(stats.carriedStartMs, math.floor(sorted[k].t - slot.t + 0.5))
-    end
-    while #stats.carriedStartMs > 50 do
-        tremove(stats.carriedStartMs, 1)
-    end
     return sorted
 end
 
@@ -1099,7 +1071,6 @@ function Readback:decode(m)
     return {
         value = value,
         plan = m.plan,
-        step = m.plan.kind == "steps" and value or nil,
         carried = m.carried,
         recheck = m.recheck,
         calledMs = m.calledMs,

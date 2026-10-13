@@ -21,7 +21,10 @@ module.speaking = false
 -- sends only playback started and finished with an utterance id, no text
 -- update naming the call (measured 2026-10-03), so each start is matched to
 -- the calls in the order they were made. A call whose start has not come
--- within two seconds is dropped from the line.
+-- within two seconds is dropped from the line, and a stop of all speech
+-- empties it (see the hook below). Speech the game starts by itself
+-- (Combat Audio Alerts) is not announced and can shift the matching while
+-- the line is busy; it heals once the line runs empty.
 local START_WAIT = 2
 local pendingStarts = {}
 local asideUtterances = {}
@@ -209,6 +212,17 @@ function module:stop()
     C_VoiceChat.StopSpeakingText()
     self.speaking = false
 end
+
+-- Whoever stops all speech: a stopped utterance never reports its end
+-- (Blizzard's TextToSpeechFrame.lua), and calls cut before their start
+-- never start. Without this a stale entry would take the queue's next
+-- start as speech beside it, swallow its end and stall the queue.
+hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
+    wipe(pendingStarts)
+    wipe(asideUtterances)
+    module.speaking = false
+    pollQueue()
+end)
 
 function module:uiStop()
     self:stop()

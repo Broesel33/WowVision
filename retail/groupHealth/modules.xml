@@ -3,8 +3,10 @@
 
   <Script file="logic.lua" />
   <Script file="readback.lua" />
+  <Script file="checks.lua" />
   <Script file="voices.lua" />
   <Script file="module.lua" />
+  <Script file="log.lua" />
   <Script file="tests.lua" />
 
 </Ui>

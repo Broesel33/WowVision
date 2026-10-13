@@ -23,22 +23,21 @@ Every voice shapes its sentences differently, so the pitch scale is tuned per vo
 
 The monitor speaks only when a member's health changes. It never reads health on a timer, unless you turn on the repeat.
 
-With **Only When Health Changed Enough** (on by default) a member is spoken only when their health has moved by their role's **Minimum Change** since the last time they were spoken, up or down. Small changes add up: four small hits of 3 percent each make one announcement for a healer. A member whose health wobbles a little stays silent. This is the rule of Sku's health monitor, with Sku's values: tanks 5 percent, healers 10, damage dealers 20, no role 30.
+With **Only When Health Changed Enough** (on by default) a member is spoken only when their health has moved by their role's **Minimum Change** since the last time they were spoken, up or down, and their pitch has moved by the role's **Minimum Pitch Steps**. Small changes add up: four small hits of 3 percent each make one announcement for a healer. A member whose health wobbles a little stays silent. This is the rule of Sku's health monitor, with Sku's values: tanks 5 percent, healers 10, damage dealers 20, no role 30; pitch steps healers 1, damage dealers 2, no role 3. Tanks need 1 pitch step here (0 in Sku): their 5 percent is less than one pitch step, so without it a tank could be announced again at the same pitch.
 
 Every role (tanks, healers, damage dealers, no role) has its own settings:
 
 - **Speak Below**: above this health, the member is silent.
 - **Minimum Change**: how far health must move since the last announcement (2 to 50 percent).
-- **Urgent Below**: below this health, the member counts as urgent.
-- **Delay** and **Pause**: a normal announcement comes this long after the change, and not again within the pause.
-- **Urgent Delay** and **Urgent Pause**: the same for urgent announcements, normally much shorter.
-- **Repeat Below** and **Repeat Every**: every member under the repeat threshold is spoken again at this interval. 0 turns the repeat off.
+- **Minimum Pitch Steps**: how many pitch steps the number must move since the last announcement (0 to 7; 0 is off). The two lowest and the two highest of the 15 steps share a pitch and count as one; "full" counts as a step of its own.
+- **Urgent Below**: below this health, the member counts as urgent: urgent members are checked first when several wait.
+- **Repeat Below** and **Repeat Every**: every member under the repeat threshold is spoken again at this interval, also beside the changes. 0 turns the repeat off.
 
-So a tank dropping under half health can be spoken at once and every half second, while a damage dealer at 60 percent is spoken a second later and at most every few seconds.
+With **Only When Health Changed Enough** off, the monitor speaks on every health change, as Sku does with a minimum change of 0: each member waits in the queue at most once, and is spoken with their health at the moment their turn comes.
 
-With **Only When Health Changed Enough** on, the delay is left out. The number goes out the moment the health changes, and the game itself decides whether it is heard: only when the health is a minimum change or more away from the last announcement. A silent check afterwards (about half a second) finds out where the health was, so the next number is measured from there. While a member's check is still running, a further change of that member goes out at once if no other check is waiting (it may then repeat the number before); otherwise it waits for the check, so in a busy fight a number can come up to about half a second later. The delays and pauses are not used in this mode: the minimum change keeps a member from speaking too often, as in Sku.
+With **Only When Health Changed Enough** on, there is no delay. The number goes out the moment the health changes, and the game itself decides whether it is heard: only when the health is a minimum change and the minimum pitch steps away from the last announcement. A silent check afterwards (about half a second) finds out where the health was, so the next number is measured from there. While a member's check is still running, a further change of that member goes out at once if no other check is waiting (it may then repeat the number before); otherwise it waits for the check, so in a busy fight a number can come up to about half a second later. The minimum change keeps a member from speaking too often, as in Sku. Someone who joins your group is checked once, silently, to learn where their health is; from then on their changes count.
 
-If something stops all speech (pressing Ctrl, a target change, a menu key) right as a number goes out, the number is spoken again, at most once every two seconds. A later stop does not repeat it: a silent check finds out where the health was instead. The snapshot and the repeat are never repeated: stopping them means stop.
+If something stops all speech (pressing Ctrl, a target change, a menu key) within 0.4 seconds of a number going out, the number goes out again, at most once every two seconds per member, and only if the health is still a minimum change away. A later stop does not repeat it: a silent check finds out where the health was instead. A death cut by a stop is said again. The snapshot and the repeat are never repeated: stopping them means stop.
 
 A member who comes back to full health is announced as "number full", if **Announce Full Health** is on. A member who dies is announced once as "number dead".
 
@@ -46,7 +45,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 - **Enabled**: the monitor is off until you turn it on. Off, it says nothing and its key does nothing.
 - **Voice**, **Speech Rate**, **Speech Volume**: the monitor's own voice.
-- **Time Between Numbers**: how far apart two announcements start (the snapshot, the repeat; with **Only When Health Changed Enough** the numbers of members hit at the same moment may start closer together).
+- **Time Between Numbers**: how far apart two announcements start for the snapshot, the repeat, deaths, and every change with **Only When Health Changed Enough** off. With it on, numbers go out the moment the health changes.
 - **Include Yourself**, **Watch Party**, **Watch Raid**.
 - **Raid Groups**: which raid groups to watch, for example only the groups you heal.
 - **Silent Out of Combat**.
@@ -57,7 +56,7 @@ A member who comes back to full health is announced as "number full", if **Annou
 
 ## The log
 
-`/wv ghlog on` records every announcement as it plays: the time, the number, the role, the lane (urgent, normal, repeat, snapshot), how long after the health change it came, and whether a pause held it back. `/wv ghlog off` stops it, `/wv ghlog show` opens the last 200 in a window, `/wv ghlog clear` empties it. The log also lists the announcements the game kept silent: the monitor cannot know which ones were audible. Its last line counts the health checks: samples, readings used, samples thrown away and why, purges, and numbers spoken again after a stop. With **Only When Health Changed Enough** on, each number that turned out to be a move is listed with the new reference, whether it was heard or silent (above **Speak Below**), and how soon after the health event it went out. The log is also kept in the saved variables at the next `/reload` (WowVisionDump).
+`/wv ghlog on` records what the monitor does: every announcement from its queue as it plays (change, dead, repeat or snapshot; how long it waited in the queue), and with **Only When Health Changed Enough** on each number that turned out to be a move (the new reference, whether it was heard or silent above **Speak Below**, how soon after the health event it went out and what it waited for), each check that was lost and why, and each number said again after a stop. In a raid it also notes a health event that came under a second name for the same member (party1 as well as raid3), so a raid test shows whether the game sends both. While the log is on, it also counts who stopped all speech. `/wv ghlog off` stops it, `/wv ghlog show` opens the last 400 lines in a window, `/wv ghlog clear` empties it. The log cannot know which announcements were audible: the game decides that. Its last line counts the health checks: samples, readings used, samples thrown away and why, purges, own speech cut by a stop, and how much was said again. The log is also kept in the saved variables at the next `/reload` (WowVisionDump).
 
 ## Limits
 

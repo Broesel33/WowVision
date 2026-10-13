@@ -21,7 +21,9 @@ end
 loadAddonFile("core/Class.lua")
 WowVision = { Class = namespace.Class, classes = namespace.classes }
 loadAddonFile("retail/groupHealth/logic.lua")
+loadAddonFile("retail/groupHealth/voices.lua")
 loadAddonFile("retail/groupHealth/readback.lua")
+loadAddonFile("retail/groupHealth/checks.lua")
 local Sim = loadAddonFile("tools/groupHealthSim.lua")
 
 local fpsList = { 60, 30 }

@@ -15,6 +15,15 @@ local function played(level)
     return 190 + 0.3314 * (R.SILENCE_OFFSET + level * R.LEVEL_SILENCE)
 end
 
+-- A plan of the caller's own: ten percent steps plus full, base 4.
+local function stepPlan()
+    local points = {}
+    for k = 0, 10 do
+        tinsert(points, { k / 10, k })
+    end
+    return GroupHealth.readbackPlan("steps", 4, points)
+end
+
 local function evaluate(points, x)
     local y = points[1][2]
     for _, point in ipairs(points) do
@@ -44,7 +53,7 @@ local function plain(plan, health)
 end
 
 local PLANS = {
-    { "steps", GroupHealth.stepPlan() },
+    { "steps", stepPlan() },
     { "locate", GroupHealth.locatePlan() },
 }
 for _, case in ipairs({ { 100, 5 }, { 60, 10 }, { 50, 20 }, { 12, 10 }, { 0, 10 }, { 95, 30 }, { 3, 2 } }) do
@@ -56,8 +65,10 @@ end
 -- samples (the number goes out again) and moves while a member is being
 -- located do that.
 local function repeatShare(result)
+    local list = result.members ~= nil and { result } or result
     local heard, repeats = 0, 0
-    for _, m in ipairs(result.members) do
+    for _, one in ipairs(list) do
+        for _, m in ipairs(one.members) do
         local a = Sim.ROLES[m.role].minChange / 100
         local last = nil
         for _, x in ipairs(m.announcements) do
@@ -67,17 +78,48 @@ local function repeatShare(result)
             end
             last = x.health
         end
+        end
     end
     return heard > 0 and repeats / heard or 0
 end
 
 local results = {}
-local function scenario(kind, size, fps)
-    local key = kind .. size .. ":" .. fps
+local function scenario(kind, size, fps, seed)
+    local key = kind .. size .. ":" .. fps .. ":" .. tostring(seed)
     if results[key] == nil then
-        results[key] = Sim.run(Sim.scenario(kind, size, fps))
+        results[key] = Sim.run(Sim.scenario(kind, size, fps, seed))
     end
     return results[key]
+end
+
+-- Three fights of a kind: one fight alone swings widely (a raid of 10
+-- follows 36 to 73 percent of strong hits per fight), so a share is judged
+-- over all three.
+local function fights(kind, size, fps)
+    local list = {}
+    for seed = 7, 9 do
+        tinsert(list, scenario(kind, size, fps, seed))
+    end
+    return list
+end
+
+local function followedShare(list)
+    local followed, ideal = 0, 0
+    for _, result in ipairs(list) do
+        followed = followed + result.total.followed
+        ideal = ideal + result.total.ideal
+    end
+    return followed / ideal, followed .. " of " .. ideal .. " followed"
+end
+
+local function medianDelay(list)
+    local latencies = {}
+    for _, result in ipairs(list) do
+        for _, latency in ipairs(result.total.latencies) do
+            tinsert(latencies, latency)
+        end
+    end
+    return Sim.percentile(latencies, 0.5)
 end
 
 local suite = {
@@ -175,7 +217,7 @@ local suite = {
 
     ["readback: digits in the wrong order or between levels never pass"] = function(t)
         -- Under the step plan 0 and 3 is step 3; swapped it is out of range.
-        local plan = GroupHealth.stepPlan()
+        local plan = stepPlan()
         t:assertEqual(GroupHealth.readbackValue(plan, played(0), played(3)), 3)
         t:assertNil(GroupHealth.readbackValue(plan, played(3), played(0)))
         local value, why = GroupHealth.readbackValue(plan, played(1) + 50, played(0))
@@ -190,7 +232,7 @@ local suite = {
             t:assertEqual(why, "game in the background")
         end
         -- A real level 2 pair is still read.
-        t:assertEqual(GroupHealth.readbackValue(GroupHealth.stepPlan(), played(2), played(2)), 10)
+        t:assertEqual(GroupHealth.readbackValue(stepPlan(), played(2), played(2)), 10)
     end,
 
     ["readback: every padding has the same length and no two are alike"] = function(t)
@@ -286,17 +328,24 @@ local suite = {
         t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.49), 10))
     end,
 
+    ["rule: with a pitch step, a tank's move inside one pitch level stays silent"] = function(t)
+        local levels = GroupHealth.pitchLevels(GroupHealth.voices.fallback)
+        local quiet = GroupHealth.pitchQuiet(levels, 61, 1)
+        -- 61 to 66: five percent, the tank's minimum change, same pitch.
+        local plan = GroupHealth.changePlan(61, 5, quiet)
+        t:assertFalse(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.66), 5))
+        -- 61 to 68: the next pitch level.
+        t:assertTrue(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.68), 5))
+        -- 61 to 55: a lower level, and more than five percent.
+        t:assertTrue(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.55), 5))
+        -- The gate keeps silent exactly what the judge calls "moved less".
+        t:assertEqual(plan.quiet[2], quiet[2])
+        t:assertTrue(math.abs(plan.quiet[1] - 0.56) < 1e-9)
+    end,
+
     ["rule: after a death (reference 0) the resurrection announces"] = function(t)
         local member = { reference = 0, locate = false }
         t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(0, 10), 0.35), 10))
-    end,
-
-    ["rule: a lane speaks a move once; there and back while it waited is nothing new"] = function(t)
-        local lane = {}
-        t:assertTrue(GroupHealth.laneRefNew(lane, 50, 10))
-        t:assertFalse(GroupHealth.laneRefNew(lane, 52, 10))
-        t:assertTrue(GroupHealth.laneRefNew(lane, 40, 10))
-        t:assertFalse(GroupHealth.laneRefNew(lane, nil, 10))
     end,
 
     ["a voice that does not fit the fixed values: stuck purges, and the failure is said once"] = function(t)
@@ -308,9 +357,9 @@ local suite = {
     end,
 }
 
--- Seen in game 2026-10-13: the probe's watch beside the monitor, both woken
--- by the same health events, lost almost every sample as ambiguous while
--- each had its own slot line. On the shared line both read.
+-- Seen in game: a second readback beside the monitor, both woken by the
+-- same health events, lost almost every sample as ambiguous while each had
+-- its own slot line. On the shared line both read.
 for _, kind in ipairs({ "spikes", "drift" }) do
     suite["two readbacks on the same member share the slot line: both read, " .. kind] = function(t)
         local opts = Sim.scenario(kind, 5, 60)
@@ -334,17 +383,18 @@ for _, fps in ipairs({ 60, 30 }) do
             t:assertTrue(Sim.percentile(total.moves, 0.5) <= 1.3, "median move " .. Sim.percentile(total.moves, 0.5))
         end
         suite["scenario strong hits, " .. where .. ": fast, nothing misread, few repeats"] = function(t)
-            local result = scenario("spikes", size, fps)
-            local total = result.total
-            t:assertEqual(total.misreads, 0)
-            t:assertTrue(total.extra <= 2, total.extra .. " extra")
-            -- One fight each: a raid of 10 follows 43 to 73 percent per fight
-            -- (eight fights: 86 percent at 60 fps).
-            t:assertTrue(total.followed >= total.ideal * 0.4, total.followed .. " of " .. total.ideal .. " followed")
-            t:assertTrue(Sim.percentile(total.latencies, 0.5) < 0.9, "median delay " .. Sim.percentile(total.latencies, 0.5))
-            t:assertTrue(repeatShare(result) <= 0.2, "repeats " .. repeatShare(result))
-            t:assertTrue((result.carried or 0) > 0, "no number went out")
-            t:assertEqual(result.gateMismatches or 0, 0)
+            local list = fights("spikes", size, fps)
+            for _, result in ipairs(list) do
+                local total = result.total
+                t:assertEqual(total.misreads, 0)
+                t:assertTrue(total.extra <= 2, total.extra .. " extra")
+                t:assertTrue((result.carried or 0) > 0, "no number went out")
+                t:assertEqual(result.gateMismatches or 0, 0)
+            end
+            local share, text = followedShare(list)
+            t:assertTrue(share >= 0.5, text)
+            t:assertTrue(medianDelay(list) < 0.9, "median delay " .. medianDelay(list))
+            t:assertTrue(repeatShare(list) <= 0.2, "repeats " .. repeatShare(list))
         end
         suite["scenario a healer hovering at a line, " .. where .. ": nothing said"] = function(t)
             local result = scenario("hover", size, fps)
@@ -356,12 +406,14 @@ for _, fps in ipairs({ 60, 30 }) do
             end
         end
         suite["scenario stops of all speech every 1 to 3 seconds, " .. where .. ": followed, few repeats"] = function(t)
-            local result = scenario("stops", size, fps)
-            local total = result.total
-            t:assertEqual(total.misreads, 0)
-            t:assertTrue((result.stats.discarded.stop or 0) > 0, "no sample was cut")
-            t:assertTrue(total.followed >= total.ideal * 0.4, total.followed .. " of " .. total.ideal .. " followed")
-            t:assertTrue(repeatShare(result) <= 0.25, "repeats " .. repeatShare(result))
+            local list = fights("stops", size, fps)
+            for _, result in ipairs(list) do
+                t:assertEqual(result.total.misreads, 0)
+                t:assertTrue((result.stats.discarded.stop or 0) > 0, "no sample was cut")
+            end
+            local share, text = followedShare(list)
+            t:assertTrue(share >= 0.45, text)
+            t:assertTrue(repeatShare(list) <= 0.25, "repeats " .. repeatShare(list))
         end
     end
 end

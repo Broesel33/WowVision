@@ -29,10 +29,22 @@ local Sim = {}
 
 -- The monitor's role defaults (retail/groupHealth/module.lua), thresholds in percent.
 Sim.ROLES = {
-    TANK = { start = 90, urgent = 50, delay = 0.5, pause = 1.5, urgentDelay = 0, urgentPause = 0.5, minChange = 5 },
-    HEALER = { start = 80, urgent = 40, delay = 1, pause = 2, urgentDelay = 0, urgentPause = 0.5, minChange = 10 },
-    DAMAGER = { start = 70, urgent = 35, delay = 1, pause = 3, urgentDelay = 0, urgentPause = 1, minChange = 20 },
+    TANK = { start = 90, urgent = 50, minChange = 5, minPitchSteps = 1 },
+    HEALER = { start = 80, urgent = 40, minChange = 10, minPitchSteps = 1 },
+    DAMAGER = { start = 70, urgent = 35, minChange = 20, minPitchSteps = 2 },
 }
+-- The pitch levels of the fallback voice (Hedda).
+Sim.LEVELS = GroupHealth.pitchLevels(GroupHealth.voices.fallback)
+
+-- Which pitch level a health sounds at.
+local function levelOf(health)
+    for i, level in ipairs(Sim.LEVELS) do
+        if health >= level[1] and health < level[2] then
+            return i
+        end
+    end
+    return #Sim.LEVELS
+end
 Sim.SPACING = 0.2
 -- Preparing one utterance in the engine, ms (see engineSpeak).
 Sim.ENGINE_MS = { 33, 40 }
@@ -56,14 +68,6 @@ local function rng(seed)
         return sd * math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
     end
     return r
-end
-
--- The ten percent step of the step plan (the second reader's).
-local function trueStep(health)
-    if health >= 1 then
-        return 10
-    end
-    return math.floor(health * 10)
 end
 
 local function evalPoints(points, x)
@@ -215,7 +219,8 @@ local function engineStopAll(world, handlers)
 end
 
 -- Sku's rule on the true health: the announcements a monitor that could
--- read health would make, each with the health it moved to.
+-- read health would make, each with the health it moved to: moved the
+-- minimum change and the minimum pitch steps.
 function Sim.ideal(m)
     local role = Sim.ROLES[m.role]
     local a = role.minChange / 100
@@ -223,7 +228,7 @@ function Sim.ideal(m)
     local ref = m.health
     for _, ev in ipairs(m.script) do
         local h = ev[2]
-        if math.abs(h - ref) >= a - 1e-9 then
+        if math.abs(h - ref) >= a - 1e-9 and math.abs(levelOf(h) - levelOf(ref)) >= role.minPitchSteps then
             tinsert(list, { t = ev[1], health = h, audible = h < role.start / 100 or h >= 1 })
             ref = h
         end
@@ -245,7 +250,6 @@ function Sim.run(opts)
             startHealth = spec.health,
             script = spec.script or {},
             subject = spec.subject,
-            lanes = { urgent = {}, normal = {} },
             calls = {},
             readings = 0,
             misreads = 0,
@@ -260,158 +264,15 @@ function Sim.run(opts)
     local counter = 0
     local readback
     local handlers = {}
-    local queue, queued, pumping = {}, {}, false
-
-    local function audible(m, lane, quiet)
+    -- Heard: below the role's "Speak Below" or at full health, and outside
+    -- the quiet band the number went out behind.
+    local function audible(m, quiet)
         local role = Sim.ROLES[m.role]
         local h = m.health
-        if quiet ~= nil and h >= quiet[1] and h < quiet[2] then
+        if h >= quiet[1] and h < quiet[2] then
             return false
         end
-        if lane == "fire" then
-            return h < role.start / 100 or h >= 1
-        elseif lane == "urgent" then
-            return h < role.urgent / 100
-        end
-        return (h >= role.urgent / 100 and h < role.start / 100) or h >= 1
-    end
-
-    local function announce(entry)
-        local m = entry.member
-        local heard = audible(m, entry.lane)
-        if heard then
-            tinsert(m.announcements, { t = world.now / 1000, health = m.health, lane = entry.lane })
-        end
-        -- Every announcement is an engine call, silent or not (volume gates).
-        readback:speakOwn(function()
-            engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
-        end, { member = m, lane = entry.lane })
-    end
-
-    local function pump()
-        if pumping then
-            return
-        end
-        local entry = tremove(queue, 1)
-        if entry == nil then
-            return
-        end
-        queued[entry.key] = nil
-        announce(entry)
-        pumping = true
-        world.after(Sim.SPACING, function()
-            pumping = false
-            pump()
-        end)
-    end
-
-    local function enqueue(m, lane)
-        local key = m.unit .. ":" .. lane
-        if queued[key] then
-            return
-        end
-        queued[key] = true
-        tinsert(queue, { member = m, lane = lane, key = key })
-        pump()
-    end
-
-    local function wake(m, lane)
-        local state = m.lanes[lane]
-        if state.pending then
-            return
-        end
-        local role = Sim.ROLES[m.role]
-        -- As the module with the readback: no delay, no pause.
-        local delay, pause = 0, 0
-        local now = world.now / 1000
-        local at = GroupHealth.nextFire(now, state.last, delay, pause)
-        state.pending = true
-        world.after(math.max(0, at - now), function()
-            state.pending = false
-            -- As the module: nothing new for this lane, nothing said.
-            if not GroupHealth.laneRefNew(state, m.reference, role.minChange) then
-                return
-            end
-            state.last = world.now / 1000
-            enqueue(m, lane)
-        end)
-    end
-
-    local function readEveryone()
-        for _, m in ipairs(members) do
-            readback:request(m.unit)
-        end
-    end
-
-    -- As the module's check: a member without a reference is read quietly;
-    -- otherwise the number goes out at once, carried by a sample, unless
-    -- the last check is out (then it waits).
-    local check
-    check = function(m)
-        if m.reference == nil then
-            readback:request(m.unit)
-            return
-        end
-        local now = world.now / 1000
-        m.eventAt = m.eventAt or now
-        -- As the module: a second number beside a check still out only
-        -- when the slot line is free (opts.parallel = true: always, an
-        -- experiment; false: never).
-        local out = m.pendingCount or 0
-        -- As the module: a lost sample is followed by a silent re-check.
-        if m.lost ~= nil then
-            if out >= 2 then
-                m.again = true
-                return
-            end
-            local plan = m.lost
-            m.lost = nil
-            m.pendingCount = out + 1
-            m.pending = true
-            m.rechecking = true
-            if not readback:request(m.unit, { plan = plan, recheck = true }) then
-                m.pendingCount = m.pendingCount - 1
-                m.pending = m.pendingCount > 0
-                m.rechecking = false
-                m.lost = plan
-            end
-            return
-        end
-        local second = opts.parallel == true or (opts.parallel == nil and readback:lineFree())
-        if out >= 2 or (out == 1 and (m.rechecking or not second)) then
-            m.again = true
-            return
-        end
-        m.pending = true
-        m.pendingCount = out + 1
-        local accepted = readback:request(m.unit, {
-            carry = function(plan)
-                local quiet = GroupHealth.quietFor(m, plan, Sim.ROLES[m.role].minChange)
-                if quiet == nil then
-                    return 0
-                end
-                -- Remembered to check that the gate and the judge agree.
-                m.carries = m.carries or {}
-                m.carries[world.now] = not (m.health >= quiet[1] and m.health < quiet[2])
-                local heard = nil
-                if audible(m, "fire", quiet) then
-                    heard = { health = m.health, lane = "fire", eventAt = m.eventAt }
-                    tinsert(m.announcements, heard)
-                end
-                m.eventAt = nil
-                -- The number with "<number> full" in one utterance, as the
-                -- module, before the digits. Heard from its start.
-                local id = engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
-                if heard ~= nil then
-                    result.heardIds[id] = heard
-                end
-                return 1
-            end,
-        })
-        if not accepted then
-            m.pendingCount = m.pendingCount - 1
-            m.pending = m.pendingCount > 0
-        end
+        return h < role.start / 100 or h >= 1
     end
 
     -- Each run its own slot line: the addon's shared one would carry the
@@ -422,8 +283,43 @@ function Sim.run(opts)
         local played = (opts.baseMs or 190) + (opts.slope or 0.3314) * silence + world.r.normal(opts.noiseMs or 4)
         engineSpeak(world, played, handlers)
     end
-    readback = GroupHealth.Readback:new({
+    -- The monitor's real checks (retail/groupHealth/checks.lua) on the
+    -- simulated engine.
+    local checks = GroupHealth.Checks:new({
         line = line,
+        members = function()
+            return byUnit
+        end,
+        memberFor = function(unit)
+            return byUnit[unit]
+        end,
+        threshold = function(m)
+            return Sim.ROLES[m.role].minChange
+        end,
+        pitchQuiet = function(m)
+            return GroupHealth.pitchQuiet(Sim.LEVELS, m.reference, Sim.ROLES[m.role].minPitchSteps)
+        end,
+        urgent = function(m)
+            return Sim.ROLES[m.role].urgent
+        end,
+        -- As the module: the number with "<number> full" in one utterance,
+        -- before the digits, heard from its start.
+        carry = function(m, quiet)
+            -- Remembered to check that the gate and the judge agree.
+            m.carries = m.carries or {}
+            m.carries[world.now] = not (m.health >= quiet[1] and m.health < quiet[2])
+            local heard = nil
+            if audible(m, quiet) then
+                heard = { health = m.health, lane = "change", eventAt = m.eventAt }
+                tinsert(m.announcements, heard)
+            end
+            m.eventAt = nil
+            local id = engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
+            if heard ~= nil then
+                result.heardIds[id] = heard
+            end
+            return 1
+        end,
         now = function()
             return world.now
         end,
@@ -436,107 +332,9 @@ function Sim.run(opts)
             m.calls[world.now] = m.health
             return evalPoints(points, m.health)
         end,
-        -- As the module: who goes first when several wait.
-        priority = function(unit)
-            local m = byUnit[unit]
-            if m.reference == nil then
-                return 1000
-            end
-            local role = Sim.ROLES[m.role]
-            local score = m.reference
-            if m.reference < role.urgent then
-                score = score - 200
-            end
-            if m.role == "TANK" then
-                score = score - 30
-            elseif m.role == "HEALER" then
-                score = score - 15
-            end
-            return score
-        end,
-        -- As the module: against the reference, or zooming in to find it.
-        plan = function(unit)
-            local m = byUnit[unit]
-            return GroupHealth.planFor(m, Sim.ROLES[m.role].minChange)
-        end,
         nextCount = function()
             counter = counter + 1
             return counter
-        end,
-        onReading = function(unit, reading)
-            local m = byUnit[unit]
-            m.readings = m.readings + 1
-            -- Truth: the band the health was in when the sample was called.
-            if reading.value ~= evalPoints(reading.plan.points, m.calls[reading.calledMs]) then
-                m.misreads = m.misreads + 1
-            end
-            local before = { reference = m.reference, locate = m.locate, band = m.locateBand }
-            local changed = GroupHealth.judge(m, reading, Sim.ROLES[m.role].minChange)
-            -- The gate (heard or not) and the judge must agree, else the
-            -- reference stays after a heard number and the next repeats it.
-            if reading.carried and m.carries ~= nil and m.carries[reading.calledMs] ~= nil then
-                result.carried = (result.carried or 0) + 1
-                if m.carries[reading.calledMs] ~= changed then
-                    result.gateMismatches = (result.gateMismatches or 0) + 1
-                end
-            end
-            if changed then
-                tinsert(m.triggers, { t = world.now / 1000, reference = m.reference, health = m.calls[reading.calledMs], plan = reading.plan, band = reading.plan.intervals[reading.value], before = before, calledMs = reading.calledMs, carried = reading.carried })
-            end
-            -- As the module.
-            if reading.carried then
-                m.pendingCount = math.max(0, (m.pendingCount or 1) - 1)
-                m.pending = m.pendingCount > 0
-                if reading.recheck then
-                    m.rechecking = false
-                end
-            end
-            if m.locate and not m.pending then
-                readback:request(unit)
-            end
-            if m.again and not m.pending then
-                m.again = false
-                check(m)
-            end
-        end,
-        rerequest = function(unit)
-            check(byUnit[unit])
-        end,
-        onDiscard = function(unit, why, sample)
-            if not sample.carried then
-                return
-            end
-            local m = byUnit[unit]
-            m.pendingCount = math.max(0, (m.pendingCount or 1) - 1)
-            m.pending = m.pendingCount > 0
-            if sample.recheck then
-                m.rechecking = false
-                m.lost = sample.plan
-            elseif why == "stop" and world.now - sample.calledMs < 400
-                and world.now / 1000 - (m.lastRespeak or -math.huge) > 2 then
-                m.lastRespeak = world.now / 1000
-                result.respoken = result.respoken + 1
-            else
-                m.lost = sample.plan
-            end
-            if not GroupHealth.readbackRetries(why) and why ~= "stop" and m.again then
-                m.again = false
-                check(m)
-            end
-        end,
-        onPurge = function()
-            for _, m in ipairs(members) do
-                m.pending = false
-                m.pendingCount = 0
-                m.again = false
-                m.lost = nil
-                m.rechecking = false
-            end
-            readEveryone()
-        end,
-        onOwnCut = function(tag)
-            result.respoken = result.respoken + 1
-            enqueue(tag.member, tag.lane)
         end,
         onFailing = function()
             result.failingSaid = (result.failingSaid or 0) + 1
@@ -544,10 +342,44 @@ function Sim.run(opts)
         onError = function(err)
             error(err)
         end,
+        trace = function(m, what)
+            if what == "respeak" then
+                result.respoken = result.respoken + 1
+            end
+        end,
     })
-    -- A second reader on the subjects, woken by the same events, like the
-    -- probe's watch beside the monitor (its default ten percent steps): on
-    -- the shared line, or (the bug seen in game) on a line of its own.
+    readback = checks.readback
+    -- Every reading scored against the truth, around the real handling.
+    function checks:onReading(unit, reading)
+        local m = byUnit[unit]
+        m.readings = m.readings + 1
+        -- Truth: the band the health was in when the sample was called.
+        if reading.value ~= evalPoints(reading.plan.points, m.calls[reading.calledMs]) then
+            m.misreads = m.misreads + 1
+        end
+        local before = { reference = m.reference, locate = m.locate, band = m.locateBand }
+        local moved = GroupHealth.Checks.onReading(self, unit, reading)
+        -- The gate (heard or not) and the judge must agree, else the
+        -- reference stays after a heard number and the next repeats it.
+        if reading.carried and not reading.recheck and m.carries ~= nil and m.carries[reading.calledMs] ~= nil then
+            result.carried = (result.carried or 0) + 1
+            if m.carries[reading.calledMs] ~= moved then
+                result.gateMismatches = (result.gateMismatches or 0) + 1
+            end
+        end
+        if moved then
+            tinsert(m.triggers, { t = world.now / 1000, reference = m.reference, health = m.calls[reading.calledMs], plan = reading.plan, band = reading.plan.intervals[reading.value], before = before, calledMs = reading.calledMs, carried = reading.carried })
+        end
+        return moved
+    end
+    local function check(m)
+        m.eventAt = m.eventAt or world.now / 1000
+        checks:check(m.unit)
+    end
+
+    -- A second reader on the subjects, woken by the same events (its
+    -- default plan, zooming into 0 to 100): on the shared line, or (the
+    -- bug seen in game) on a line of its own.
     local second
     if opts.secondReader then
         result.second = { readings = 0, misreads = 0 }
@@ -571,7 +403,7 @@ function Sim.run(opts)
             onReading = function(unit, reading)
                 local m = byUnit[unit]
                 result.second.readings = result.second.readings + 1
-                if reading.step ~= trueStep(m.secondCalls[reading.calledMs]) then
+                if reading.value ~= evalPoints(reading.plan.points, m.secondCalls[reading.calledMs]) then
                     result.second.misreads = result.second.misreads + 1
                 end
             end,
@@ -648,7 +480,7 @@ function Sim.run(opts)
     end
 
     -- The monitor reads everyone once at the start: the reference.
-    readEveryone()
+    checks:readNew()
     world.run(duration * 1000 + 3000)
 
     result.stats = readback.stats
@@ -742,7 +574,12 @@ local function percentile(list, p)
     if #list == 0 then
         return 0
     end
-    return list[math.max(1, math.ceil(#list * p))]
+    local sorted = {}
+    for i, x in ipairs(list) do
+        sorted[i] = x
+    end
+    table.sort(sorted)
+    return sorted[math.max(1, math.ceil(#sorted * p))]
 end
 Sim.percentile = percentile
 
