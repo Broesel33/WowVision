@@ -176,6 +176,55 @@ function GroupHealth.bandPoints(low, high)
     return { { 0, 0 }, { low, 100 }, { high, 0 } }
 end
 
+-- Volume 100 on [low, high) except inside `quiet` ({ low, high }, either
+-- end may lie outside 0 to 1): Sku's rule as a gate, "moved at least the
+-- threshold since the last announcement", with the band around that
+-- announcement as `quiet`. Without `quiet`, bandPoints. A `high` above 1
+-- includes full health.
+function GroupHealth.gatePoints(low, high, quiet)
+    if quiet == nil then
+        return GroupHealth.bandPoints(low, high)
+    end
+    low = low or 0
+    if high == nil or high <= low then
+        return SILENT
+    end
+    local pieces = {}
+    local below = math.min(high, quiet[1])
+    if below > low then
+        tinsert(pieces, { low, below })
+    end
+    local above = math.max(low, quiet[2])
+    if high > above and above <= 1 then
+        tinsert(pieces, { above, high })
+    end
+    if #pieces == 0 then
+        return SILENT
+    end
+    local points = {}
+    if pieces[1][1] > 0 then
+        tinsert(points, { 0, 0 })
+    end
+    for _, piece in ipairs(pieces) do
+        tinsert(points, { math.max(0, piece[1]), 100 })
+        if piece[2] <= 1 then
+            tinsert(points, { piece[2], 0 })
+        end
+    end
+    return points
+end
+
+-- Whether a gate keeps every health silent: such an utterance need not be
+-- sent at all (fewer utterances at once in the engine).
+function GroupHealth.isSilent(points)
+    for _, point in ipairs(points) do
+        if point[2] ~= 0 then
+            return false
+        end
+    end
+    return true
+end
+
 -- Volume 100 at exactly full health.
 function GroupHealth.fullPoints()
     return { { 0, 0 }, { 1, 100 } }

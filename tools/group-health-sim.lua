@@ -1,6 +1,7 @@
 -- Prints the group health readback simulation (tools/groupHealthSim.lua):
--- party of 5 and raid of 10, strong hits on one member and slow changes on
--- two, at 60 and at 30 frames per second.
+-- party of 5 and raid of 10; strong hits on one member, slow changes on
+-- two, a healer hovering at a line, strong hits with frequent stops of all
+-- speech; at 60 and at 30 frames per second.
 --
 -- Usage, from the repo root:
 --   luajit tools/group-health-sim.lua [fps]
@@ -29,7 +30,7 @@ if arg[1] ~= nil then
 end
 
 for _, fps in ipairs(fpsList) do
-    for _, kind in ipairs({ "spikes", "drift" }) do
+    for _, kind in ipairs(Sim.KINDS) do
         for _, size in ipairs({ 5, 10 }) do
             local result = Sim.run(Sim.scenario(kind, size, fps))
             for _, line in ipairs(Sim.report(result)) do

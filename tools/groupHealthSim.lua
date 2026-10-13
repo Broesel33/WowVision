@@ -1,14 +1,21 @@
--- Offline simulation of the group health monitor with the health step
--- readback (retail/groupHealth/readback.lua): a party of 5 or a raid of 10,
--- scripted health, a simulated speech engine, the monitor's lanes and queue
--- in miniature. The readback code itself is the real one.
+-- Offline simulation of the group health monitor with the health readback
+-- (retail/groupHealth/readback.lua): a party of 5 or a raid of 10, scripted
+-- health, a simulated speech engine, the monitor in miniature (speak first,
+-- check afterwards: a health event sends the number gated by the quiet band
+-- at once, carried by a sample). The readback code, the rule
+-- (GroupHealth.judge) and the gate (GroupHealth.gatePoints' band) are the
+-- real ones. It is scored against Sku's rule run on the true health: an
+-- announcement whenever health moved the role's minimum change since the
+-- last one, heard below the role's "Speak Below" or at full health.
 --
 -- The engine copies what was measured on WoW: Forever (2026-10-13):
 -- - a start comes 34 to 56 ms after the call, events land on frames;
 -- - an utterance 'a<silence msec="s"/>' at rate 10 plays 190 + 0.3314 * s ms
---   (plus a few ms of noise); utterances overlap freely;
+--   (plus a few ms of noise; opts.baseMs and opts.slope replace the two
+--   numbers, for another voice); utterances overlap freely;
 -- - other WowVision speech plays beside ours; now and then a stop of all
---   speech (hooked, like C_VoiceChat.StopSpeakingText) or an interrupting
+--   speech (hooked, like C_VoiceChat.StopSpeakingText: the readback purges,
+--   reads everyone again and hands back cut numbers) or an interrupting
 --   call (no hook: everything ends, the new speech starts) cuts samples.
 -- Not known yet, so not modelled: an engine limit on overlapping utterances.
 --
@@ -22,11 +29,15 @@ local Sim = {}
 
 -- The monitor's role defaults (retail/groupHealth/module.lua), thresholds in percent.
 Sim.ROLES = {
-    TANK = { start = 90, urgent = 50, delay = 0.5, pause = 1.5, urgentDelay = 0, urgentPause = 0.5 },
-    HEALER = { start = 80, urgent = 40, delay = 1, pause = 2, urgentDelay = 0, urgentPause = 0.5 },
-    DAMAGER = { start = 70, urgent = 35, delay = 1, pause = 3, urgentDelay = 0, urgentPause = 1 },
+    TANK = { start = 90, urgent = 50, delay = 0.5, pause = 1.5, urgentDelay = 0, urgentPause = 0.5, minChange = 5 },
+    HEALER = { start = 80, urgent = 40, delay = 1, pause = 2, urgentDelay = 0, urgentPause = 0.5, minChange = 10 },
+    DAMAGER = { start = 70, urgent = 35, delay = 1, pause = 3, urgentDelay = 0, urgentPause = 1, minChange = 20 },
 }
-Sim.SPACING = 0.3
+Sim.SPACING = 0.2
+-- Preparing one utterance in the engine, ms (see engineSpeak).
+Sim.ENGINE_MS = { 33, 40 }
+-- From the call to the number being heard (the engine's start).
+Sim.START_S = 0.045
 Sim.ANNOUNCE_MS = 700
 
 -- Deterministic random numbers (a plain LCG), so every run is the same.
@@ -47,11 +58,12 @@ local function rng(seed)
     return r
 end
 
+-- The ten percent step of the step plan (the second reader's).
 local function trueStep(health)
     if health >= 1 then
-        return R.STEPS
+        return 10
     end
-    return math.floor(health * R.STEPS)
+    return math.floor(health * 10)
 end
 
 local function evalPoints(points, x)
@@ -163,15 +175,24 @@ local function newWorld(opts)
 end
 
 -- The engine: utterances with ids, start and finish events on frames.
+-- The engine is one line (flood probe, 2026-10-13: 20, 40, 80 silent
+-- utterances in one frame all played, started one after another about 36
+-- ms apart, the first 34 to 56 ms after the call): each utterance is
+-- prepared after the one before has started, for ENGINE_MS.
 local function engineSpeak(world, playedMs, handlers)
     world.nextId = world.nextId + 1
     local id = world.nextId
     local callMs = world.now
-    local startMs = callMs + world.r.range(34, 56)
+    local begin = math.max(callMs, world.engineFreeAt or 0)
+    local startMs = begin + world.r.range(Sim.ENGINE_MS[1], Sim.ENGINE_MS[2])
+    world.engineFreeAt = startMs
     local u = { id = id }
     world.active[id] = u
     world.at(world.frame(startMs), function()
-        handlers.started(id)
+        -- Stopped before it started: it never starts.
+        if world.active[id] == u then
+            handlers.started(id)
+        end
     end)
     u.finishTimer = world.frame(startMs + playedMs)
     world.at(u.finishTimer, function()
@@ -183,14 +204,31 @@ local function engineSpeak(world, playedMs, handlers)
     return id
 end
 
--- Ends every utterance at once (the stop of all speech).
+-- Ends every utterance at once (the stop of all speech). A stopped
+-- utterance never reports its end (Blizzard's TextToSpeechFrame.lua:
+-- "Purged utterances never signal VOICE_CHAT_TTS_PLAYBACK_FINISHED").
 local function engineStopAll(world, handlers)
-    for id, u in pairs(world.active) do
+    for id in pairs(world.active) do
         world.active[id] = nil
-        world.at(world.frame(world.now), function()
-            handlers.finished(id)
-        end)
     end
+    world.engineFreeAt = world.now
+end
+
+-- Sku's rule on the true health: the announcements a monitor that could
+-- read health would make, each with the health it moved to.
+function Sim.ideal(m)
+    local role = Sim.ROLES[m.role]
+    local a = role.minChange / 100
+    local list = {}
+    local ref = m.health
+    for _, ev in ipairs(m.script) do
+        local h = ev[2]
+        if math.abs(h - ref) >= a - 1e-9 then
+            tinsert(list, { t = ev[1], health = h, audible = h < role.start / 100 or h >= 1 })
+            ref = h
+        end
+    end
+    return list
 end
 
 function Sim.run(opts)
@@ -204,29 +242,35 @@ function Sim.run(opts)
             number = spec.number,
             role = spec.role,
             health = spec.health,
+            startHealth = spec.health,
             script = spec.script or {},
             subject = spec.subject,
             lanes = { urgent = {}, normal = {} },
-            truth = {},
             calls = {},
             readings = 0,
             misreads = 0,
             triggers = {},
             announcements = {},
         }
+        m.ideal = Sim.ideal(m)
         tinsert(members, m)
         byUnit[m.unit] = m
     end
-    local result = { members = members, opts = opts }
+    local result = { members = members, opts = opts, respoken = 0, foreignCalls = {}, foreignDelays = {}, heardIds = {} }
     local counter = 0
     local readback
     local handlers = {}
     local queue, queued, pumping = {}, {}, false
 
-    local function audible(m, lane)
+    local function audible(m, lane, quiet)
         local role = Sim.ROLES[m.role]
         local h = m.health
-        if lane == "urgent" then
+        if quiet ~= nil and h >= quiet[1] and h < quiet[2] then
+            return false
+        end
+        if lane == "fire" then
+            return h < role.start / 100 or h >= 1
+        elseif lane == "urgent" then
             return h < role.urgent / 100
         end
         return (h >= role.urgent / 100 and h < role.start / 100) or h >= 1
@@ -241,7 +285,7 @@ function Sim.run(opts)
         -- Every announcement is an engine call, silent or not (volume gates).
         readback:speakOwn(function()
             engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
-        end)
+        end, { member = m, lane = entry.lane })
     end
 
     local function pump()
@@ -277,18 +321,15 @@ function Sim.run(opts)
             return
         end
         local role = Sim.ROLES[m.role]
-        -- As the module in step mode: no delay, only the pause.
-        local delay, pause = 0, role.pause
-        if lane == "urgent" then
-            pause = role.urgentPause
-        end
+        -- As the module with the readback: no delay, no pause.
+        local delay, pause = 0, 0
         local now = world.now / 1000
         local at = GroupHealth.nextFire(now, state.last, delay, pause)
         state.pending = true
         world.after(math.max(0, at - now), function()
             state.pending = false
             -- As the module: nothing new for this lane, nothing said.
-            if not GroupHealth.laneStepNew(state, m.announcedStep) then
+            if not GroupHealth.laneRefNew(state, m.reference, role.minChange) then
                 return
             end
             state.last = world.now / 1000
@@ -296,12 +337,89 @@ function Sim.run(opts)
         end)
     end
 
+    local function readEveryone()
+        for _, m in ipairs(members) do
+            readback:request(m.unit)
+        end
+    end
+
+    -- As the module's check: a member without a reference is read quietly;
+    -- otherwise the number goes out at once, carried by a sample, unless
+    -- the last check is out (then it waits).
+    local check
+    check = function(m)
+        if m.reference == nil then
+            readback:request(m.unit)
+            return
+        end
+        local now = world.now / 1000
+        m.eventAt = m.eventAt or now
+        -- As the module: a second number beside a check still out only
+        -- when the slot line is free (opts.parallel = true: always, an
+        -- experiment; false: never).
+        local out = m.pendingCount or 0
+        -- As the module: a lost sample is followed by a silent re-check.
+        if m.lost ~= nil then
+            if out >= 2 then
+                m.again = true
+                return
+            end
+            local plan = m.lost
+            m.lost = nil
+            m.pendingCount = out + 1
+            m.pending = true
+            m.rechecking = true
+            if not readback:request(m.unit, { plan = plan, recheck = true }) then
+                m.pendingCount = m.pendingCount - 1
+                m.pending = m.pendingCount > 0
+                m.rechecking = false
+                m.lost = plan
+            end
+            return
+        end
+        local second = opts.parallel == true or (opts.parallel == nil and readback:lineFree())
+        if out >= 2 or (out == 1 and (m.rechecking or not second)) then
+            m.again = true
+            return
+        end
+        m.pending = true
+        m.pendingCount = out + 1
+        local accepted = readback:request(m.unit, {
+            carry = function(plan)
+                local quiet = GroupHealth.quietFor(m, plan, Sim.ROLES[m.role].minChange)
+                if quiet == nil then
+                    return 0
+                end
+                -- Remembered to check that the gate and the judge agree.
+                m.carries = m.carries or {}
+                m.carries[world.now] = not (m.health >= quiet[1] and m.health < quiet[2])
+                local heard = nil
+                if audible(m, "fire", quiet) then
+                    heard = { health = m.health, lane = "fire", eventAt = m.eventAt }
+                    tinsert(m.announcements, heard)
+                end
+                m.eventAt = nil
+                -- The number with "<number> full" in one utterance, as the
+                -- module, before the digits. Heard from its start.
+                local id = engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
+                if heard ~= nil then
+                    result.heardIds[id] = heard
+                end
+                return 1
+            end,
+        })
+        if not accepted then
+            m.pendingCount = m.pendingCount - 1
+            m.pending = m.pendingCount > 0
+        end
+    end
+
     -- Each run its own slot line: the addon's shared one would carry the
     -- times of an earlier run.
     local line = GroupHealth.newReadbackLine()
     local function speakSample(text)
         local silence = tonumber(text:match('msec="(%d+)"'))
-        local played = 190 + 0.3314 * silence + world.r.normal(opts.noiseMs or 4)
+        local played = (opts.baseMs or 190) + (opts.slope or 0.3314) * silence + world.r.normal(opts.noiseMs or 4)
         engineSpeak(world, played, handlers)
     end
     readback = GroupHealth.Readback:new({
@@ -318,6 +436,29 @@ function Sim.run(opts)
             m.calls[world.now] = m.health
             return evalPoints(points, m.health)
         end,
+        -- As the module: who goes first when several wait.
+        priority = function(unit)
+            local m = byUnit[unit]
+            if m.reference == nil then
+                return 1000
+            end
+            local role = Sim.ROLES[m.role]
+            local score = m.reference
+            if m.reference < role.urgent then
+                score = score - 200
+            end
+            if m.role == "TANK" then
+                score = score - 30
+            elseif m.role == "HEALER" then
+                score = score - 15
+            end
+            return score
+        end,
+        -- As the module: against the reference, or zooming in to find it.
+        plan = function(unit)
+            local m = byUnit[unit]
+            return GroupHealth.planFor(m, Sim.ROLES[m.role].minChange)
+        end,
         nextCount = function()
             counter = counter + 1
             return counter
@@ -325,20 +466,88 @@ function Sim.run(opts)
         onReading = function(unit, reading)
             local m = byUnit[unit]
             m.readings = m.readings + 1
-            -- Truth: the health when the sample was called.
-            if reading.step ~= trueStep(m.calls[reading.calledMs]) then
+            -- Truth: the band the health was in when the sample was called.
+            if reading.value ~= evalPoints(reading.plan.points, m.calls[reading.calledMs]) then
                 m.misreads = m.misreads + 1
             end
-            if GroupHealth.stepChanged(m, reading.step) then
-                tinsert(m.triggers, { t = world.now / 1000, step = reading.step })
-                wake(m, "urgent")
-                wake(m, "normal")
+            local before = { reference = m.reference, locate = m.locate, band = m.locateBand }
+            local changed = GroupHealth.judge(m, reading, Sim.ROLES[m.role].minChange)
+            -- The gate (heard or not) and the judge must agree, else the
+            -- reference stays after a heard number and the next repeats it.
+            if reading.carried and m.carries ~= nil and m.carries[reading.calledMs] ~= nil then
+                result.carried = (result.carried or 0) + 1
+                if m.carries[reading.calledMs] ~= changed then
+                    result.gateMismatches = (result.gateMismatches or 0) + 1
+                end
             end
+            if changed then
+                tinsert(m.triggers, { t = world.now / 1000, reference = m.reference, health = m.calls[reading.calledMs], plan = reading.plan, band = reading.plan.intervals[reading.value], before = before, calledMs = reading.calledMs, carried = reading.carried })
+            end
+            -- As the module.
+            if reading.carried then
+                m.pendingCount = math.max(0, (m.pendingCount or 1) - 1)
+                m.pending = m.pendingCount > 0
+                if reading.recheck then
+                    m.rechecking = false
+                end
+            end
+            if m.locate and not m.pending then
+                readback:request(unit)
+            end
+            if m.again and not m.pending then
+                m.again = false
+                check(m)
+            end
+        end,
+        rerequest = function(unit)
+            check(byUnit[unit])
+        end,
+        onDiscard = function(unit, why, sample)
+            if not sample.carried then
+                return
+            end
+            local m = byUnit[unit]
+            m.pendingCount = math.max(0, (m.pendingCount or 1) - 1)
+            m.pending = m.pendingCount > 0
+            if sample.recheck then
+                m.rechecking = false
+                m.lost = sample.plan
+            elseif why == "stop" and world.now - sample.calledMs < 400
+                and world.now / 1000 - (m.lastRespeak or -math.huge) > 2 then
+                m.lastRespeak = world.now / 1000
+                result.respoken = result.respoken + 1
+            else
+                m.lost = sample.plan
+            end
+            if not GroupHealth.readbackRetries(why) and why ~= "stop" and m.again then
+                m.again = false
+                check(m)
+            end
+        end,
+        onPurge = function()
+            for _, m in ipairs(members) do
+                m.pending = false
+                m.pendingCount = 0
+                m.again = false
+                m.lost = nil
+                m.rechecking = false
+            end
+            readEveryone()
+        end,
+        onOwnCut = function(tag)
+            result.respoken = result.respoken + 1
+            enqueue(tag.member, tag.lane)
+        end,
+        onFailing = function()
+            result.failingSaid = (result.failingSaid or 0) + 1
+        end,
+        onError = function(err)
+            error(err)
         end,
     })
     -- A second reader on the subjects, woken by the same events, like the
-    -- probe's watch beside the monitor: on the shared line, or (the bug seen
-    -- in game) on a line of its own.
+    -- probe's watch beside the monitor (its default ten percent steps): on
+    -- the shared line, or (the bug seen in game) on a line of its own.
     local second
     if opts.secondReader then
         result.second = { readings = 0, misreads = 0 }
@@ -370,6 +579,12 @@ function Sim.run(opts)
     end
     local readers = { readback, second }
     handlers.started = function(id)
+        if result.heardIds[id] ~= nil then
+            result.heardIds[id].t = world.now / 1000
+        end
+        if result.foreignCalls[id] ~= nil then
+            tinsert(result.foreignDelays, world.now - result.foreignCalls[id])
+        end
         for _, reader in ipairs(readers) do
             reader:onStarted(id)
         end
@@ -380,17 +595,12 @@ function Sim.run(opts)
         end
     end
 
-    -- Health events (UNIT_HEALTH) and the truth timeline.
+    -- Health events (UNIT_HEALTH).
     for _, m in ipairs(members) do
-        tinsert(m.truth, { t = 0, step = trueStep(m.health) })
         for _, ev in ipairs(m.script) do
             world.after(ev[1], function()
                 m.health = ev[2]
-                local step = trueStep(m.health)
-                if step ~= m.truth[#m.truth].step then
-                    tinsert(m.truth, { t = world.now / 1000, step = step })
-                end
-                readback:request(m.unit)
+                check(m)
                 if second ~= nil and m.subject then
                     second:request(m.unit)
                 end
@@ -411,10 +621,13 @@ function Sim.run(opts)
         world.after(world.r.range(range[1], range[2]), tick)
     end
     result.stops, result.interrupts, result.foreign = 0, 0, 0
+    -- Other speech (WowVision's, Blizzard's alerts): how long after its
+    -- call it starts, behind ours in the engine's line.
     if d.foreign then
         every(d.foreign, function()
             result.foreign = result.foreign + 1
-            engineSpeak(world, world.r.range(800, 2000), handlers)
+            local id = engineSpeak(world, world.r.range(800, 2000), handlers)
+            result.foreignCalls[id] = world.now
         end)
     end
     if d.stops then
@@ -434,10 +647,8 @@ function Sim.run(opts)
         end)
     end
 
-    -- The monitor reads everyone once at the start: the baseline.
-    for _, m in ipairs(members) do
-        readback:request(m.unit)
-    end
+    -- The monitor reads everyone once at the start: the reference.
+    readEveryone()
     world.run(duration * 1000 + 3000)
 
     result.stats = readback.stats
@@ -449,58 +660,79 @@ end
 
 -- Scoring ------------------------------------------------------------------------
 
--- A step held at least PERSIST seconds is a meaningful change the monitor
--- must follow: its announced step has to reach it within the segment.
+-- An ideal announcement (heard: below "Speak Below" or at full) whose
+-- health held at least PERSIST seconds (the next ideal one came later) is
+-- followed when one of ours is heard within MATCH seconds after it; the
+-- delay is to the first, until the number starts. One of ours heard with
+-- no ideal announcement in the MATCH seconds before it is extra.
 Sim.PERSIST = 1.0
+Sim.MATCH = 1.5
 
 function Sim.score(result)
-    local duration = result.opts.duration
-    local total = { changes = 0, followed = 0, missed = 0, latencies = {}, triggers = 0, misreads = 0, readings = 0, quietTriggers = 0, heard = 0 }
+    -- A number stopped before it started was never heard.
     for _, m in ipairs(result.members) do
-        m.changes, m.followed, m.missed, m.latencies = 0, 0, 0, {}
-        for i, seg in ipairs(m.truth) do
-            local endT = m.truth[i + 1] ~= nil and m.truth[i + 1].t or duration
-            if i > 1 and endT - seg.t >= Sim.PERSIST then
-                m.changes = m.changes + 1
+        local started = {}
+        for _, a in ipairs(m.announcements) do
+            if a.t ~= nil then
+                tinsert(started, a)
+            end
+        end
+        m.announcements = started
+    end
+    local total = { ideal = 0, followed = 0, missed = 0, extra = 0, latencies = {}, moves = {}, triggers = 0, misreads = 0, readings = 0, heard = 0 }
+    for _, m in ipairs(result.members) do
+        m.followed, m.missed, m.extra, m.meaningful = 0, 0, 0, 0
+        for i, ideal in ipairs(m.ideal) do
+            local nextIdeal = m.ideal[i + 1]
+            if ideal.audible and (nextIdeal == nil or nextIdeal.t - ideal.t >= Sim.PERSIST) then
+                m.meaningful = m.meaningful + 1
                 local hit = nil
-                for _, trig in ipairs(m.triggers) do
-                    if trig.t >= seg.t and trig.t <= endT + 0.3 and trig.step == seg.step then
-                        hit = trig
+                for _, heard in ipairs(m.announcements) do
+                    if heard.t >= ideal.t and heard.t <= ideal.t + Sim.MATCH then
+                        hit = heard
                         break
                     end
                 end
                 if hit ~= nil then
                     m.followed = m.followed + 1
-                    tinsert(m.latencies, hit.t - seg.t)
-                    tinsert(total.latencies, hit.t - seg.t)
+                    tinsert(total.latencies, hit.t - ideal.t)
                 else
-                    -- Already the announced step (a quick flip that went
-                    -- unseen and came back) is not a miss.
-                    local announced = nil
-                    for _, trig in ipairs(m.triggers) do
-                        if trig.t < seg.t then
-                            announced = trig.step
-                        end
-                    end
-                    if announced == seg.step then
-                        m.changes = m.changes - 1
-                    else
-                        m.missed = m.missed + 1
-                    end
+                    m.missed = m.missed + 1
                 end
             end
         end
-        total.changes = total.changes + m.changes
+        for _, heard in ipairs(m.announcements) do
+            local cause = false
+            for _, ideal in ipairs(m.ideal) do
+                if ideal.t <= heard.t and ideal.t >= heard.t - Sim.MATCH then
+                    cause = true
+                    break
+                end
+            end
+            if not cause then
+                m.extra = m.extra + 1
+            end
+        end
+        total.ideal = total.ideal + m.meaningful
         total.followed = total.followed + m.followed
         total.missed = total.missed + m.missed
+        total.extra = total.extra + m.extra
         total.triggers = total.triggers + #m.triggers
         total.misreads = total.misreads + m.misreads
         total.readings = total.readings + m.readings
         total.heard = total.heard + #m.announcements
-        if not m.subject then
-            total.quietTriggers = total.quietTriggers + #m.triggers
+        -- How far the true health moved between our reference moves, in
+        -- thresholds (Sku's rule: 1 or more, ours a little either side).
+        local a = Sim.ROLES[m.role].minChange / 100
+        local last = m.startHealth
+        for _, trig in ipairs(m.triggers) do
+            if trig.health ~= nil then
+                tinsert(total.moves, math.abs(trig.health - last) / a)
+                last = trig.health
+            end
         end
     end
+    table.sort(total.moves)
     table.sort(total.latencies)
     result.total = total
     return result
@@ -512,6 +744,16 @@ local function percentile(list, p)
     end
     return list[math.max(1, math.ceil(#list * p))]
 end
+Sim.percentile = percentile
+
+local function counts(map)
+    local parts = {}
+    for why, n in pairs(map) do
+        tinsert(parts, why .. " " .. n)
+    end
+    table.sort(parts)
+    return #parts > 0 and table.concat(parts, ", ") or "none"
+end
 
 function Sim.report(result)
     local t = result.total
@@ -521,31 +763,29 @@ function Sim.report(result)
         tinsert(lines, string.format(fmt, ...))
     end
     add("%s: %d players, %d fps, %d seconds", result.opts.name, #result.members, result.opts.fps or 60, result.opts.duration)
-    add("  meaningful changes (a new 10 percent step held %.0f s or more): %d, followed %d, missed %d", Sim.PERSIST, t.changes, t.followed, t.missed)
+    add("  Sku's rule on the true health: %d heard announcements that held %.0f s or more; ours heard %d of them, missed %d; %d of ours extra", t.ideal, Sim.PERSIST, t.followed, t.missed, t.extra)
     if #t.latencies > 0 then
-        add("  detection delay after the change: median %.2f s, 90 percent within %.2f s, worst %.2f s", percentile(t.latencies, 0.5), percentile(t.latencies, 0.9), t.latencies[#t.latencies])
+        add("  from the health change until the number starts: median %.2f s, 90 percent within %.2f s, worst %.2f s", percentile(t.latencies, 0.5), percentile(t.latencies, 0.9), t.latencies[#t.latencies])
     end
-    add("  steps read wrong: %d of %d readings; triggers for members whose health stayed in one step: %d", t.misreads, t.readings, t.quietTriggers)
-    local discards = {}
-    for why, n in pairs(s.discarded) do
-        tinsert(discards, why .. " " .. n)
+    add("  bands read wrong: %d of %d readings; numbers heard %d", t.misreads, t.readings, t.heard)
+    if #t.moves > 0 then
+        add("  health moved between our announcements, in minimum changes: least %.2f, median %.2f", t.moves[1], percentile(t.moves, 0.5))
     end
-    table.sort(discards)
-    add("  samples %d, used %d, thrown away: %s; most at once %d", s.samples, s.readings, #discards > 0 and table.concat(discards, ", ") or "none", s.maxInflight)
-    add("  disturbances: %d other utterances, %d stops of all speech, %d interrupts", result.foreign, result.stops, result.interrupts)
+    add("  samples %d, used %d, thrown away: %s; most at once %d", s.samples, s.readings, counts(s.discarded), s.maxInflight)
+    add("  disturbances: %d other utterances, %d stops of all speech, %d interrupts; purges: %s; own speech cut %d, spoken again %d", result.foreign, result.stops, result.interrupts, counts(s.purges), s.ownCut, result.respoken)
     for _, m in ipairs(result.members) do
         if m.subject or #m.triggers > 0 then
             local heard = {}
             for _, a in ipairs(m.announcements) do
                 tinsert(heard, string.format("%.1fs %d%%", a.t, math.floor(a.health * 100 + 0.5)))
             end
-            add("  %s (number %d, %s): %d changes, %d followed, %d missed, %d triggers; heard %d: %s", m.unit, m.number, m.role, m.changes, m.followed, m.missed, #m.triggers, #m.announcements, table.concat(heard, ", "))
+            add("  %s (number %d, %s): %d to follow, %d followed, %d missed, %d extra; heard %d: %s", m.unit, m.number, m.role, m.meaningful, m.followed, m.missed, m.extra, #m.announcements, table.concat(heard, ", "))
         end
     end
     return lines
 end
 
--- The four scenarios ------------------------------------------------------------
+-- The scenarios --------------------------------------------------------------------
 
 local PARTY = {
     { unit = "player", number = 1, role = "HEALER" },
@@ -580,32 +820,62 @@ local function group(base, r, duration, subjects)
     return list
 end
 
+-- Health hovering across a line, up to `width` either side, flipping every second or so.
+function Sim.hover(r, line, width, duration)
+    local events = {}
+    local t, up = 0.5, true
+    while t <= duration do
+        local h = up and r.range(line + 0.005, line + width) or r.range(line - width, line - 0.005)
+        tinsert(events, { t, h })
+        up = not up
+        t = t + r.range(0.8, 1.5)
+    end
+    return events
+end
+
 local DISTURB = { foreign = { 3, 6 }, stops = { 15, 30 }, interrupts = { 20, 40 } }
 
 -- kind "spikes": one member (the first tank) takes strong hits and big heals.
 -- kind "drift": two members change slowly, one drains, one regenerates.
+-- kind "hover": the healer's health flips across the 50 percent line by up
+--   to 3 percent, below their minimum change: nothing to say.
+-- kind "stops": "spikes" with a stop of all speech every 1 to 3 seconds
+--   (a player pressing Ctrl often, target changes).
 function Sim.scenario(kind, size, fps, seed)
     local r = rng(seed or 7)
     local base = size == 10 and RAID or PARTY
     local subjects = {}
-    local duration
-    if kind == "spikes" then
-        duration = 60
+    local duration = 60
+    local disturb = DISTURB
+    local name
+    if kind == "spikes" or kind == "stops" then
         subjects[2] = { health = 1.0, script = Sim.spikes(r, duration) }
+        name = "Strong hits and heals on one member"
+        if kind == "stops" then
+            disturb = { foreign = { 3, 6 }, stops = { 1, 3 }, interrupts = { 20, 40 } }
+            name = name .. ", a stop of all speech every 1 to 3 seconds"
+        end
+    elseif kind == "hover" then
+        -- The healer: the party's first member, the raid's third.
+        local index = size == 10 and 3 or 1
+        subjects[index] = { health = 0.52, script = Sim.hover(r, 0.5, 0.03, duration) }
+        name = "A healer hovering up to 3 percent around the 50 percent line"
     else
         duration = 90
         subjects[3] = { health = 0.98, script = Sim.drift(0.98, -0.012, 2, duration) }
         subjects[4] = { health = 0.32, script = Sim.drift(0.32, 0.010, 2, duration) }
+        name = "Slow changes on two members"
     end
     return {
-        name = (kind == "spikes" and "Scenario 1, strong hits and heals on one member" or "Scenario 2, slow changes on two members")
-            .. (size == 10 and ", raid of 10" or ", party of 5"),
+        name = name .. (size == 10 and ", raid of 10" or ", party of 5"),
         duration = duration,
         fps = fps or 60,
         seed = (seed or 7) + size,
         members = group(base, r, duration, subjects),
-        disturb = DISTURB,
+        disturb = disturb,
     }
 end
+
+Sim.KINDS = { "spikes", "drift", "hover", "stops" }
 
 return Sim
