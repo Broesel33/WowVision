@@ -269,9 +269,7 @@ end
 
 -- Curves ------------------------------------------------------------------------
 
-local function isSecret(value)
-    return issecretvalue ~= nil and issecretvalue(value) == true
-end
+local isSecret = WowVision.secrets.isSecret
 
 local curves = {}
 
