@@ -223,7 +223,13 @@ end
 -- utterances in one frame all played, started one after another about 36
 -- ms apart, the first 34 to 56 ms after the call): each utterance is
 -- prepared after the one before has started, for ENGINE_MS.
-local function engineSpeak(world, playedMs, handlers)
+-- `owner`: who called, as WowVision's speech module sees it ("aside" for
+-- the monitor, "queue" for WowVision's own speech, nil for speech it
+-- cannot see: Blizzard's Combat Audio Alerts).
+local function engineSpeak(world, playedMs, handlers, owner)
+    if handlers.called ~= nil then
+        handlers.called(owner)
+    end
     world.nextId = world.nextId + 1
     local id = world.nextId
     local callMs = world.now
@@ -324,10 +330,11 @@ function Sim.run(opts)
     -- Each run its own slot line: the addon's shared one would carry the
     -- times of an earlier run.
     local line = GroupHealth.newReadbackLine()
+    local startOwner
     local function speakSample(text)
         local silence = tonumber(text:match('msec="(%d+)"'))
         local played = (opts.baseMs or 190) + (opts.slope or 0.3314) * silence + (opts.lateMs or Sim.LATE_MS) + world.r.normal(opts.noiseMs or Sim.SPREAD_MS)
-        engineSpeak(world, played, handlers)
+        engineSpeak(world, played, handlers, "aside")
     end
     -- The monitor's real checks (retail/groupHealth/checks.lua) on the
     -- simulated engine.
@@ -363,7 +370,7 @@ function Sim.run(opts)
                 tinsert(m.announcements, heard)
             end
             m.eventAt = nil
-            local id = engineSpeak(world, Sim.ANNOUNCE_MS, handlers)
+            local id = engineSpeak(world, Sim.ANNOUNCE_MS, handlers, "aside")
             if heard ~= nil then
                 result.heardIds[id] = heard
             end
@@ -387,6 +394,9 @@ function Sim.run(opts)
         end,
         frameMs = function()
             return 1000 / world.fps
+        end,
+        startOwner = function(id)
+            return startOwner(id)
         end,
         onFailing = function()
             result.failingSaid = (result.failingSaid or 0) + 1
@@ -462,7 +472,40 @@ function Sim.run(opts)
         })
     end
     local readers = { readback, second }
+    -- WowVision's speech module, as retail/speech.lua: calls in order, each
+    -- start matched to the oldest call (not sooner than 30 ms after it).
+    local calls, owners = {}, {}
+    handlers.called = function(owner)
+        if owner ~= nil and not opts.noOwners then
+            tinsert(calls, { owner = owner, atMs = world.now })
+        end
+    end
+    handlers.stopped = function()
+        calls = {}
+    end
+    local function resolve(id)
+        if owners[id] == nil then
+            while calls[1] ~= nil and world.now - calls[1].atMs > 2000 do
+                tremove(calls, 1)
+            end
+            local head = calls[1]
+            if head ~= nil and world.now - head.atMs >= 30 then
+                owners[id] = tremove(calls, 1)
+            else
+                owners[id] = false
+            end
+        end
+        return owners[id] or nil
+    end
+    startOwner = function(id)
+        local entry = resolve(id)
+        if entry == nil then
+            return nil
+        end
+        return entry.owner, entry.atMs
+    end
     handlers.started = function(id)
+        resolve(id)
         if result.heardIds[id] ~= nil then
             result.heardIds[id].t = world.now / 1000
         end
@@ -517,14 +560,23 @@ function Sim.run(opts)
     if d.foreign then
         every(d.foreign, function()
             result.foreign = result.foreign + 1
-            local id = engineSpeak(world, world.r.range(800, 2000), handlers)
+            local id = engineSpeak(world, world.r.range(800, 2000), handlers, "queue")
             result.foreignCalls[id] = world.now
+        end)
+    end
+    -- Speech WowVision cannot see (Blizzard's Combat Audio Alerts): it
+    -- shifts the speech module's matching of starts to calls.
+    if d.unseen then
+        every(d.unseen, function()
+            result.foreign = result.foreign + 1
+            engineSpeak(world, world.r.range(600, 1500), handlers, nil)
         end)
     end
     if d.stops then
         every(d.stops, function()
             result.stops = result.stops + 1
             engineStopAll(world, handlers)
+            handlers.stopped()
             for _, reader in ipairs(readers) do
                 reader:onStop()
             end
@@ -537,10 +589,11 @@ function Sim.run(opts)
             result.stops = result.stops + 1
             result.stopSpeaks = result.stopSpeaks + 1
             engineStopAll(world, handlers)
+            handlers.stopped()
             for _, reader in ipairs(readers) do
                 reader:onStop()
             end
-            local id = engineSpeak(world, world.r.range(600, 1500), handlers)
+            local id = engineSpeak(world, world.r.range(600, 1500), handlers, "queue")
             result.foreignCalls[id] = world.now
         end)
     end
@@ -914,9 +967,11 @@ local DISTURB = { foreign = { 3, 6 }, stops = { 15, 30 }, interrupts = { 20, 40 
 -- The first party fight logged in game (WoW: Forever, 2026-10-14, 13:05:12
 -- to 13:08:03, 171 s): 67 stops of all speech, each followed by
 -- WowVision's speech (49 Target Change, 18 UI keys and windows), one every
--- 2.6 s on average. Other speech was not counted then (/wv ghlog counts it
--- since): one every 1 to 3 s is a guess from the samples it spoiled.
-Sim.REAL_FIGHT = { stopSpeak = { 1.5, 3.5 }, foreign = { 1, 3 } }
+-- 2.6 s on average. Other speech was not counted then: one every 1 to 3 s
+-- is a guess from the samples it spoiled (later solo logs: one every 1 to
+-- 2.5 s). Of it, speech WowVision cannot see (Blizzard's Combat Audio
+-- Alerts) is not known; one every 4 to 8 s is a guess.
+Sim.REAL_FIGHT = { stopSpeak = { 1.5, 3.5 }, foreign = { 1, 3 }, unseen = { 4, 8 } }
 
 -- kind "spikes": one member (the first tank) takes strong hits and big heals.
 -- kind "drift": two members change slowly, one drains, one regenerates.

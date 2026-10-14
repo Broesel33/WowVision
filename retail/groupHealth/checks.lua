@@ -72,7 +72,8 @@ GroupHealth.Checks = Checks
 --   silent inside `quiet` ({ low, high } health), and returns how many
 --   utterances it made;
 -- - for the readback (readback.lua): now, after, speak, through,
---   nextCount, onOwnCut, onFailing, onError and optionally line, frameMs;
+--   nextCount, onOwnCut, onFailing, onError and optionally line, frameMs,
+--   startOwner;
 -- - trace(member, what, detail) (optional): diagnostics, see log.lua.
 function Checks:initialize(env)
     self.env = env
@@ -80,6 +81,7 @@ function Checks:initialize(env)
         line = env.line,
         now = env.now,
         frameMs = env.frameMs,
+        startOwner = env.startOwner,
         after = env.after,
         speak = env.speak,
         through = env.through,

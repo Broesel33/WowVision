@@ -697,6 +697,9 @@ function module:ruleChecks()
                 local fps = GetFramerate()
                 return fps ~= nil and fps > 0 and 1000 / fps or nil
             end,
+            startOwner = function(id)
+                return WowVision.base.speech:startOwner(id)
+            end,
             after = C_Timer.After,
             speak = function(text)
                 -- Silent, at the rate the fixed values were measured at.

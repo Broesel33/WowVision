@@ -30,9 +30,23 @@ local pendingStarts = {}
 local asideUtterances = {}
 
 -- `silent`: called at volume 0 (it may wait without anything to hear).
+-- atMs: the call on debugprofilestop's clock, for whoever asks who started
+-- (module:startOwner).
 local function expectStart(owner, silent)
-    tinsert(pendingStarts, { owner = owner, at = GetTime(), silent = silent })
+    tinsert(pendingStarts, { owner = owner, at = GetTime(), atMs = debugprofilestop(), silent = silent })
 end
+
+-- The engine never starts an utterance sooner after its call (34 to 56 ms
+-- measured): a start sooner after the oldest waiting call is not that
+-- call's but someone's who calls the engine without us (Blizzard's Combat
+-- Audio Alerts), and leaves the line as it is.
+local FIRST_START = 0.03
+
+-- Who each recent start belonged to: the call it was matched to (false:
+-- none, someone else's), the last 64.
+local startOwners = {}
+local startOrder = {}
+local START_OWNERS_KEPT = 64
 
 -- Utterances playing now (started, not ended; a stop ends them all, and
 -- a stopped one never reports its end), by id, with when they started.
@@ -85,8 +99,41 @@ local function takeStart()
     while pendingStarts[1] ~= nil and now - pendingStarts[1].at > START_WAIT do
         tremove(pendingStarts, 1)
     end
-    local entry = tremove(pendingStarts, 1)
-    return entry ~= nil and entry.owner or nil
+    local head = pendingStarts[1]
+    if head == nil or now - head.at < FIRST_START then
+        return nil
+    end
+    return tremove(pendingStarts, 1)
+end
+
+-- Matches a start to its call once; whoever sees the start first (this
+-- module's frame or the group health monitor) does it.
+local function resolveStart(id)
+    local known = startOwners[id]
+    if known ~= nil then
+        return known or nil
+    end
+    local entry = takeStart()
+    startOwners[id] = entry or false
+    tinsert(startOrder, id)
+    while #startOrder > START_OWNERS_KEPT do
+        startOwners[tremove(startOrder, 1)] = nil
+    end
+    return entry
+end
+
+-- Who started utterance `id` (call it when its start comes): "queue" (our
+-- queue: WowVision's speech, Blizzard's chat speech), "aside" (beside the
+-- queue: the group health monitor) or nil (no call of ours: Blizzard's
+-- Combat Audio Alerts), and when it was called (debugprofilestop ms).
+-- Matched by order, so speech we cannot see can shift it: the group health
+-- monitor uses it only where the order of the ids confirms it.
+function module:startOwner(id)
+    local entry = resolveStart(id)
+    if entry == nil then
+        return nil
+    end
+    return entry.owner, entry.atMs
 end
 
 local function pollQueue()
@@ -175,7 +222,8 @@ local function frame_OnEvent(frame, event, utteranceID)
         playing[utteranceID] = nil
     end
     if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
-        if takeStart() == "aside" then
+        local entry = resolveStart(utteranceID)
+        if entry ~= nil and entry.owner == "aside" then
             asideUtterances[utteranceID] = true
             return
         end
@@ -256,7 +304,8 @@ function module:speakAside(voice, text, rate, volume)
         volume = 0
     end
     expectStart("aside", volume == 0)
-    oldSpeak(voice, text, rate or 0, volume, true)
+    -- (Returned for the probe: the engine documents no return.)
+    return oldSpeak(voice, text, rate or 0, volume, true)
 end
 
 -- Stops all speech; the game has only one stop, for every utterance at

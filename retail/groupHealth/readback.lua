@@ -117,6 +117,10 @@ local R = {
     -- stopped mostly speaks at once (WowVision's interrupting alerts and
     -- keys), and that start must not fall into our window.
     POST_STOP_MS = 120,
+    -- How long after a slot a start no call of ours matches makes it
+    -- distrust what it left out as WowVision's speech (startEntry): the
+    -- shift shows by the end of the run, well before a sample has played.
+    SHIFT_MS = 1000,
     -- A number of the caller's (two copies and "full") plays well under
     -- this; a stop within it after the call may have cut it.
     NUMBER_MS = 1500,
@@ -568,6 +572,8 @@ GroupHealth.Readback = Readback
 -- onDiscard(unit, why, sample); onNumberCut(unit, sample) when a stop cut
 -- the number of a sample that had already ended; onPurge(why) after a purge, to read
 -- everyone again; onOwnCut(tag) for an own utterance cut by a stop;
+-- startOwner(id) (optional) who started an utterance ("queue": WowVision's
+-- speech queue) and when it was called, see retail/speech.lua;
 -- onFailing() once when the readback fails for long; frameMs() the current
 -- frame time in ms (default 17); onError(err) for an
 -- error in the caller's carry (the sample goes on); line, a slot line of
@@ -876,6 +882,19 @@ function Readback:sampleBatch(batch)
     end)
 end
 
+-- Whether a start of WowVision's queue (called at `calledMs`) can be told
+-- apart from a slot's own starts by the order of the ids alone: called
+-- before the slot, so it starts before any of the slot's; or called after,
+-- so it starts after all of them (the engine starts in call order). Then it
+-- is left out of the slot instead of spoiling it. Anything else (a start
+-- out of that order, speech we cannot see) spoils the slot as before.
+local function queueStartFits(slot, calledMs)
+    if calledMs < slot.t then
+        return slot.starts == 0
+    end
+    return slot.expect > 0 and slot.starts >= slot.expect
+end
+
 -- Every readback hears every start; the line records it once.
 function Readback:startEntry(id)
     local line = self.line
@@ -885,9 +904,36 @@ function Readback:startEntry(id)
     end
     local now = self.env.now()
     entry = { t = now, id = id }
+    local owner, calledMs = nil, nil
+    if self.env.startOwner ~= nil then
+        owner, calledMs = self.env.startOwner(id)
+        if owner == nil then
+            -- A start no call of ours matches: speech we cannot see, which
+            -- may have shifted the matching by one (it took a call's place,
+            -- and every start after it got the call before its own). A
+            -- slot that left out a start as WowVision's lately may have
+            -- left out one of its own: it is not trusted.
+            for _, slot in ipairs(line.slots) do
+                if slot.queueSkips ~= nil and now - slot.t < R.SHIFT_MS then
+                    slot.ambiguous = true
+                    slot.run = nil
+                end
+            end
+        end
+    end
     for i = #line.slots, 1, -1 do
         local slot = line.slots[i]
-        if now >= slot.t and now <= slot.t + (slot.window or R.START_WINDOW_MS) then
+        if now >= slot.t and now <= slot.t + (slot.window or R.START_WINDOW_MS) + R.GRACE_MS then
+            if owner == "queue" and calledMs ~= nil and slot.samples ~= nil and queueStartFits(slot, calledMs) then
+                -- WowVision's own speech, in an order that cannot be ours.
+                entry.queue = true
+                slot.queueSkips = (slot.queueSkips or 0) + 1
+                break
+            end
+            if now > slot.t + (slot.window or R.START_WINDOW_MS) then
+                -- Past the window: not this slot's (the run check looks).
+                break
+            end
             slot.starts = slot.starts + 1
             entry.slot = slot
             entry.order = slot.starts
@@ -958,7 +1004,8 @@ function Readback:slotRun(slot)
     -- slot's call than the engine can): the run may be shifted by one
     -- (someone else's utterance at its start, our last one late).
     local after = self.line.byId[sorted[#sorted].id + 1]
-    if after ~= nil and after.t <= slot.t + slot.window + R.GRACE_MS then
+    -- (A start of WowVision's queue known to come after ours is not.)
+    if after ~= nil and not after.queue and after.t <= slot.t + slot.window + R.GRACE_MS then
         local nextSlot = after.slot
         if nextSlot == nil or (nextSlot ~= slot and after.t < nextSlot.t + R.FIRST_START_MS) then
             return nil, true
