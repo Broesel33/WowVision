@@ -9,9 +9,10 @@
 -- - event: a health event, detail the unit token it came with;
 -- - wait: a check held back, detail why;
 -- - sent: a number went out with a check;
--- - moved: a check found the number was a move (detail: a re-check);
--- - lost: a check was lost (detail: why, re-check);
--- - respeak: something cut by a stop goes out again;
+-- - moved: a check found the number was a move;
+-- - lost: a check was lost (detail: why): read again silently while the
+--   health is unchanged, else the next number is said (again);
+-- - respeak: a death cut by a stop goes out again;
 -- - play: a queue entry plays (detail: the entry).
 
 local module = WowVision.base.groupHealth
@@ -40,6 +41,9 @@ function module:keepLog()
     WowVisionDump = WowVisionDump or {}
     WowVisionDump.groupHealthLog = {
         lines = self.log,
+        -- Since the log went on: the counts below cover the same time.
+        seconds = self.logSince ~= nil and GetTime() - self.logSince or nil,
+        healthEvents = self.healthEvents,
         readback = self.checks ~= nil and self.checks.readback.stats or nil,
         respoken = self.respoken,
         stopSources = self.stopSources,
@@ -64,6 +68,7 @@ local trace = {}
 -- Only events under another token than the member's own: in a raid the
 -- same person may come as raidN and as partyN or player (one check each).
 function trace.event(member, unit)
+    module.healthEvents = (module.healthEvents or 0) + 1
     local state = pending[member] or {}
     pending[member] = state
     state.eventAt = state.eventAt or GetTime()
@@ -88,18 +93,13 @@ function trace.sent(member)
     }
 end
 
-function trace.moved(member, recheck)
+function trace.moved(member)
     local parts = memberParts(member)
     tinsert(parts, "moved, reference now " .. tostring(member.reference))
     -- Heard below "Speak Below", or at full health ("<number> full").
     local heard = member.reference < module:roleSetting(member.role, "startThreshold")
         or (member.reference >= 100 and module.settings.announceFull)
-    local what = heard and "heard" or "silent (above Speak Below)"
-    if recheck then
-        -- The number went out with the lost check, earlier.
-        what = what .. " with a lost check, found by a re-check"
-    end
-    tinsert(parts, what)
+    tinsert(parts, heard and "heard" or "silent (above Speak Below)")
     local state = pending[member]
     if state ~= nil and state.sentAfter ~= nil then
         tinsert(parts, string.format("sent %.2f s after the health event", state.sentAfter))
@@ -112,7 +112,7 @@ end
 
 function trace.lost(member, detail)
     local parts = memberParts(member)
-    tinsert(parts, (detail.recheck and "re-check lost: " or "check lost: ") .. detail.why)
+    tinsert(parts, "check lost: " .. detail)
     append(parts)
 end
 
@@ -205,8 +205,8 @@ local function show()
     if module.checks ~= nil then
         local stats = module.checks.readback.stats
         tinsert(lines, string.format(
-            "Readback: %d samples, %d readings used, thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d",
-            stats.samples, stats.readings, counts(stats.discarded), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0
+            "Readback: %d health events, %d samples, %d readings used, thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d; other speech started %d times",
+            module.healthEvents or 0, stats.samples, stats.readings, counts(stats.discarded), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0, stats.otherStarts
         ))
     end
     if #lines == 0 then
@@ -225,6 +225,14 @@ module:registerCommand({
         local text
         if word == "on" then
             module.logging = true
+            -- The counts start afresh with the log.
+            module.logSince = GetTime()
+            module.healthEvents = 0
+            module.respoken = 0
+            module.stopSources = nil
+            if module.checks ~= nil then
+                module.checks.readback:resetStats()
+            end
             text = "Group health log on"
         elseif word == "off" then
             module.logging = false

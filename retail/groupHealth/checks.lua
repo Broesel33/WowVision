@@ -5,7 +5,7 @@
 -- a simulated engine.
 --
 -- Speak first, check afterwards. The member's reference (the health of
--- their last announcement) is a plain number once known, so the rule is a
+-- the number the player last heard) is a plain number once known, so the rule is a
 -- volume gate: a health event speaks the number at once, silent inside
 -- reference -/+ minimum change (widened to the pitch levels within the
 -- minimum pitch steps), and the game decides whether it is heard.
@@ -13,20 +13,29 @@
 -- the same health and tells afterwards whether the number was a move; then
 -- the reference moves to it.
 --
+-- The reference moves only on a reading of the very health the number
+-- went out at, so only on a number that was really gated open there. A
+-- lost check:
+-- - its number played to its end and no health event came since (health
+--   changes only with an event): a silent re-check with the same plan reads
+--   that same health and tells exactly whether the number was heard;
+-- - a health event came since: the reference stays, and the event's own
+--   number is gated by it (it may repeat the lost one);
+-- - a stop cut its number while it played (also after its sample had
+--   ended): unsure, the next number is said wherever its lane speaks, and
+--   its reading sets the reference afresh.
+-- A move is never swallowed; the price is a number now and then said twice.
+-- (Earlier a re-check waited for the next health event and took the lost
+-- number as heard whenever health had moved by then, and the move went
+-- unsaid: first party fight in game, 2026-10-14.)
+--
 -- Per member: out (checks the readback still has), again (a health event
--- came while two were out: check once more when one is back), lost (the
--- plan of a check whose sample was lost: its number may have been heard,
--- so the next check is a silent re-check with that plan), rechecking.
+-- came while two were out: check once more when one is back), events (health
+-- events so far), recheck (the plan of a lost check to read again silently:
+-- no event since, so the same health), unsure (not known what the player
+-- last heard: the next number is said in any case).
 
 local GroupHealth = WowVision.groupHealth
-
--- A number cut by a stop of all speech this soon after it went out was not
--- heard to its end: the next check speaks it again (gated afresh, so a
--- member who healed back in the meantime stays silent). At most once in
--- RESPEAK_EVERY_MS per member: someone pressing Ctrl again and again must
--- not turn one move into a burst of repeats.
-local RESPEAK_MS = 400
-local RESPEAK_EVERY_MS = 2000
 
 -- Who is read first when several wait for the slot line (lower first): a
 -- member below their urgent threshold, then tanks, then healers, then the
@@ -57,17 +66,20 @@ GroupHealth.Checks = Checks
 --   pitchQuiet(member) (optional) the band of health that sounds less than
 --   the role's minimum pitch steps from the member's reference;
 --   urgent(member) the role's urgent threshold, percent;
+--   speakBelow(member) (optional) the role's "Speak Below" as a fraction:
+--   above it numbers are silent, so moves there leave the reference;
 -- - carry(member, quiet) speaks the member's number straight to the engine,
 --   silent inside `quiet` ({ low, high } health), and returns how many
 --   utterances it made;
 -- - for the readback (readback.lua): now, after, speak, through,
---   nextCount, onOwnCut, onFailing, onError and optionally line;
+--   nextCount, onOwnCut, onFailing, onError and optionally line, frameMs;
 -- - trace(member, what, detail) (optional): diagnostics, see log.lua.
 function Checks:initialize(env)
     self.env = env
     self.readback = GroupHealth.Readback:new({
         line = env.line,
         now = env.now,
+        frameMs = env.frameMs,
         after = env.after,
         speak = env.speak,
         through = env.through,
@@ -80,7 +92,8 @@ function Checks:initialize(env)
             if member == nil then
                 return GroupHealth.locatePlan()
             end
-            return GroupHealth.planFor(member, env.threshold(member), env.pitchQuiet ~= nil and env.pitchQuiet(member) or nil)
+            return GroupHealth.planFor(member, env.threshold(member), env.pitchQuiet ~= nil and env.pitchQuiet(member) or nil,
+                env.speakBelow ~= nil and env.speakBelow(member) or nil)
         end,
         priority = function(unit)
             local member = env.memberFor(unit)
@@ -89,11 +102,15 @@ function Checks:initialize(env)
         rerequest = function(unit)
             self:check(unit)
         end,
+        -- (health events come through Checks:onEvent)
         onReading = function(unit, reading)
-            self:onReading(unit, reading)
+            return self:onReading(unit, reading)
         end,
         onDiscard = function(unit, why, sample)
             self:onDiscard(unit, why, sample)
+        end,
+        onNumberCut = function(unit)
+            self:onNumberCut(unit)
         end,
         onPurge = function()
             self:onPurge()
@@ -107,11 +124,24 @@ function Checks:trace(member, what, detail)
     end
 end
 
--- One silent sample for every member whose reference is not known yet, or
--- still being narrowed down: someone who joined, or everyone after a purge.
-function Checks:readNew()
+-- The members in number order: the same order every time (a table by unit
+-- token walks in an order that changes from run to run).
+function Checks:membersInOrder()
+    local list = {}
     for _, member in pairs(self.env.members()) do
-        if not member.dead and (member.reference == nil or member.locate) and (member.out or 0) == 0 then
+        tinsert(list, member)
+    end
+    table.sort(list, function(a, b)
+        return a.number < b.number
+    end)
+    return list
+end
+
+-- One silent sample for every member whose reference is not known yet:
+-- someone who joined.
+function Checks:readNew()
+    for _, member in ipairs(self:membersInOrder()) do
+        if not member.dead and member.reference == nil and (member.out or 0) == 0 then
             self.readback:request(member.unit)
         end
     end
@@ -120,19 +150,25 @@ end
 -- A check of the member goes out: `opts` as readback:request takes them.
 function Checks:send(member, opts)
     member.out = (member.out or 0) + 1
-    if opts.recheck then
-        member.rechecking = true
-    end
     if self.readback:request(member.unit, opts) then
         return true
     end
     -- Two samples of the member out already: the readback asks again
     -- (rerequest) when one is back.
     member.out = member.out - 1
-    if opts.recheck then
-        member.rechecking = false
-    end
     return false
+end
+
+-- A health event of the unit: health may have changed, so a lost check can
+-- no longer be read again exactly (Checks:onDiscard).
+function Checks:onEvent(unit)
+    local member = self.env.memberFor(unit)
+    if member == nil then
+        return
+    end
+    member.events = (member.events or 0) + 1
+    member.recheck = nil
+    self:check(unit)
 end
 
 -- A health event, or the readback asking for the member again. A member
@@ -153,27 +189,41 @@ function Checks:check(unit)
         return
     end
     local out = member.out or 0
-    if member.lost ~= nil then
+    -- Said in any case next: a re-check of an older number no longer helps.
+    if member.unsure then
+        member.recheck = nil
+    end
+    if member.recheck ~= nil then
         if out >= 2 then
             member.again = true
-            self:trace(member, "wait", "two checks out")
             return
         end
-        local plan = member.lost
-        member.lost = nil
-        if not self:send(member, { plan = plan, recheck = true }) then
-            member.lost = plan
+        local plan = member.recheck
+        member.recheck = nil
+        local events = member.events
+        local opts = {
+            plan = plan,
+            recheck = true,
+            events = events,
+            -- Waiting for the line, a health event may come: then it reads
+            -- another health, and the event's own check takes over. Or a
+            -- stop may cut the number it stands for: then it is said again.
+            valid = function()
+                return member.events == events and not member.unsure
+            end,
+        }
+        if not self:send(member, opts) then
+            member.recheck = plan
         end
         return
     end
-    if out >= 2 or (out == 1 and (member.rechecking or not self.readback:lineFree())) then
+    if out >= 2 or (out == 1 and not self.readback:lineFree()) then
         member.again = true
-        self:trace(member, "wait", (out >= 2 and "two checks out")
-            or (member.rechecking and "a re-check was out")
-            or "its last check was out and the line busy")
+        self:trace(member, "wait", out >= 2 and "two checks out" or "its last check was out and the line busy")
         return
     end
     self:send(member, {
+        events = member.events,
         carry = function(plan)
             if self.env.memberFor(member.unit) ~= member or member.dead then
                 return 0
@@ -185,11 +235,8 @@ function Checks:check(unit)
 end
 
 -- A check is back (read or lost).
-local function checkBack(member, recheck)
+local function checkBack(member)
     member.out = math.max(0, (member.out or 1) - 1)
-    if recheck then
-        member.rechecking = false
-    end
 end
 
 -- Returns true when the reading found a carried number was a move.
@@ -198,18 +245,14 @@ function Checks:onReading(unit, reading)
     if member == nil or member.dead then
         return false
     end
-    local moved = GroupHealth.judge(member, reading, self.env.threshold(member))
+    local moved = GroupHealth.judge(member, reading, self.env.threshold(member), self.env.speakBelow ~= nil and self.env.speakBelow(member) or nil)
     if reading.carried then
-        checkBack(member, reading.recheck)
+        checkBack(member)
         if moved then
-            self:trace(member, "moved", reading.recheck)
+            self:trace(member, "moved")
         end
     end
     if (member.out or 0) == 0 then
-        -- Not located yet: zoom in now, not at the next event.
-        if member.locate then
-            self.readback:request(member.unit)
-        end
         if member.again then
             member.again = false
             self:check(member.unit)
@@ -219,10 +262,9 @@ function Checks:onReading(unit, reading)
 end
 
 -- A sample that carried a number was lost: whether the number was heard is
--- not known. The next check is a silent re-check with the same plan, which
--- moves the reference if it was. Only a number a stop cut right after it
--- went out goes out again (RESPEAK_MS). The readback asks for the member
--- again by itself after a disturbance (readbackRetries, a stop).
+-- not known, so the reference stays. The readback asks for the member
+-- again by itself after a disturbance (readbackRetries, a stop), and that
+-- check speaks again what is still a move.
 function Checks:onDiscard(unit, why, sample)
     if not sample.carried then
         return
@@ -231,30 +273,52 @@ function Checks:onDiscard(unit, why, sample)
     if member == nil then
         return
     end
-    checkBack(member, sample.recheck)
-    self:trace(member, "lost", { why = why, recheck = sample.recheck })
-    local now = self.readback.env.now()
-    if not sample.recheck and why == "stop" and now - sample.calledMs < RESPEAK_MS
-        and now - (member.lastRespeakMs or -math.huge) > RESPEAK_EVERY_MS then
-        member.lastRespeakMs = now
-        self:trace(member, "respeak")
-    else
-        member.lost = sample.plan
+    checkBack(member)
+    if member.reference ~= nil then
+        if (why == "stop" and sample.carriedCut) or why == "timeout" or why == "failed" then
+            -- Its number was cut while it played (or may have been):
+            -- whatever the player heard of it, the next number is said in
+            -- any case (GroupHealth.planFor), and its reading tells what
+            -- the player heard.
+            member.unsure = true
+        elseif not member.unsure and why ~= "older than the last reading" and sample.opts ~= nil and sample.opts.events == member.events then
+            -- Its number played to its end, and no health event came since,
+            -- so the health has not changed: a silent re-check with the
+            -- same plan reads the very health it went out at and tells
+            -- exactly whether it was heard. (A health event since: the
+            -- reference stays and the next number may repeat it.)
+            member.recheck = sample.plan
+        end
     end
+    self:trace(member, "lost", why)
     if not GroupHealth.readbackRetries(why) and why ~= "stop" and member.again then
         member.again = false
         self:check(member.unit)
     end
 end
 
+-- A stop cut a number whose check had already ended (the number plays
+-- longer than its sample): as with a cut check, the next number is said in
+-- any case.
+function Checks:onNumberCut(unit)
+    local member = self.env.memberFor(unit)
+    if member ~= nil and member.reference ~= nil then
+        member.unsure = true
+        member.recheck = nil
+        self:trace(member, "lost", "stop after its reading")
+    end
+end
+
 -- The readback dropped everything (a member stuck failing): every check is
--- gone, and who is not located yet is read again.
+-- gone, and who has no reference yet is read again.
 function Checks:onPurge()
-    for _, member in pairs(self.env.members()) do
+    for _, member in ipairs(self:membersInOrder()) do
+        -- Its checks out may have carried heard numbers.
+        if (member.out or 0) > 0 and member.reference ~= nil then
+            member.unsure = true
+        end
         member.out = 0
         member.again = false
-        member.lost = nil
-        member.rechecking = false
     end
     self:readNew()
 end

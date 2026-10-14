@@ -398,8 +398,6 @@ local function newMember(unit, number, role, old)
     }
     if old ~= nil then
         member.reference = old.reference
-        member.locate = old.locate
-        member.locateBand = old.locateBand
         member.lastRepeat = old.lastRepeat
         member.dead = old.dead
     end
@@ -684,6 +682,9 @@ function module:ruleChecks()
             urgent = function(member)
                 return roleSetting(member.role, "urgentThreshold")
             end,
+            speakBelow = function(member)
+                return GroupHealth.fraction(roleSetting(member.role, "startThreshold"))
+            end,
             pitchQuiet = function(member)
                 local _, _, levels = self:profile()
                 return GroupHealth.pitchQuiet(levels, member.reference, roleSetting(member.role, "minPitchSteps"))
@@ -692,6 +693,10 @@ function module:ruleChecks()
                 return self:announce(member, "change", quiet, true)
             end,
             now = debugprofilestop,
+            frameMs = function()
+                local fps = GetFramerate()
+                return fps ~= nil and fps > 0 and 1000 / fps or nil
+            end,
             after = C_Timer.After,
             speak = function(text)
                 -- Silent, at the rate the fixed values were measured at.
@@ -761,8 +766,6 @@ function module:onHealth(unit)
             -- Dead is a reference of 0: the resurrection is a change,
             -- heard whatever health it brings.
             member.reference = 0
-            member.locate = false
-            member.locateBand = nil
             if self.settings.announceDeaths and not self:silenced() then
                 self:enqueue(member, "dead")
             end
@@ -775,7 +778,7 @@ function module:onHealth(unit)
     end
     local checks = self:ruleChecks()
     if checks ~= nil then
-        checks:check(unit)
+        checks:onEvent(unit)
     else
         self:enqueue(member, "change")
     end

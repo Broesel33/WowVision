@@ -2,8 +2,17 @@
 -- (retail/groupHealth/readback.lua): its pure parts (plans, decoding, Sku's
 -- rule), and the offline scenarios of tools/groupHealthSim.lua (party of 5
 -- and raid of 10; strong hits on one member, slow changes on two, a healer
--- hovering at a line, stops of all speech) at 60 and 30 frames per second.
+-- hovering at a line, stops of all speech, everyone hit hard, everyone
+-- under moderate damage with the disturbances of the fight logged in game)
+-- at 60 and 30 frames per second.
 -- tools/group-health-sim.lua prints the same scenarios as a report.
+--
+-- The scenarios are judged by what the player has: how long the last
+-- number heard of a member is out of date (Sim.staleness), set beside Sku
+-- on the same health (Sim.sku). The bars below are what the monitor
+-- reached on 2026-10-14 with some room: they keep it from getting worse.
+-- Sku's own figures are in each message; the bar for "as precise as Sku"
+-- is the user's to set.
 
 local testRunner = WowVision.testing.testRunner
 local GroupHealth = WowVision.groupHealth
@@ -16,12 +25,12 @@ local function played(level)
 end
 
 -- A plan of the caller's own: ten percent steps plus full, base 4.
-local function stepPlan()
+local function stepPlan(layout)
     local points = {}
     for k = 0, 10 do
         tinsert(points, { k / 10, k })
     end
-    return GroupHealth.readbackPlan("steps", 4, points)
+    return GroupHealth.readbackPlan("steps", 4, points, { layout = layout })
 end
 
 local function evaluate(points, x)
@@ -36,14 +45,16 @@ end
 
 -- What a sample of `health` reads under `plan`, through the fixed line.
 local function readAt(plan, health)
-    local function level(digit)
-        return (evaluate(plan.digitPoints[digit], health) - R.SILENCE_OFFSET) / R.LEVEL_SILENCE
+    local times = {}
+    for digit = 1, plan.digitCount do
+        local level = (evaluate(plan.digitPoints[digit], health) - R.SILENCE_OFFSET) / R.LEVEL_SILENCE
+        times[digit] = played(level)
     end
-    return GroupHealth.readbackValue(plan, played(level(1)), played(level(2)))
+    return GroupHealth.readbackValue(plan, times[1], times[2])
 end
 
 -- A reading of a sample that carried a number (a health event's), and of
--- a plain one (zooming in, a roster check).
+-- a plain one (a new member).
 local function reading(plan, health)
     return { plan = plan, value = readAt(plan, health), carried = true }
 end
@@ -52,32 +63,54 @@ local function plain(plan, health)
     return { plan = plan, value = readAt(plan, health) }
 end
 
+local levels = GroupHealth.pitchLevels(GroupHealth.voices.fallback)
+
 local PLANS = {
     { "steps", stepPlan() },
+    { "steps, two digits", stepPlan("pair") },
     { "locate", GroupHealth.locatePlan() },
+    { "zoom, two digits", GroupHealth.zoomPlan(0, 100, "pair") },
 }
-for _, case in ipairs({ { 100, 5 }, { 60, 10 }, { 50, 20 }, { 12, 10 }, { 0, 10 }, { 95, 30 }, { 3, 2 } }) do
-    tinsert(PLANS, { "change " .. case[1] .. "/" .. case[2], GroupHealth.changePlan(case[1], case[2]) })
+for _, case in ipairs({ { 100, 5, 0.9 }, { 60, 10, 0.8 }, { 50, 20, 0.7 }, { 12, 10, 0.8 }, { 0, 10, 0.8 }, { 95, 30, 1 }, { 3, 2, 0.7 }, { 87, 5, 0.9, 1 } }) do
+    local quiet = case[4] ~= nil and GroupHealth.pitchQuiet(levels, case[1], case[4]) or nil
+    tinsert(PLANS, { "change " .. case[1] .. "/" .. case[2], GroupHealth.changePlan(case[1], case[2], quiet, case[3]) })
+    tinsert(PLANS, { "unsure " .. case[1], GroupHealth.unsurePlan(case[1], case[3]) })
+end
+
+-- Pooled over the fights of a list.
+local function pooled(list, key)
+    local n = 0
+    for _, result in ipairs(list) do
+        n = n + result.total[key]
+    end
+    return n
+end
+
+-- Share of member-time the last number heard was out of date: ours, Sku's.
+local function outdated(list)
+    local seconds = 0
+    for _, result in ipairs(list) do
+        seconds = seconds + result.opts.duration * #result.members
+    end
+    return pooled(list, "outdated") / seconds, pooled(list, "skuOutdated") / seconds
 end
 
 -- Of the numbers heard, how many repeat the one before: health less than
 -- half a minimum change away from the member's last heard number. Lost
--- samples (the number goes out again) and moves while a member is being
--- located do that.
-local function repeatShare(result)
-    local list = result.members ~= nil and { result } or result
+-- checks (the number goes out again) and numbers cut by a stop do that.
+local function repeatShare(list)
     local heard, repeats = 0, 0
     for _, one in ipairs(list) do
         for _, m in ipairs(one.members) do
-        local a = Sim.ROLES[m.role].minChange / 100
-        local last = nil
-        for _, x in ipairs(m.announcements) do
-            heard = heard + 1
-            if last ~= nil and math.abs(x.health - last) < a / 2 then
-                repeats = repeats + 1
+            local a = Sim.ROLES[m.role].minChange / 100
+            local last = nil
+            for _, x in ipairs(m.announcements) do
+                heard = heard + 1
+                if last ~= nil and math.abs(x.health - last) < a / 2 then
+                    repeats = repeats + 1
+                end
+                last = x.health
             end
-            last = x.health
-        end
         end
     end
     return heard > 0 and repeats / heard or 0
@@ -92,9 +125,7 @@ local function scenario(kind, size, fps, seed)
     return results[key]
 end
 
--- Three fights of a kind: one fight alone swings widely (a raid of 10
--- follows 36 to 73 percent of strong hits per fight), so a share is judged
--- over all three.
+-- Three fights of a kind, judged together: one alone swings widely.
 local function fights(kind, size, fps)
     local list = {}
     for seed = 7, 9 do
@@ -103,28 +134,9 @@ local function fights(kind, size, fps)
     return list
 end
 
-local function followedShare(list)
-    local followed, ideal = 0, 0
-    for _, result in ipairs(list) do
-        followed = followed + result.total.followed
-        ideal = ideal + result.total.ideal
-    end
-    return followed / ideal, followed .. " of " .. ideal .. " followed"
-end
-
-local function medianDelay(list)
-    local latencies = {}
-    for _, result in ipairs(list) do
-        for _, latency in ipairs(result.total.latencies) do
-            tinsert(latencies, latency)
-        end
-    end
-    return Sim.percentile(latencies, 0.5)
-end
-
 local suite = {
     ["readback: the fixed values read every level back to itself"] = function(t)
-        for level = 0, 3 do
+        for level = 0, 16 do
             local raw = GroupHealth.readbackRaw(played(level))
             t:assertTrue(math.abs(raw - level) < 0.15, "level " .. level .. " reads " .. raw)
         end
@@ -143,19 +155,59 @@ local suite = {
         end
     end,
 
-    ["readback: no digit plays longer than about half a second"] = function(t)
+    ["readback: one utterance plays under two seconds, \"moved less\" the shortest"] = function(t)
         for _, case in ipairs(PLANS) do
             for _, digits in ipairs(case[2].digitPoints) do
                 for _, point in ipairs(digits) do
-                    t:assertTrue(point[2] <= R.SILENCE_OFFSET + 3 * R.LEVEL_SILENCE, case[1])
+                    t:assertTrue(point[2] <= R.SILENCE_OFFSET + 16 * R.LEVEL_SILENCE, case[1])
                 end
             end
         end
-        t:assertTrue(played(3) < 530)
+        t:assertTrue(played(16) < 1850)
+        t:assertEqual(readAt(GroupHealth.changePlan(60, 10, nil, 0.8), 0.6), 0)
     end,
 
-    ["change plan: the middle band is exactly the reference -/+ the threshold"] = function(t)
-        local plan = GroupHealth.changePlan(60, 10)
+    ["readback: the background's fixed 462 ms is thrown away, not read as a level"] = function(t)
+        for _, case in ipairs(PLANS) do
+            local value, why = GroupHealth.readbackValue(case[2], 462, 461)
+            t:assertNil(value, case[1])
+            t:assertEqual(why, "game in the background")
+        end
+        -- A real level 2 pair is still read; one utterance has no level 2.
+        t:assertEqual(GroupHealth.readbackValue(stepPlan("pair"), played(2), played(2)), 10)
+        t:assertEqual(GroupHealth.readbackValue(stepPlan(), played(3)), 2)
+    end,
+
+    ["readback: two digits in the wrong order or between levels never pass"] = function(t)
+        -- Under the step plan 0 and 3 is step 3; swapped it is out of range.
+        local plan = stepPlan("pair")
+        t:assertEqual(GroupHealth.readbackValue(plan, played(0), played(3)), 3)
+        t:assertNil(GroupHealth.readbackValue(plan, played(3), played(0)))
+        local value, why = GroupHealth.readbackValue(plan, played(1) + 50, played(0))
+        t:assertNil(value)
+        t:assertEqual(why, "between levels")
+        value, why = GroupHealth.readbackValue(stepPlan(), played(4) + 50)
+        t:assertNil(value)
+        t:assertEqual(why, "between levels")
+    end,
+
+    ["readback: every padding has the same length and no two are alike"] = function(t)
+        -- Characters, not bytes: a no-break space is two bytes, a space one.
+        local function chars(s)
+            return select(2, s:gsub("[^\128-\191]", ""))
+        end
+        local seen = {}
+        local length = chars(GroupHealth.readbackPad(0))
+        for n = 0, 2000 do
+            local pad = GroupHealth.readbackPad(n)
+            t:assertEqual(chars(pad), length)
+            t:assertNil(seen[pad])
+            seen[pad] = true
+        end
+    end,
+
+    ["change plan: \"moved less\" is exactly the reference -/+ the threshold"] = function(t)
+        local plan = GroupHealth.changePlan(60, 10, nil, 0.8)
         local middle = readAt(plan, 0.6)
         t:assertEqual(readAt(plan, 0.5), middle)
         t:assertEqual(readAt(plan, 0.699), middle)
@@ -163,19 +215,64 @@ local suite = {
         t:assertTrue(readAt(plan, 0.70) ~= middle)
     end,
 
-    ["change plan: \"moved less\" plays shortest, the nearest moves next"] = function(t)
-        local plan = GroupHealth.changePlan(60, 10)
-        local function longer(health)
-            local value = readAt(plan, health)
-            return math.max(math.floor(value / plan.base), value % plan.base)
+    ["change plan: every heard band is narrow enough to place the member at once"] = function(t)
+        for reference = 0, 100 do
+            for _, threshold in ipairs({ 2, 5, 10, 20, 30, 50 }) do
+                for _, speakBelow in ipairs({ 0.5, 0.7, 0.8, 0.9, 1 }) do
+                    for steps = 0, 3 do
+                        local quiet = GroupHealth.pitchQuiet(levels, reference, steps)
+                        local plan = GroupHealth.changePlan(reference, threshold, quiet, speakBelow)
+                        local where = reference .. "/" .. threshold .. "/" .. speakBelow .. "/" .. steps
+                        t:assertTrue(#plan.points <= 16, where .. ": " .. #plan.points .. " bands")
+                        for _, point in ipairs(plan.points) do
+                            local band = plan.intervals[point[2]]
+                            local heard = band[2] <= speakBelow + 1e-9
+                            local outside = band[2] <= plan.quiet[1] + 1e-9 or band[1] >= plan.quiet[2] - 1e-9
+                            -- At most 8 percent wide: the reference within 4 of
+                            -- the heard health, finer than a pitch level (about 7).
+                            if heard and outside then
+                                t:assertTrue(band[2] - band[1] <= 0.08 + 1e-9, where .. ": band " .. band[1] .. " to " .. band[2])
+                            end
+                        end
+                    end
+                end
+            end
         end
-        t:assertEqual(readAt(plan, 0.6), 0)
-        t:assertEqual(longer(0.49), 1)
-        t:assertEqual(longer(0.71), 1)
+    end,
+
+    ["change plan: health above Speak Below is one band, as a move there is silent"] = function(t)
+        local plan = GroupHealth.changePlan(40, 20, nil, 0.7)
+        t:assertEqual(readAt(plan, 0.71), readAt(plan, 0.99))
+        t:assertTrue(readAt(plan, 0.69) ~= readAt(plan, 0.71))
+    end,
+
+    ["change plan: full health is a band of its own below a full reference"] = function(t)
+        local plan = GroupHealth.changePlan(80, 10, nil, 0.9)
+        local band = plan.intervals[readAt(plan, 1)]
+        t:assertEqual(band[1], 1)
+        t:assertEqual(band[2], 1)
+        -- At a full reference full health is simply "moved less".
+        local full = GroupHealth.changePlan(100, 10, nil, 0.9)
+        t:assertEqual(readAt(full, 1), readAt(full, 0.95))
+        -- "Moved less" reaching exactly 100 (a tank's pitch step from 87):
+        -- the gate hears full health, so the plan must not call it "moved
+        -- less" (seen in the simulation: "full" heard, the reference left).
+        local tank = GroupHealth.changePlan(87, 5, GroupHealth.pitchQuiet(levels, 87, 1), 0.9)
+        band = tank.intervals[readAt(tank, 1)]
+        t:assertEqual(band[1], 1)
+        t:assertEqual(evaluate(GroupHealth.gatePoints(1, 2, tank.quiet), 1), 100)
+    end,
+
+    ["unsure plan: no \"moved less\", the gate is open wherever the lane speaks"] = function(t)
+        local plan = GroupHealth.unsurePlan(40, 0.8)
+        local points = GroupHealth.gatePoints(0, 0.8, plan.quiet)
+        for percent = 0, 79 do
+            t:assertEqual(evaluate(points, percent / 100), 100, percent .. " percent")
+        end
     end,
 
     ["gate: Sku's rule as a volume gate, silent exactly in the quiet band"] = function(t)
-        local plan = GroupHealth.changePlan(60, 10)
+        local plan = GroupHealth.changePlan(60, 10, nil, 0.8)
         local points = GroupHealth.gatePoints(0, 0.8, plan.quiet)
         t:assertEqual(evaluate(points, 0.49), 100)
         t:assertEqual(evaluate(points, 0.5), 0)
@@ -186,6 +283,87 @@ local suite = {
         -- Full health: a gate of its own, heard only from far enough away.
         t:assertEqual(evaluate(GroupHealth.gatePoints(1, 2, plan.quiet), 1), 100)
         t:assertEqual(evaluate(GroupHealth.gatePoints(1, 2, GroupHealth.changePlan(95, 10).quiet), 1), 0)
+    end,
+
+    ["rule: the first reading only sets the reference; above Speak Below it is full"] = function(t)
+        local member = {}
+        t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.locatePlan(), 0.6), 10, 0.8))
+        t:assertTrue(math.abs(member.reference - 60) <= 3.2, "reference " .. member.reference)
+        -- Nothing heard and above Speak Below: the player takes the member
+        -- for healthy, as Sku starts everyone at full.
+        member = {}
+        t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.locatePlan(), 0.86), 10, 0.8))
+        t:assertEqual(member.reference, 100)
+    end,
+
+    ["rule: less than the minimum change says nothing, the minimum change announces"] = function(t)
+        local member = { reference = 60 }
+        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10, nil, 0.8), 0.52), 10, 0.8))
+        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10, nil, 0.8), 0.68), 10, 0.8))
+        t:assertEqual(member.reference, 60)
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10, nil, 0.8), 0.49), 10, 0.8))
+        -- The new reference: the middle of a narrow band.
+        t:assertTrue(math.abs(member.reference - 49) <= 3, "reference " .. member.reference)
+    end,
+
+    ["rule: small moves add up, as in Sku"] = function(t)
+        local member = { reference = 80 }
+        for _, health in ipairs({ 0.77, 0.74, 0.72 }) do
+            t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(member.reference, 10, nil, 0.9), health), 10, 0.9))
+        end
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(member.reference, 10, nil, 0.9), 0.69), 10, 0.9))
+    end,
+
+    ["rule: the reference is what the player last heard, a move above Speak Below leaves it"] = function(t)
+        -- Heard at 40, healed to 85 (silent above 70), back down to 62:
+        -- 22 percent from what the player heard, so it is said.
+        local member = { reference = 40 }
+        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(40, 20, nil, 0.7), 0.85), 20, 0.7))
+        t:assertEqual(member.reference, 40)
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(40, 20, nil, 0.7), 0.62), 20, 0.7))
+    end,
+
+    ["rule: unsure, the next heard number sets the reference and ends it"] = function(t)
+        local member = { reference = 40, unsure = true }
+        -- Above Speak Below nothing is heard: still unsure.
+        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.planFor(member, 10, nil, 0.8), 0.9), 10, 0.8))
+        t:assertTrue(member.unsure)
+        -- Heard right at the old reference: known again.
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.planFor(member, 10, nil, 0.8), 0.41), 10, 0.8))
+        t:assertFalse(member.unsure)
+        t:assertTrue(math.abs(member.reference - 41) <= 3, "reference " .. member.reference)
+    end,
+
+    ["rule: a plain sample never moves the reference"] = function(t)
+        local member = { reference = 50 }
+        t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.changePlan(50, 10), 0.3), 10))
+        t:assertEqual(member.reference, 50)
+    end,
+
+    ["rule: a carried sample is judged by the gate its number went out behind"] = function(t)
+        -- The number went out around 60; another reading moved the
+        -- reference to 50 meanwhile. 0.49 is outside 60 -/+ 10: heard.
+        local member = { reference = 50 }
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.49), 10))
+    end,
+
+    ["rule: with a pitch step, a tank's move inside one pitch level stays silent"] = function(t)
+        local quiet = GroupHealth.pitchQuiet(levels, 61, 1)
+        -- 61 to 66: five percent, the tank's minimum change, same pitch.
+        local plan = GroupHealth.changePlan(61, 5, quiet, 0.9)
+        t:assertFalse(GroupHealth.judge({ reference = 61 }, reading(plan, 0.66), 5, 0.9))
+        -- 61 to 68: the next pitch level.
+        t:assertTrue(GroupHealth.judge({ reference = 61 }, reading(plan, 0.68), 5, 0.9))
+        -- 61 to 55: a lower level, and more than five percent.
+        t:assertTrue(GroupHealth.judge({ reference = 61 }, reading(plan, 0.55), 5, 0.9))
+        -- The gate keeps silent exactly what the judge calls "moved less".
+        t:assertEqual(plan.quiet[2], quiet[2])
+        t:assertTrue(math.abs(plan.quiet[1] - 0.56) < 1e-9)
+    end,
+
+    ["rule: after a death (reference 0) the resurrection announces"] = function(t)
+        local member = { reference = 0 }
+        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(0, 10, nil, 0.8), 0.35), 10, 0.8))
     end,
 
     ["speak first: a hit on a quiet member is heard at once"] = function(t)
@@ -205,155 +383,19 @@ local suite = {
         t:assertTrue(heard[1].t - 5 < 0.15, "heard after " .. (heard[1].t - 5))
     end,
 
-    ["change plan: full health is a band of its own below a full reference"] = function(t)
-        local plan = GroupHealth.changePlan(80, 10)
-        local band = plan.intervals[readAt(plan, 1)]
-        t:assertEqual(band[1], 1)
-        t:assertEqual(band[2], 1)
-        -- At a full reference full health is simply "moved less".
-        local full = GroupHealth.changePlan(100, 10)
-        t:assertEqual(readAt(full, 1), readAt(full, 0.95))
-    end,
-
-    ["readback: digits in the wrong order or between levels never pass"] = function(t)
-        -- Under the step plan 0 and 3 is step 3; swapped it is out of range.
-        local plan = stepPlan()
-        t:assertEqual(GroupHealth.readbackValue(plan, played(0), played(3)), 3)
-        t:assertNil(GroupHealth.readbackValue(plan, played(3), played(0)))
-        local value, why = GroupHealth.readbackValue(plan, played(1) + 50, played(0))
-        t:assertNil(value)
-        t:assertEqual(why, "between levels")
-    end,
-
-    ["readback: the background's fixed 462 ms is thrown away, not read as level 2"] = function(t)
-        for _, case in ipairs(PLANS) do
-            local value, why = GroupHealth.readbackValue(case[2], 462, 461)
-            t:assertNil(value, case[1])
-            t:assertEqual(why, "game in the background")
-        end
-        -- A real level 2 pair is still read.
-        t:assertEqual(GroupHealth.readbackValue(stepPlan(), played(2), played(2)), 10)
-    end,
-
-    ["readback: every padding has the same length and no two are alike"] = function(t)
-        -- Characters, not bytes: a no-break space is two bytes, a space one.
-        local function chars(s)
-            return select(2, s:gsub("[^\128-\191]", ""))
-        end
-        local seen = {}
-        local length = chars(GroupHealth.readbackPad(0))
-        for n = 0, 2000 do
-            local pad = GroupHealth.readbackPad(n)
-            t:assertEqual(chars(pad), length)
-            t:assertNil(seen[pad])
-            seen[pad] = true
-        end
-    end,
-
-    ["rule: the first reading only sets the reference"] = function(t)
-        local member = {}
-        t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.locatePlan(), 0.7), 10))
-        t:assertTrue(math.abs(member.reference - 70) <= 3.2, "reference " .. member.reference)
-    end,
-
-    ["rule: less than the minimum change says nothing, the minimum change announces"] = function(t)
-        local member = { reference = 60 }
-        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.52), 10))
-        t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.68), 10))
-        t:assertEqual(member.reference, 60)
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.49), 10))
-        -- The new reference: the middle of a quarter-threshold band, within 1.25.
-        t:assertTrue(math.abs(member.reference - 49) <= 1.25, "reference " .. member.reference)
-        t:assertFalse(member.locate)
-    end,
-
-    ["rule: small moves add up, as in Sku"] = function(t)
-        local member = { reference = 80 }
-        for _, health in ipairs({ 0.77, 0.74, 0.72 }) do
-            t:assertFalse(GroupHealth.judge(member, reading(GroupHealth.changePlan(member.reference, 10), health), 10))
-        end
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(member.reference, 10), 0.69), 10))
-    end,
-
-    ["rule: a jump past the outer bands announces, then zooming in settles quietly within a quarter threshold"] = function(t)
-        local member = { reference = 100 }
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(100, 5), 0.4), 5))
-        local zooms = 0
-        while member.locate do
-            zooms = zooms + 1
-            t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.planFor(member, 5), 0.4), 5))
-        end
-        t:assertTrue(zooms <= 2, zooms .. " zooms")
-        t:assertTrue(math.abs(member.reference - 40) <= 1.25, "reference " .. member.reference)
-    end,
-
-    ["rule: a new member is found in at most two zooms, quietly"] = function(t)
-        for _, health in ipairs({ 0.03, 0.37, 0.5, 0.86, 1 }) do
-            local member = {}
-            local samples = 0
-            repeat
-                samples = samples + 1
-                t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.planFor(member, 10), health), 10))
-            until not member.locate
-            t:assertTrue(samples <= 2, samples .. " samples")
-            t:assertTrue(math.abs(member.reference - health * 100) <= 2.5, health .. ": reference " .. member.reference)
-        end
-    end,
-
-    ["rule: while locating, a reading outside the jump's band is a new move"] = function(t)
-        local member = { reference = 100 }
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(100, 5), 0.4), 5))
-        -- Healed back to full before the zoom sample: the band above the zoom.
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.planFor(member, 5), 1), 5))
-        -- Zooming into that band pins it down, quietly.
-        local zooms = 0
-        while member.locate do
-            zooms = zooms + 1
-            t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.planFor(member, 5), 1), 5))
-        end
-        t:assertTrue(zooms <= 2, zooms .. " zooms")
-        t:assertTrue(member.reference >= 99, "reference " .. member.reference)
-    end,
-
-    ["rule: a plain sample that sees a move leaves the reference to the move's own number"] = function(t)
-        local member = { reference = 50 }
-        t:assertFalse(GroupHealth.judge(member, plain(GroupHealth.changePlan(50, 10), 0.3), 10))
-        t:assertEqual(member.reference, 50)
-    end,
-
-    ["rule: a carried sample is judged by the gate its number went out behind"] = function(t)
-        -- The number went out around 60; another reading moved the
-        -- reference to 50 meanwhile. 0.49 is outside 60 -/+ 10: heard.
-        local member = { reference = 50 }
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(60, 10), 0.49), 10))
-    end,
-
-    ["rule: with a pitch step, a tank's move inside one pitch level stays silent"] = function(t)
-        local levels = GroupHealth.pitchLevels(GroupHealth.voices.fallback)
-        local quiet = GroupHealth.pitchQuiet(levels, 61, 1)
-        -- 61 to 66: five percent, the tank's minimum change, same pitch.
-        local plan = GroupHealth.changePlan(61, 5, quiet)
-        t:assertFalse(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.66), 5))
-        -- 61 to 68: the next pitch level.
-        t:assertTrue(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.68), 5))
-        -- 61 to 55: a lower level, and more than five percent.
-        t:assertTrue(GroupHealth.judge({ reference = 61, locate = false }, reading(plan, 0.55), 5))
-        -- The gate keeps silent exactly what the judge calls "moved less".
-        t:assertEqual(plan.quiet[2], quiet[2])
-        t:assertTrue(math.abs(plan.quiet[1] - 0.56) < 1e-9)
-    end,
-
-    ["rule: after a death (reference 0) the resurrection announces"] = function(t)
-        local member = { reference = 0, locate = false }
-        t:assertTrue(GroupHealth.judge(member, reading(GroupHealth.changePlan(0, 10), 0.35), 10))
-    end,
-
     ["a voice that does not fit the fixed values: stuck purges, and the failure is said once"] = function(t)
         local opts = Sim.scenario("spikes", 5, 60)
         opts.baseMs = 290
         local result = Sim.run(opts)
         t:assertEqual(result.failingSaid, 1)
         t:assertTrue((result.stats.purges.stuck or 0) >= 1, "no stuck purge")
+    end,
+
+    ["the simulation runs the same every time"] = function(t)
+        local a = Sim.run(Sim.scenario("party", 5, 60, 7)).total
+        local b = Sim.run(Sim.scenario("party", 5, 60, 7)).total
+        t:assertEqual(a.outdated, b.outdated)
+        t:assertEqual(a.heard, b.heard)
     end,
 }
 
@@ -372,48 +414,51 @@ for _, kind in ipairs({ "spikes", "drift" }) do
     end
 end
 
+-- The bars per scenario (party of 5, raid of 10): out of date at most,
+-- repeats at most. Measured 2026-10-14 at 60 / 30 fps, three fights each
+-- (Sku in brackets):
+-- - party (the fight logged in game): 8.8 / 8.6 percent (0.8 / 1.2), raid
+--   9.1 / 9.3 (1.3 / 1.6); repeats 26 to 35 percent.
+-- - spikes: 6.8 / 7.1 (0.6 / 0.9), raid 3.8 / 4.0; repeats 4 to 9.
+-- - stops: 6.9 / 8.4, raid 4.3 / 4.5; repeats 14 to 18.
+-- - fight (everyone hit hard): 25.5 / 27.3 (9.3 / 10.1), raid 31.8 / 31.2
+--   (25.0 / 25.2); repeats 21 to 26.
+-- - drift: 0.8 / 0.8, raid 1.8 / 2.2; repeats up to 19.
+-- (The code before 2026-10-14 had the party at 19.5 percent, raid 28.6,
+-- with 15 and 37 moves taken as said without their number.)
+local BARS = {
+    party = { [5] = 0.10, [10] = 0.12, repeats = 0.40 },
+    spikes = { [5] = 0.085, [10] = 0.05, repeats = 0.12 },
+    stops = { [5] = 0.10, [10] = 0.06, repeats = 0.25 },
+    fight = { [5] = 0.30, [10] = 0.36, repeats = 0.30 },
+    drift = { [5] = 0.015, [10] = 0.03, repeats = 0.25 },
+}
+
 for _, fps in ipairs({ 60, 30 }) do
     for _, size in ipairs({ 5, 10 }) do
         local where = string.format("%d players, %d fps", size, fps)
-        suite["scenario slow changes, " .. where .. ": announced after about the minimum change, nothing misread"] = function(t)
-            local total = scenario("drift", size, fps).total
-            t:assertEqual(total.misreads, 0)
-            t:assertTrue(#total.moves > 0, "nothing announced")
-            t:assertTrue(total.moves[1] >= 0.9, "an announcement after a move of " .. total.moves[1])
-            t:assertTrue(Sim.percentile(total.moves, 0.5) <= 1.3, "median move " .. Sim.percentile(total.moves, 0.5))
-        end
-        suite["scenario strong hits, " .. where .. ": fast, nothing misread, few repeats"] = function(t)
-            local list = fights("spikes", size, fps)
-            for _, result in ipairs(list) do
-                local total = result.total
-                t:assertEqual(total.misreads, 0)
-                t:assertTrue(total.extra <= 2, total.extra .. " extra")
-                t:assertTrue((result.carried or 0) > 0, "no number went out")
-                t:assertEqual(result.gateMismatches or 0, 0)
-            end
-            local share, text = followedShare(list)
-            t:assertTrue(share >= 0.5, text)
-            t:assertTrue(medianDelay(list) < 0.9, "median delay " .. medianDelay(list))
-            t:assertTrue(repeatShare(list) <= 0.2, "repeats " .. repeatShare(list))
-        end
-        suite["scenario a healer hovering at a line, " .. where .. ": nothing said"] = function(t)
-            local result = scenario("hover", size, fps)
-            t:assertEqual(result.total.misreads, 0)
-            for _, m in ipairs(result.members) do
-                if m.subject then
-                    t:assertEqual(#m.triggers, 0)
+        for kind, bar in pairs(BARS) do
+            suite["scenario " .. kind .. ", " .. where .. ": nothing misread, nothing swallowed, not more out of date than measured"] = function(t)
+                local list = fights(kind, size, fps)
+                t:assertEqual(pooled(list, "misreads"), 0)
+                for _, result in ipairs(list) do
+                    t:assertEqual(result.gateMismatches or 0, 0)
                 end
+                -- A move taken as said without its number: none, but for a
+                -- number a stop cut again when it was said again.
+                t:assertTrue(pooled(list, "silentMoves") <= 2, pooled(list, "silentMoves") .. " moves taken as said without their number")
+                local ours, sku = outdated(list)
+                t:assertTrue(ours <= bar[size], string.format("out of date %.1f percent of the time (Sku %.1f)", ours * 100, sku * 100))
+                t:assertTrue(repeatShare(list) <= bar.repeats, string.format("repeats %.0f percent", repeatShare(list) * 100))
             end
         end
-        suite["scenario stops of all speech every 1 to 3 seconds, " .. where .. ": followed, few repeats"] = function(t)
-            local list = fights("stops", size, fps)
-            for _, result in ipairs(list) do
-                t:assertEqual(result.total.misreads, 0)
-                t:assertTrue((result.stats.discarded.stop or 0) > 0, "no sample was cut")
-            end
-            local share, text = followedShare(list)
-            t:assertTrue(share >= 0.45, text)
-            t:assertTrue(repeatShare(list) <= 0.25, "repeats " .. repeatShare(list))
+        suite["scenario hover, " .. where .. ": a healer hovering at a line, almost nothing said"] = function(t)
+            local list = fights("hover", size, fps)
+            t:assertEqual(pooled(list, "misreads"), 0)
+            local ours = outdated(list)
+            t:assertEqual(ours, 0)
+            -- Sku says nothing; a number cut by a stop is said again.
+            t:assertTrue(pooled(list, "heard") <= 9, pooled(list, "heard") .. " numbers in three fights")
         end
     end
 end

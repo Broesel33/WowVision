@@ -15,8 +15,10 @@
 --   numbers, for another voice); utterances overlap freely;
 -- - other WowVision speech plays beside ours; now and then a stop of all
 --   speech (hooked, like C_VoiceChat.StopSpeakingText: the readback purges,
---   reads everyone again and hands back cut numbers) or an interrupting
---   call (no hook: everything ends, the new speech starts) cuts samples.
+--   reads everyone again and hands back cut numbers), a stop followed by
+--   new speech in the same frame (WowVision's interrupting alerts and UI
+--   keys, hooked too) or an interrupting call (no hook: everything ends,
+--   the new speech starts) cuts samples, and the numbers playing with them.
 -- Not known yet, so not modelled: an engine limit on overlapping utterances.
 --
 -- Used by tools/groupHealthSimTests.lua (headless suite) and
@@ -51,6 +53,10 @@ Sim.ENGINE_MS = { 33, 40 }
 -- From the call to the number being heard (the engine's start).
 Sim.START_S = 0.045
 Sim.ANNOUNCE_MS = 700
+-- A number cut by a stop sooner than this after its start was not heard:
+-- both copies of the number (logic.lua; the second may be the audible
+-- one). Rough, not measured.
+Sim.NUMBER_HEARD_MS = 400
 
 -- Deterministic random numbers (a plain LCG), so every run is the same.
 local function rng(seed)
@@ -101,6 +107,31 @@ function Sim.spikes(r, duration)
         else
             h = clamp(h + r.range(0.15, 0.35), 0.03, 1)
             nextHeal = t + r.range(1.2, 2.4)
+        end
+        tinsert(events, { t, h })
+    end
+    return events
+end
+
+-- Moderate damage and healing, as in the first party fight logged in game
+-- (2026-10-14: the player went from 77 to 13 percent in about 27 seconds):
+-- hits of 5 to 15 percent every 1 to 3 seconds, heals of 5 to 20 every 2
+-- to 4.
+function Sim.moderate(r, duration)
+    local events = {}
+    local h = 1.0
+    local nextHit, nextHeal = r.range(0.5, 3), r.range(1, 4)
+    while true do
+        local t = math.min(nextHit, nextHeal)
+        if t > duration then
+            break
+        end
+        if nextHit <= nextHeal then
+            h = clamp(h - r.range(0.05, 0.15), 0.03, 1)
+            nextHit = t + r.range(1, 3)
+        else
+            h = clamp(h + r.range(0.05, 0.20), 0.03, 1)
+            nextHeal = t + r.range(2, 4)
         end
         tinsert(events, { t, h })
     end
@@ -195,6 +226,7 @@ local function engineSpeak(world, playedMs, handlers)
     world.at(world.frame(startMs), function()
         -- Stopped before it started: it never starts.
         if world.active[id] == u then
+            u.startedAt = world.now
             handlers.started(id)
         end
     end)
@@ -212,8 +244,9 @@ end
 -- utterance never reports its end (Blizzard's TextToSpeechFrame.lua:
 -- "Purged utterances never signal VOICE_CHAT_TTS_PLAYBACK_FINISHED").
 local function engineStopAll(world, handlers)
-    for id in pairs(world.active) do
+    for id, u in pairs(world.active) do
         world.active[id] = nil
+        handlers.cut(id, u.startedAt)
     end
     world.engineFreeAt = world.now
 end
@@ -229,8 +262,12 @@ function Sim.ideal(m)
     for _, ev in ipairs(m.script) do
         local h = ev[2]
         if math.abs(h - ref) >= a - 1e-9 and math.abs(levelOf(h) - levelOf(ref)) >= role.minPitchSteps then
-            tinsert(list, { t = ev[1], health = h, audible = h < role.start / 100 or h >= 1 })
-            ref = h
+            local audible = h < role.start / 100 or h >= 1
+            tinsert(list, { t = ev[1], health = h, audible = audible })
+            -- The reference is what the player last heard.
+            if audible then
+                ref = h
+            end
         end
     end
     return list
@@ -302,12 +339,15 @@ function Sim.run(opts)
         urgent = function(m)
             return Sim.ROLES[m.role].urgent
         end,
+        speakBelow = function(m)
+            return Sim.ROLES[m.role].start / 100
+        end,
         -- As the module: the number with "<number> full" in one utterance,
         -- before the digits, heard from its start.
         carry = function(m, quiet)
             -- Remembered to check that the gate and the judge agree.
             m.carries = m.carries or {}
-            m.carries[world.now] = not (m.health >= quiet[1] and m.health < quiet[2])
+            m.carries[world.now] = audible(m, quiet)
             local heard = nil
             if audible(m, quiet) then
                 heard = { health = m.health, lane = "change", eventAt = m.eventAt }
@@ -336,6 +376,9 @@ function Sim.run(opts)
             counter = counter + 1
             return counter
         end,
+        frameMs = function()
+            return 1000 / world.fps
+        end,
         onFailing = function()
             result.failingSaid = (result.failingSaid or 0) + 1
         end,
@@ -357,7 +400,7 @@ function Sim.run(opts)
         if reading.value ~= evalPoints(reading.plan.points, m.calls[reading.calledMs]) then
             m.misreads = m.misreads + 1
         end
-        local before = { reference = m.reference, locate = m.locate, band = m.locateBand }
+        local before = { reference = m.reference }
         local moved = GroupHealth.Checks.onReading(self, unit, reading)
         -- The gate (heard or not) and the judge must agree, else the
         -- reference stays after a heard number and the next repeats it.
@@ -374,7 +417,7 @@ function Sim.run(opts)
     end
     local function check(m)
         m.eventAt = m.eventAt or world.now / 1000
-        checks:check(m.unit)
+        checks:onEvent(m.unit)
     end
 
     -- A second reader on the subjects, woken by the same events (its
@@ -421,6 +464,13 @@ function Sim.run(opts)
             reader:onStarted(id)
         end
     end
+    -- A number stopped while it played: heard only when most of it was.
+    handlers.cut = function(id, startedAt)
+        local heard = result.heardIds[id]
+        if heard ~= nil and startedAt ~= nil and world.now - startedAt < Sim.NUMBER_HEARD_MS then
+            heard.cut = true
+        end
+    end
     handlers.finished = function(id)
         for _, reader in ipairs(readers) do
             reader:onFinished(id, false)
@@ -452,7 +502,7 @@ function Sim.run(opts)
         end
         world.after(world.r.range(range[1], range[2]), tick)
     end
-    result.stops, result.interrupts, result.foreign = 0, 0, 0
+    result.stops, result.interrupts, result.foreign, result.stopSpeaks = 0, 0, 0, 0
     -- Other speech (WowVision's, Blizzard's alerts): how long after its
     -- call it starts, behind ours in the engine's line.
     if d.foreign then
@@ -469,6 +519,20 @@ function Sim.run(opts)
             for _, reader in ipairs(readers) do
                 reader:onStop()
             end
+        end)
+    end
+    -- WowVision's interrupting speech: its own stop (hooked), then the new
+    -- speech in the same frame (UI_DELAY 0 on Retail and Forever).
+    if d.stopSpeak then
+        every(d.stopSpeak, function()
+            result.stops = result.stops + 1
+            result.stopSpeaks = result.stopSpeaks + 1
+            engineStopAll(world, handlers)
+            for _, reader in ipairs(readers) do
+                reader:onStop()
+            end
+            local id = engineSpeak(world, world.r.range(600, 1500), handlers)
+            result.foreignCalls[id] = world.now
         end)
     end
     if d.interrupts then
@@ -500,18 +564,135 @@ end
 Sim.PERSIST = 1.0
 Sim.MATCH = 1.5
 
+-- Precision as the player has it. The last number heard of a member is
+-- OUT OF DATE while their true health would make Sku's rule speak against
+-- it: moved the minimum change and the minimum pitch steps, and heard
+-- (below "Speak Below", or full). Measured the same way for ours and for
+-- Sku on the same health (Sim.sku), so "as precise as Sku" is a number.
+-- (The "followed" count above asks for Sku's exact path; in fast fights
+-- most of its misses are swings the player had already heard: a hit and a
+-- heal within a third of a second, Sku saying both, ours the last.)
+local function outOfDate(role, heardHealth, h)
+    if not (h < role.start / 100 or h >= 1) then
+        return false
+    end
+    return math.abs(h - heardHealth) >= role.minChange / 100 - 1e-9
+        and math.abs(levelOf(h) - levelOf(heardHealth)) >= role.minPitchSteps
+end
+
+-- Seconds out of date in [0, duration], and each stretch's length.
+function Sim.staleness(m, heard, duration)
+    local role = Sim.ROLES[m.role]
+    local points = {}
+    for _, ev in ipairs(m.script) do
+        tinsert(points, { t = ev[1], h = ev[2] })
+    end
+    for _, a in ipairs(heard) do
+        tinsert(points, { t = a.t, b = a.health })
+    end
+    table.sort(points, function(x, y)
+        return x.t < y.t
+    end)
+    local h, b = m.startHealth, m.startHealth
+    local since, total, stretches = nil, 0, {}
+    local function settle(t)
+        local out = outOfDate(role, b, h)
+        if out and since == nil then
+            since = t
+        elseif not out and since ~= nil then
+            tinsert(stretches, t - since)
+            total = total + t - since
+            since = nil
+        end
+    end
+    settle(0)
+    for _, p in ipairs(points) do
+        if p.t > duration then
+            break
+        end
+        h = p.h or h
+        b = p.b or b
+        settle(p.t)
+    end
+    if since ~= nil then
+        tinsert(stretches, duration - since)
+        total = total + duration - since
+    end
+    return total, stretches
+end
+
+-- Sku on the same health: it reads plain health, so at every health event
+-- its rule runs against the member's last announcement; a member found
+-- moved goes into one queue (an entry already waiting keeps its place and
+-- says the health of the moment it plays), one frame after the event at
+-- the soonest and SKU_GAP after the number before. Sound files: no stop of
+-- speech cuts them. "Speak Below" as ours (Sku has none): a number above
+-- it is silent and takes no time.
+Sim.SKU_GAP = 0.2
+
+function Sim.sku(members, fps)
+    local events = {}
+    local heard, ref, health = {}, {}, {}
+    for _, m in ipairs(members) do
+        for _, ev in ipairs(m.script) do
+            tinsert(events, { t = ev[1], m = m, h = ev[2] })
+        end
+        heard[m], ref[m], health[m] = {}, m.startHealth, m.startHealth
+    end
+    table.sort(events, function(x, y)
+        return x.t < y.t
+    end)
+    local queue, queued = {}, {}
+    local nextPlay = 0
+    local frame = 1 / (fps or 60)
+    local i = 1
+    while true do
+        local ev = events[i]
+        local playAt = #queue > 0 and math.max(nextPlay, queue[1].at) or math.huge
+        if ev == nil and playAt == math.huge then
+            break
+        end
+        if ev ~= nil and ev.t <= playAt then
+            local m, role = ev.m, Sim.ROLES[ev.m.role]
+            health[m] = ev.h
+            if math.abs(ev.h - ref[m]) >= role.minChange / 100 - 1e-9
+                and math.abs(levelOf(ev.h) - levelOf(ref[m])) >= role.minPitchSteps and not queued[m] then
+                queued[m] = true
+                tinsert(queue, { m = m, at = ev.t + frame })
+            end
+            i = i + 1
+        else
+            local entry = tremove(queue, 1)
+            local m, role = entry.m, Sim.ROLES[entry.m.role]
+            queued[m] = nil
+            local h = health[m]
+            -- The reference is what the player last heard ("Speak Below"
+            -- is ours; in Sku every move is heard).
+            if h < role.start / 100 or h >= 1 then
+                ref[m] = h
+                tinsert(heard[m], { t = playAt, health = h })
+                nextPlay = playAt + Sim.SKU_GAP
+            end
+        end
+    end
+    return heard
+end
+
 function Sim.score(result)
-    -- A number stopped before it started was never heard.
+    -- A number stopped before it started, or cut early, was never heard.
+    local cut = 0
     for _, m in ipairs(result.members) do
         local started = {}
         for _, a in ipairs(m.announcements) do
-            if a.t ~= nil then
+            if a.t ~= nil and not a.cut then
                 tinsert(started, a)
+            elseif a.t ~= nil then
+                cut = cut + 1
             end
         end
         m.announcements = started
     end
-    local total = { ideal = 0, followed = 0, missed = 0, extra = 0, latencies = {}, moves = {}, triggers = 0, misreads = 0, readings = 0, heard = 0 }
+    local total = { ideal = 0, followed = 0, missed = 0, extra = 0, latencies = {}, moves = {}, triggers = 0, misreads = 0, readings = 0, heard = 0, cut = cut, silentMoves = 0 }
     for _, m in ipairs(result.members) do
         m.followed, m.missed, m.extra, m.meaningful = 0, 0, 0, 0
         for i, ideal in ipairs(m.ideal) do
@@ -553,6 +734,31 @@ function Sim.score(result)
         total.misreads = total.misreads + m.misreads
         total.readings = total.readings + m.readings
         total.heard = total.heard + #m.announcements
+        -- A move of the reference to a health that is heard (below "Speak
+        -- Below", or full) without a number heard near that health since
+        -- the move before, nor any number of the member right after (a
+        -- stop cut it and it was said again, at the health of then): the
+        -- monitor counts it as said, so the member stays silent until the
+        -- next minimum change.
+        local role = Sim.ROLES[m.role]
+        local previousT = -math.huge
+        for _, trig in ipairs(m.triggers) do
+            local h = trig.health
+            if h ~= nil and (h < role.start / 100 or h >= 1) then
+                local said = false
+                for _, a in ipairs(m.announcements) do
+                    local near = a.t > previousT - Sim.MATCH and a.t <= trig.t and math.abs(a.health - h) < role.minChange / 200
+                    if near or (a.t > trig.t and a.t <= trig.t + Sim.MATCH) then
+                        said = true
+                        break
+                    end
+                end
+                if not said then
+                    total.silentMoves = total.silentMoves + 1
+                end
+            end
+            previousT = trig.t
+        end
         -- How far the true health moved between our reference moves, in
         -- thresholds (Sku's rule: 1 or more, ours a little either side).
         local a = Sim.ROLES[m.role].minChange / 100
@@ -564,6 +770,27 @@ function Sim.score(result)
             end
         end
     end
+    -- Out of date (ours and Sku's): seconds summed over members, and the
+    -- stretches longer than a frame or two.
+    local duration = result.opts.duration
+    local skuHeard = Sim.sku(result.members, result.opts.fps)
+    total.outdated, total.outdatedStretches = 0, {}
+    total.skuOutdated, total.skuStretches, total.skuHeard = 0, {}, 0
+    for _, m in ipairs(result.members) do
+        local seconds, stretches = Sim.staleness(m, m.announcements, duration)
+        total.outdated = total.outdated + seconds
+        for _, s in ipairs(stretches) do
+            tinsert(total.outdatedStretches, s)
+        end
+        seconds, stretches = Sim.staleness(m, skuHeard[m], duration)
+        total.skuOutdated = total.skuOutdated + seconds
+        for _, s in ipairs(stretches) do
+            tinsert(total.skuStretches, s)
+        end
+        total.skuHeard = total.skuHeard + #skuHeard[m]
+    end
+    table.sort(total.outdatedStretches)
+    table.sort(total.skuStretches)
     table.sort(total.moves)
     table.sort(total.latencies)
     result.total = total
@@ -604,12 +831,15 @@ function Sim.report(result)
     if #t.latencies > 0 then
         add("  from the health change until the number starts: median %.2f s, 90 percent within %.2f s, worst %.2f s", percentile(t.latencies, 0.5), percentile(t.latencies, 0.9), t.latencies[#t.latencies])
     end
-    add("  bands read wrong: %d of %d readings; numbers heard %d", t.misreads, t.readings, t.heard)
+    add("  bands read wrong: %d of %d readings; numbers heard %d, cut by a stop %d; moves taken as said without their number %d", t.misreads, t.readings, t.heard, t.cut, t.silentMoves)
+    add("  last number heard out of date: ours %.1f s (stretches median %.2f s, 90 percent within %.2f s, longest %.2f s); Sku %.1f s (median %.2f, 90 percent %.2f, longest %.2f; %d numbers)",
+        t.outdated, percentile(t.outdatedStretches, 0.5), percentile(t.outdatedStretches, 0.9), t.outdatedStretches[#t.outdatedStretches] or 0,
+        t.skuOutdated, percentile(t.skuStretches, 0.5), percentile(t.skuStretches, 0.9), t.skuStretches[#t.skuStretches] or 0, t.skuHeard)
     if #t.moves > 0 then
         add("  health moved between our announcements, in minimum changes: least %.2f, median %.2f", t.moves[1], percentile(t.moves, 0.5))
     end
     add("  samples %d, used %d, thrown away: %s; most at once %d", s.samples, s.readings, counts(s.discarded), s.maxInflight)
-    add("  disturbances: %d other utterances, %d stops of all speech, %d interrupts; purges: %s; own speech cut %d, spoken again %d", result.foreign, result.stops, result.interrupts, counts(s.purges), s.ownCut, result.respoken)
+    add("  disturbances: %d other utterances, %d stops of all speech (%d followed by speech), %d interrupts; purges: %s; own speech cut %d, spoken again %d", result.foreign + result.stopSpeaks, result.stops, result.stopSpeaks, result.interrupts, counts(s.purges), s.ownCut, result.respoken)
     for _, m in ipairs(result.members) do
         if m.subject or #m.triggers > 0 then
             local heard = {}
@@ -672,12 +902,23 @@ end
 
 local DISTURB = { foreign = { 3, 6 }, stops = { 15, 30 }, interrupts = { 20, 40 } }
 
+-- The first party fight logged in game (WoW: Forever, 2026-10-14, 13:05:12
+-- to 13:08:03, 171 s): 67 stops of all speech, each followed by
+-- WowVision's speech (49 Target Change, 18 UI keys and windows), one every
+-- 2.6 s on average. Other speech was not counted then (/wv ghlog counts it
+-- since): one every 1 to 3 s is a guess from the samples it spoiled.
+Sim.REAL_FIGHT = { stopSpeak = { 1.5, 3.5 }, foreign = { 1, 3 } }
+
 -- kind "spikes": one member (the first tank) takes strong hits and big heals.
 -- kind "drift": two members change slowly, one drains, one regenerates.
 -- kind "hover": the healer's health flips across the 50 percent line by up
 --   to 3 percent, below their minimum change: nothing to say.
 -- kind "stops": "spikes" with a stop of all speech every 1 to 3 seconds
 --   (a player pressing Ctrl often, target changes).
+-- kind "fight": everyone takes strong hits and big heals at once, with the
+--   disturbances of the fight logged in game (Sim.REAL_FIGHT).
+-- kind "party": everyone takes moderate damage and healing (Sim.moderate),
+--   with the disturbances of the fight logged in game: that fight.
 function Sim.scenario(kind, size, fps, seed)
     local r = rng(seed or 7)
     local base = size == 10 and RAID or PARTY
@@ -692,6 +933,18 @@ function Sim.scenario(kind, size, fps, seed)
             disturb = { foreign = { 3, 6 }, stops = { 1, 3 }, interrupts = { 20, 40 } }
             name = name .. ", a stop of all speech every 1 to 3 seconds"
         end
+    elseif kind == "fight" then
+        for i = 1, #base do
+            subjects[i] = { health = 1.0, script = Sim.spikes(r, duration) }
+        end
+        disturb = Sim.REAL_FIGHT
+        name = "Everyone hit at once, disturbances as in the fight logged in game"
+    elseif kind == "party" then
+        for i = 1, #base do
+            subjects[i] = { health = 1.0, script = Sim.moderate(r, duration) }
+        end
+        disturb = Sim.REAL_FIGHT
+        name = "Everyone under moderate damage, disturbances as in the fight logged in game"
     elseif kind == "hover" then
         -- The healer: the party's first member, the raid's third.
         local index = size == 10 and 3 or 1
@@ -713,6 +966,6 @@ function Sim.scenario(kind, size, fps, seed)
     }
 end
 
-Sim.KINDS = { "spikes", "drift", "hover", "stops" }
+Sim.KINDS = { "spikes", "drift", "hover", "stops", "fight", "party" }
 
 return Sim
