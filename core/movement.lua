@@ -35,6 +35,16 @@ function movement:isTranslating()
         or flags.following
 end
 
+-- Whether the player is moving by any means: a commanded movement, or the
+-- game moving them with no key held (autorun, the interact key walking to
+-- its target, click to move). The game's moving state stays on while the
+-- player pushes against something, and turning has a state of its own
+-- (PLAYER_STARTED_TURNING). Falls are left out: a fall straight down has no
+-- sideways movement to judge.
+function movement:isMoving()
+    return self:isTranslating() or (IsPlayerMoving() and not IsFalling())
+end
+
 local function flagSetter(key, value)
     return function()
         movement.flags[key] = value
@@ -67,3 +77,20 @@ hooksecurefunc("FollowUnit", flagSetter("following", true))
 hooksecurefunc("MoveForwardStart", flagSetter("following", false))
 hooksecurefunc("MoveBackwardStart", flagSetter("following", false))
 hooksecurefunc("StartAutoRun", flagSetter("following", false))
+
+-- The game ends some movement without calling the hooked functions: a
+-- movement key cancels autorun without StopAutoRun, so the flag would stay
+-- on and the next ToggleAutoRun would invert it; follow ends on its own when
+-- the leader gets out of range. Stopping is the ground truth for autorun
+-- (pushing against a wall does not count as stopping), AUTOFOLLOW_END for
+-- follow.
+local frame = CreateFrame("Frame")
+frame:RegisterEvent("PLAYER_STOPPED_MOVING")
+frame:RegisterEvent("AUTOFOLLOW_END")
+frame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_STOPPED_MOVING" then
+        movement.flags.autorun = false
+    else
+        movement.flags.following = false
+    end
+end)

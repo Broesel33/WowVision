@@ -3,8 +3,9 @@ local L = module.L
 module:setLabel(L["Wall Detection"])
 
 -- Wall detection (Sku's stuck system, whose graded sounds we ship with
--- permission): when the player is COMMANDING translation but their position
--- barely changes, they are against something. The shortfall between actual
+-- permission): when the player is moving (a commanded movement, or the game
+-- walking them: autorun, the interact key) but their position barely
+-- changes, they are against something. The shortfall between actual
 -- and expected movement grades into five severities, each an independently
 -- configurable sound output; a cadence counter turns continuous pushing
 -- into rhythmic clunks. Toggle the whole thing via the alert's enable.
@@ -56,10 +57,10 @@ module:hasUpdate(function(self)
     end
 
     local px, py = UnitPosition("player")
-    local translating = WowVision.movement:isTranslating()
+    local translating = WowVision.movement:isMoving()
 
-    -- Only judge intervals where translation was commanded end to end and
-    -- both position samples exist.
+    -- Only judge intervals where the player was moving end to end and both
+    -- position samples exist.
     if translating and wasTranslating and px ~= nil and lastX ~= nil then
         local dx, dy = px - lastX, py - lastY
         local actual = math.sqrt(dx * dx + dy * dy)

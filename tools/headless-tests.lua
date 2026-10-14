@@ -54,6 +54,91 @@ loadAddonFile("core/navigation/atlas/MapDataset.lua")
 loadAddonFile("core/navigation/atlas/datasetTests.lua")
 loadAddonFile("core/navigation/stuckMath.lua")
 loadAddonFile("core/navigation/stuckTests.lua")
+
+-- Movement intent: stand-ins record the hooks and the event frame so the
+-- suite can play the game's side.
+do
+    local hooks, eventFrame = {}, nil
+    local game = { moving = false, falling = false }
+    function IsPlayerMoving()
+        return game.moving
+    end
+    function IsFalling()
+        return game.falling
+    end
+    local savedHook, savedCreateFrame = hooksecurefunc, CreateFrame
+    hooksecurefunc = function(name, hook)
+        hooks[name] = hooks[name] or {}
+        tinsert(hooks[name], hook)
+    end
+    CreateFrame = function()
+        eventFrame = { events = {} }
+        function eventFrame:RegisterEvent(event)
+            self.events[event] = true
+        end
+        function eventFrame:SetScript(_, script)
+            self.onEvent = script
+        end
+        return eventFrame
+    end
+    loadAddonFile("core/movement.lua")
+    hooksecurefunc, CreateFrame = savedHook, savedCreateFrame
+
+    local movement = WowVision.movement
+    local function call(name)
+        for _, hook in ipairs(hooks[name]) do
+            hook()
+        end
+    end
+    local function event(name)
+        if eventFrame.events[name] then
+            eventFrame.onEvent(eventFrame, name)
+        end
+    end
+    local function reset()
+        for key in pairs(movement.flags) do
+            movement.flags[key] = false
+        end
+        game.moving, game.falling = false, false
+    end
+
+    WowVision.testing.testRunner:addSuite("Movement", {
+        ["autorun cancelled by a movement key does not invert the next toggle"] = function(t)
+            reset()
+            call("ToggleAutoRun")
+            t:assertTrue(movement.flags.autorun)
+            -- Forward cancels autorun in the game, without StopAutoRun.
+            call("MoveForwardStart")
+            call("MoveForwardStop")
+            event("PLAYER_STOPPED_MOVING")
+            t:assertFalse(movement.flags.autorun)
+            call("ToggleAutoRun")
+            t:assertTrue(movement.flags.autorun)
+        end,
+
+        ["follow ends with AUTOFOLLOW_END"] = function(t)
+            reset()
+            call("FollowUnit")
+            t:assertTrue(movement.flags.following)
+            event("AUTOFOLLOW_END")
+            t:assertFalse(movement.flags.following)
+        end,
+
+        ["the game walking the player counts as moving, a fall does not"] = function(t)
+            reset()
+            t:assertFalse(movement:isMoving())
+            -- The interact key walks the player with no key held.
+            game.moving = true
+            t:assertTrue(movement:isMoving())
+            game.falling = true
+            t:assertFalse(movement:isMoving())
+            -- A held key still counts while falling, as before.
+            call("MoveForwardStart")
+            t:assertTrue(movement:isMoving())
+            call("MoveForwardStop")
+        end,
+    })
+end
 loadAddonFile("core/navigation/camera.lua")
 loadAddonFile("core/navigation/cameraTests.lua")
 loadAddonFile("core/navigation/maps/turnMath.lua")
