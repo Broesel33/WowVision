@@ -97,6 +97,48 @@ testRunner:addSuite("TtsVoice", {
         end)
     end,
 
+    ["a speech voice choice comes first and means the Speech Voice setting"] = function(t)
+        withVoices({ "Hedda", "Zira" }, function()
+            local SPEECH = WowVision.classes.SPEECH_VOICE
+            local set = WowVision.classes.newFieldSet({ key = "tts" })
+            local field = set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
+            local choices = field:getChoices(set)
+            t:assertEqual(#choices, 3)
+            t:assertEqual(choices[1].label, "Speech Voice")
+            t:assertEqual(choices[1].value, SPEECH)
+            t:assertEqual(field:getValueString(set, SPEECH), "Speech Voice")
+        end)
+    end,
+
+    ["the speech voice choice is saved as itself, never pinned to a name"] = function(t)
+        local SPEECH = WowVision.classes.SPEECH_VOICE
+        local db = {}
+        withVoices({ "Hedda", "Zira" }, function()
+            local set = WowVision.classes.newFieldSet({ key = "tts" })
+            set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
+            set:setDB(db)
+            t:assertEqual(set:getFieldValue("voice"), SPEECH)
+            t:assertEqual(db.voice, nil)
+            set:setFieldValue("voice", 1)
+            t:assertEqual(db.voice, "Zira")
+            set:setFieldValue("voice", SPEECH)
+            t:assertEqual(db.voice, SPEECH)
+        end)
+        withVoices({ "Katja", "Hedda", "Zira" }, function()
+            local set = WowVision.classes.newFieldSet({ key = "tts" })
+            set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
+            set:setDB(db)
+            t:assertEqual(set:getFieldValue("voice"), SPEECH)
+        end)
+    end,
+
+    ["without the option there is no speech voice choice"] = function(t)
+        withVoices({ "Hedda", "Zira" }, function()
+            local A = voiceClass()
+            t:assertEqual(#A:getField("voice"):getChoices(A:new()), 2)
+        end)
+    end,
+
     ["a parameter in a field set keeps its voice by name"] = function(t)
         local db = { voice = 0 }
         withVoices({ "Hedda", "Zira" }, function()

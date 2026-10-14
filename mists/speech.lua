@@ -136,7 +136,7 @@ function module:onDisable()
     self.interruptFrame:Hide()
 end
 
-function module:speak(text)
+function module:speak(text, voice)
     local text = string.gsub(text, "/", " / ")
     -- Volume above 100 silences TTS entirely in Mists Classic, so clamp it.
     local volume = self.settings.speechVolume or 100
@@ -149,7 +149,7 @@ function module:speak(text)
     -- the single switch: when on, this hits our queue; when off, Blizzard's
     -- original SpeakText runs directly. Busted here so both paths get it.
     text = WowVision.ttsCacheBust.bust(text)
-    C_VoiceChat.SpeakText(self.settings.voiceID, text, self.settings.speechRate, volume, false)
+    C_VoiceChat.SpeakText(voice or self.settings.voiceID, text, self.settings.speechRate, volume, false)
 end
 
 function module:stop()

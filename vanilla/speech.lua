@@ -9,7 +9,8 @@ end
 -- argument: SpeakText(voiceID, text, rate, volume [, overlap]). Enum.
 -- VoiceTtsDestination is gone with it. overlap is left at its default
 -- (false), which queues like the old QueuedLocalPlayback destination did.
-function SpeechStyle:output(text)
+-- voice: a game voice id for this text; nil speaks with the Speech Voice.
+function SpeechStyle:output(text, voice)
     local text = string.gsub(text, "/", " / ")
     -- Volume above 100 silences TTS entirely, so clamp it.
     local volume = self.module.settings.speechVolume or 100
@@ -19,14 +20,14 @@ function SpeechStyle:output(text)
         volume = 100
     end
     C_VoiceChat.SpeakText(
-        self.module.settings.voiceID,
+        voice or self.module.settings.voiceID,
         WowVision.ttsCacheBust.bust(text),
         self.module.settings.speechRate,
         volume
     )
 end
 
-function SpeechStyle:speak(text) end
+function SpeechStyle:speak(text, voice) end
 function SpeechStyle:uiStop() end
 function SpeechStyle:destroy() end
 
@@ -84,12 +85,12 @@ function Direct:initialize(config)
     self.speechQueue = {}
 end
 
-function Direct:speak(text)
+function Direct:speak(text, voice)
     if self.pendingInterrupt then
-        tinsert(self.speechQueue, text)
+        tinsert(self.speechQueue, { text = text, voice = voice })
         return
     end
-    self:output(text)
+    self:output(text, voice)
 end
 
 function Direct:uiStop()
@@ -103,8 +104,8 @@ function Direct:uiStop()
         self.pendingInterrupt = false
         local queue = self.speechQueue
         self.speechQueue = {}
-        for _, text in ipairs(queue) do
-            self:speak(text)
+        for _, item in ipairs(queue) do
+            self:speak(item.text, item.voice)
         end
     end)
 end
@@ -124,8 +125,8 @@ function Queued:initialize(config)
     end)
 end
 
-function Queued:speak(text)
-    tinsert(self.queue, text)
+function Queued:speak(text, voice)
+    tinsert(self.queue, { text = text, voice = voice })
 end
 
 function Queued:uiStop()
@@ -169,7 +170,7 @@ function Queued:onUpdate(elapsed)
             self.waitTimer = 0.1
             return
         else
-            self:output(front)
+            self:output(front.text, front.voice)
         end
     end
 end
@@ -216,8 +217,8 @@ function module:onDisable()
     end
 end
 
-function module:speak(text)
-    self.activeStyle:speak(text)
+function module:speak(text, voice)
+    self.activeStyle:speak(text, voice)
 end
 
 function module:stop()

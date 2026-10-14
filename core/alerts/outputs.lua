@@ -32,6 +32,15 @@ function tts:initialize(info)
                 return self.defaultInterrupt
             end,
         })
+        -- Spoken in the queue like all speech, with the Speech Voice setting
+        -- unless a voice of its own is picked here.
+        self:addParameter({
+            key = "voice",
+            type = "TtsVoice",
+            label = L["Voice"],
+            speechVoice = L["Speech Voice"],
+            default = WowVision.classes.SPEECH_VOICE,
+        })
     else
         self:addParameter({
             key = "voice",
@@ -74,17 +83,21 @@ function tts:onFire(message)
         C_VoiceChat.SpeakText(voice, WowVision.ttsCacheBust.bust(text), settings.speechRate, volume, false)
         return
     end
+    local voice = self.parameters:getFieldValue("voice")
+    if voice == WowVision.classes.SPEECH_VOICE then
+        voice = nil
+    end
     if self.db.interrupt then
         WowVision.base.speech:uiStop()
         if WowVision.consts.UI_DELAY > 0 then
             C_Timer.After(0.05, function()
-                WowVision:speak(text)
+                WowVision:speak(text, voice)
             end)
         else
-            WowVision:speak(text)
+            WowVision:speak(text, voice)
         end
     else
-        WowVision:speak(text)
+        WowVision:speak(text, voice)
     end
 end
 
