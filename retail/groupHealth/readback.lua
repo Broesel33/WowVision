@@ -599,7 +599,7 @@ end
 
 -- Counts for the log and the simulation's report.
 function Readback:resetStats()
-    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0, otherStarts = 0 }
+    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0, otherStarts = 0, unseenStarts = 0 }
 end
 
 -- How long the starts of a slot of `count` utterances may take: the first
@@ -908,6 +908,8 @@ function Readback:startEntry(id)
     if self.env.startOwner ~= nil then
         owner, calledMs = self.env.startOwner(id)
         if owner == nil then
+            -- Counted for the log: how often the game speaks without us.
+            self.stats.unseenStarts = self.stats.unseenStarts + 1
             -- A start no call of ours matches: speech we cannot see, which
             -- may have shifted the matching by one (it took a call's place,
             -- and every start after it got the call before its own). A

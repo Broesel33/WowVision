@@ -262,8 +262,8 @@ local function show()
     if module.checks ~= nil then
         local stats = module.checks.readback.stats
         tinsert(lines, string.format(
-            "Readback: %d health events, %d samples, %d readings used, thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d; other speech started %d times",
-            module.healthEvents or 0, stats.samples, stats.readings, counts(stats.discarded), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0, stats.otherStarts
+            "Readback: %d health events, %d samples, %d readings used, thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d; other speech started %d times, %d of them not called through WowVision (Blizzard's Combat Audio Alerts and the like)",
+            module.healthEvents or 0, stats.samples, stats.readings, counts(stats.discarded), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0, stats.otherStarts, stats.unseenStarts
         ))
     end
     if #lines == 0 then
