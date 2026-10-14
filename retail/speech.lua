@@ -39,8 +39,12 @@ end
 -- The engine never starts an utterance sooner after its call (34 to 56 ms
 -- measured): a start sooner after the oldest waiting call is not that
 -- call's but someone's who calls the engine without us (Blizzard's Combat
--- Audio Alerts), and leaves the line as it is.
-local FIRST_START = 0.03
+-- Audio Alerts), and leaves the line as it is. Measured on
+-- debugprofilestop's clock: GetTime() moves once a frame, and a start can
+-- be handled a frame "sooner" than it happened (first game test,
+-- 2026-10-14: own starts taken for someone else's, every match after them
+-- shifted, a third of the checks lost).
+local FIRST_START_MS = 30
 
 -- Who each recent start belonged to: the call it was matched to (false:
 -- none, someone else's), the last 64.
@@ -100,7 +104,7 @@ local function takeStart()
         tremove(pendingStarts, 1)
     end
     local head = pendingStarts[1]
-    if head == nil or now - head.at < FIRST_START then
+    if head == nil or debugprofilestop() - head.atMs < FIRST_START_MS then
         return nil
     end
     return tremove(pendingStarts, 1)
