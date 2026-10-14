@@ -5,19 +5,24 @@
 -- Health itself is secret and never logged: only what the monitor did and
 -- when.
 --
--- The monitor reports through module:trace(member, what, detail):
+-- The monitor reports through module:trace(member, what, detail, extra):
 -- - event: a health event, detail the unit token it came with;
 -- - wait: a check held back, detail why;
--- - sent: a number went out with a check;
+-- - sent: a number went out with a check, detail the check's plan (where
+--   the number is silent);
 -- - moved: a check found the number was a move;
--- - lost: a check was lost (detail: why): read again silently while the
---   health is unchanged, else the next number is said (again);
+-- - lost: a check was lost (detail: why, extra: the sample): read again
+--   silently while the health is unchanged, else the next number is said
+--   (again); a sample thrown away with its slot tells what started in it;
 -- - respeak: a death cut by a stop goes out again;
 -- - play: a queue entry plays (detail: the entry).
 
 local module = WowVision.base.groupHealth
 
-local LOG_MAX = 400
+-- A line per number sent too: a fight of a few minutes in a party fills
+-- several hundred.
+local LOG_MAX = 1500
+local GroupHealth = WowVision.groupHealth
 module.log = {}
 
 -- Per member: when the health event came that the next number answers, and
@@ -50,6 +55,8 @@ function module:keepLog()
         stopKinds = self.stopKinds,
         stopsLeftOut = self.stopsLeftOut,
         stopStacks = self.stopStacks,
+        -- Slots thrown away, by why (readback.lua's slot.why).
+        slotsLost = self.slotsLost,
     }
 end
 
@@ -87,12 +94,38 @@ function trace.wait(member, why)
     state.waited = state.waited or why
 end
 
-function trace.sent(member)
+-- Where a plan's number is silent, in whole percent: inside "moved less"
+-- (the reference -/+ the minimum change, widened to the pitch steps), and
+-- above "Speak Below" in any case. An unsure plan has no "moved less".
+local function silentWords(plan)
+    if plan == nil then
+        return nil
+    end
+    if plan.unsure then
+        return "said wherever below Speak Below (the last number heard is not known)"
+    end
+    local quiet = GroupHealth.quietFor(plan)
+    if quiet == nil then
+        return nil
+    end
+    local low = math.max(0, math.floor(quiet[1] * 100 + 0.5))
+    local high = math.min(100, math.floor(quiet[2] * 100 + 0.5))
+    return string.format("silent from %d to %d percent", low, high)
+end
+
+function trace.sent(member, plan)
     local state = pending[member] or {}
     pending[member] = {
         sentAfter = state.eventAt ~= nil and GetTime() - state.eventAt or nil,
         waitedFor = state.waited,
     }
+    local parts = memberParts(member)
+    tinsert(parts, "number sent")
+    local words = silentWords(plan)
+    if words ~= nil then
+        tinsert(parts, words)
+    end
+    append(parts)
 end
 
 function trace.moved(member)
@@ -112,9 +145,21 @@ function trace.moved(member)
     append(parts)
 end
 
-function trace.lost(member, detail)
+function trace.lost(member, detail, sample)
     local parts = memberParts(member)
     tinsert(parts, "check lost: " .. detail)
+    -- Thrown away with its slot: why, and what started in it.
+    local slot = sample ~= nil and sample.slot or nil
+    if detail == "ambiguous" and slot ~= nil then
+        tinsert(parts, GroupHealth.describeSlot(slot))
+        -- Counted once per slot (a slot carries up to three members).
+        if not slot.counted then
+            slot.counted = true
+            local why = slot.why or "thrown away"
+            module.slotsLost = module.slotsLost or {}
+            module.slotsLost[why] = (module.slotsLost[why] or 0) + 1
+        end
+    end
     append(parts)
 end
 
@@ -135,10 +180,15 @@ function trace.play(member, entry)
     append(parts)
 end
 
-function module:trace(member, what, detail)
+function module:trace(member, what, detail, extra)
     if self.logging and trace[what] ~= nil then
-        trace[what](member, detail)
+        trace[what](member, detail, extra)
     end
+end
+
+-- The function a stack line names, when it has a name (not a place).
+local function stackFunction(line)
+    return line:match("in function '([^'/]+)'") or line:match("in function `([^'/]+)'")
 end
 
 -- Where a stack line points: an addon file (Blizzard's own included) with
@@ -193,13 +243,23 @@ end
 -- and every stop gets a log line, to set beside lost checks.
 -- The first place in a stack past the hooks and the speech module, and
 -- whether Ctrl is held.
+-- With the function there; for an alert (core/alerts), also who fired it
+-- (the soft target and the Target Change alerts share outputs.lua).
 function module:stopSource(stack)
     local source = nil
     for line in stack:gmatch("[^\n]+") do
         local place = stackPlace(line)
         if place ~= nil and not place:find("groupHealth", 1, true) and not place:find("retail/speech.lua", 1, true) then
-            source = place
-            break
+            local fn = stackFunction(line)
+            if source == nil then
+                source = place .. (fn ~= nil and " (" .. fn .. ")" or "")
+                if not place:find("core/alerts/", 1, true) then
+                    break
+                end
+            elseif not place:find("core/alerts/", 1, true) then
+                source = source .. ", alert from " .. (fn ~= nil and fn .. " in " or "") .. place
+                break
+            end
         end
     end
     if source == nil then
@@ -262,8 +322,8 @@ local function show()
     if module.checks ~= nil then
         local stats = module.checks.readback.stats
         tinsert(lines, string.format(
-            "Readback: %d health events, %d samples, %d readings used, thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d; other speech started %d times, %d of them not called through WowVision (Blizzard's Combat Audio Alerts and the like)",
-            module.healthEvents or 0, stats.samples, stats.readings, counts(stats.discarded), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0, stats.otherStarts, stats.unseenStarts
+            "Readback: %d health events, %d samples, %d readings used, thrown away: %s; slots thrown away: %s; most at once %d; purges: %s; own speech cut %d, said again %d; other speech started %d times, %d of them not called through WowVision (Blizzard's Combat Audio Alerts and the like), %d too soon after our calls to be ours (left out)",
+            module.healthEvents or 0, stats.samples, stats.readings, counts(stats.discarded), counts(module.slotsLost or {}), stats.maxInflight, counts(stats.purges), stats.ownCut, module.respoken or 0, stats.otherStarts, stats.unseenStarts, stats.earlyStarts or 0
         ))
     end
     if #lines == 0 then
@@ -289,6 +349,7 @@ module:registerCommand({
             module.stopSources = nil
             module.stopKinds = nil
             module.stopsLeftOut = nil
+            module.slotsLost = nil
             if module.checks ~= nil then
                 module.checks.readback:resetStats()
             end

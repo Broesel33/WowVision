@@ -723,8 +723,8 @@ function module:ruleChecks()
                 print("WowVision: " .. L["Group health readings failing"])
                 WowVision:speak(L["Group health readings failing"])
             end,
-            trace = function(member, what, detail)
-                self:trace(member, what, detail)
+            trace = function(member, what, detail, extra)
+                self:trace(member, what, detail, extra)
             end,
         })
     end
@@ -839,7 +839,7 @@ function module:snapshot()
 end
 
 -- Diagnostics (log.lua replaces this while its log is on).
-function module:trace(member, what, detail) end
+function module:trace(member, what, detail, extra) end
 
 -- Wiring ------------------------------------------------------------------------
 

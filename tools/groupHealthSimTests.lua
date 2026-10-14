@@ -391,6 +391,104 @@ local suite = {
         t:assertTrue((result.stats.purges.stuck or 0) >= 1, "no stuck purge")
     end,
 
+    -- Someone else's speech called just before our slot: its start comes
+    -- sooner after our call than the engine ever starts ours, and ours come
+    -- one engine step later than usual.
+    ["a start too soon to be ours is left out, and ours may come one engine step later"] = function(t)
+        local now, timers, silences, readings = 0, {}, {}, {}
+        local owners = {}
+        local readback = GroupHealth.Readback:new({
+            line = GroupHealth.newReadbackLine(),
+            now = function()
+                return now
+            end,
+            after = function(seconds, fn)
+                tinsert(timers, { at = now + seconds * 1000, fn = fn })
+            end,
+            speak = function(text)
+                tinsert(silences, tonumber(text:match('msec="(%d+)"')))
+            end,
+            through = function(_, points)
+                return evaluate(points, 0.55)
+            end,
+            nextCount = function()
+                return #silences + 1
+            end,
+            frameMs = function()
+                return 17
+            end,
+            startOwner = function(id)
+                return owners[id], owners[id] ~= nil and 0 or nil
+            end,
+            onReading = function(_, reading)
+                tinsert(readings, reading)
+            end,
+        })
+        local function advance(to)
+            while true do
+                table.sort(timers, function(a, b)
+                    return a.at < b.at
+                end)
+                local timer = timers[1]
+                if timer == nil or timer.at > to then
+                    break
+                end
+                tremove(timers, 1)
+                now = math.max(now, timer.at)
+                timer.fn()
+            end
+            now = to
+        end
+        readback:request("party1")
+        t:assertEqual(#silences, 1)
+        -- Not ours (no call matched), 10 ms after our call.
+        advance(10)
+        readback:onStarted(500)
+        -- Ours, behind it: past the usual window (100 ms for one call).
+        owners[501] = "aside"
+        advance(115)
+        readback:onStarted(501)
+        local ends = 115 + 190 + 0.3314 * silences[1]
+        advance(ends)
+        readback:onFinished(501, false)
+        advance(ends + 2000)
+        t:assertEqual(#readings, 1)
+        t:assertEqual(readings[1].value, readAt(GroupHealth.locatePlan(), 0.55))
+        t:assertEqual(readback.stats.earlyStarts, 1)
+    end,
+
+    ["the log's description of a thrown-away slot"] = function(t)
+        local slot = { t = 1000, expect = 2, why = "a start right after ours", seen = {
+            { t = 1041, id = 11, owner = "aside" },
+            { t = 1078, id = 12, owner = "aside" },
+            { t = 1020, id = 10, owner = "unseen", early = true },
+        }, after = { t = 1150, id = 13, owner = "unseen" } }
+        t:assertEqual(GroupHealth.describeSlot(slot),
+            "a start right after ours; 2 calls; starts: +20 ms id 0 not WowVision's too soon, +41 ms id 1, +78 ms id 2, +150 ms id 3 not WowVision's")
+    end,
+
+    -- Blizzard's Combat Audio Alerts speak on the same health event as our
+    -- check, unseen by WowVision, before or after it: samples are lost,
+    -- never misread (a party of two, as in the game 2026-10-14).
+    ["Blizzard's alerts on the same health event: checks lost, nothing misread or swallowed"] = function(t)
+        for _, order in ipairs({ "before", "after" }) do
+            for seed = 1, 3 do
+                local opts = Sim.scenario("party", 5, 60, seed * 11)
+                opts.members = { opts.members[1], opts.members[2] }
+                opts.disturb = { caa = { units = { player = true, party1 = true }, chance = 0.6, order = order } }
+                for k, v in pairs(Sim.REAL_FIGHT) do
+                    opts.disturb[k] = v
+                end
+                local result = Sim.run(opts)
+                local total = result.total
+                t:assertTrue(result.caa > 20, result.caa .. " alerts")
+                t:assertTrue(total.misreads <= math.max(1, 0.005 * total.readings), total.misreads .. " misread of " .. total.readings .. ", " .. order)
+                t:assertTrue((result.gateMismatches or 0) <= total.misreads, (result.gateMismatches or 0) .. " gate mismatches")
+                t:assertTrue(total.silentMoves <= 2, total.silentMoves .. " moves taken as said without their number")
+            end
+        end
+    end,
+
     ["the simulation runs the same every time"] = function(t)
         local a = Sim.run(Sim.scenario("party", 5, 60, 7)).total
         local b = Sim.run(Sim.scenario("party", 5, 60, 7)).total

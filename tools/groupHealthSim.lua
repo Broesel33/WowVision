@@ -358,6 +358,11 @@ function Sim.run(opts)
         speakBelow = function(m)
             return Sim.ROLES[m.role].start / 100
         end,
+        -- opts.hold = { units = { [unit] = true }, ms }: checks of those
+        -- members wait that long after their health event.
+        holdMs = opts.hold ~= nil and function(m)
+            return opts.hold.units[m.unit] and opts.hold.ms or 0
+        end or nil,
         -- As the module: the number with "<number> full" in one utterance,
         -- before the digits, heard from its start.
         carry = function(m, quiet)
@@ -529,12 +534,41 @@ function Sim.run(opts)
         end
     end
 
+    local d = opts.disturb or {}
+    -- Blizzard's Combat Audio Alerts on a member's health: spoken on the
+    -- same health event as our check (same frame), before or after it (the
+    -- order the game hands the event to the two frames), unseen by
+    -- WowVision. d.caa = { units = { [unit] = true }, chance (per event),
+    -- order = "before", "after" or "mixed" }.
+    local caa = d.caa
+    result.caa = 0
+    local function caaSpeaks(m, when)
+        if caa == nil or not caa.units[m.unit] then
+            return
+        end
+        local order = caa.order
+        if order == "mixed" then
+            order = m.caaOrder
+        end
+        if order == when and world.r.next() < caa.chance then
+            result.caa = result.caa + 1
+            result.foreign = result.foreign + 1
+            engineSpeak(world, world.r.range(600, 1500), handlers, nil)
+        end
+    end
+
     -- Health events (UNIT_HEALTH).
     for _, m in ipairs(members) do
+        -- (Drawn only with the alerts on: the other scenarios keep their numbers.)
+        if caa ~= nil then
+            m.caaOrder = world.r.next() < 0.5 and "before" or "after"
+        end
         for _, ev in ipairs(m.script) do
             world.after(ev[1], function()
                 m.health = ev[2]
+                caaSpeaks(m, "before")
                 check(m)
+                caaSpeaks(m, "after")
                 if second ~= nil and m.subject then
                     second:request(m.unit)
                 end
@@ -543,7 +577,6 @@ function Sim.run(opts)
     end
 
     -- Other speech: WowVision's queue beside us, stops of all speech, interrupts.
-    local d = opts.disturb or {}
     local function every(range, fn)
         local function tick()
             if world.now / 1000 > duration then

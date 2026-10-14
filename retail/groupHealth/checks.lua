@@ -66,6 +66,8 @@ GroupHealth.Checks = Checks
 --   pitchQuiet(member) (optional) the band of health that sounds less than
 --   the role's minimum pitch steps from the member's reference;
 --   urgent(member) the role's urgent threshold, percent;
+--   holdMs(member) (optional) how long the member's check waits after a
+--   health event (0: none);
 --   speakBelow(member) (optional) the role's "Speak Below" as a fraction:
 --   above it numbers are silent, so moves there leave the reference;
 -- - carry(member, quiet) speaks the member's number straight to the engine,
@@ -74,7 +76,7 @@ GroupHealth.Checks = Checks
 -- - for the readback (readback.lua): now, after, speak, through,
 --   nextCount, onOwnCut, onFailing, onError and optionally line, frameMs,
 --   startOwner;
--- - trace(member, what, detail) (optional): diagnostics, see log.lua.
+-- - trace(member, what, detail, extra) (optional): diagnostics, see log.lua.
 function Checks:initialize(env)
     self.env = env
     self.readback = GroupHealth.Readback:new({
@@ -120,9 +122,9 @@ function Checks:initialize(env)
     })
 end
 
-function Checks:trace(member, what, detail)
+function Checks:trace(member, what, detail, extra)
     if self.env.trace ~= nil then
-        self.env.trace(member, what, detail)
+        self.env.trace(member, what, detail, extra)
     end
 end
 
@@ -170,6 +172,19 @@ function Checks:onEvent(unit)
     end
     member.events = (member.events or 0) + 1
     member.recheck = nil
+    -- Held: the check goes out a little later (env.holdMs), with the
+    -- health of then; events meanwhile join it.
+    local hold = self.env.holdMs ~= nil and self.env.holdMs(member) or 0
+    if hold > 0 then
+        if not member.held then
+            member.held = true
+            self.env.after(hold / 1000, function()
+                member.held = false
+                self:check(member.unit)
+            end)
+        end
+        return
+    end
     self:check(unit)
 end
 
@@ -230,7 +245,7 @@ function Checks:check(unit)
             if self.env.memberFor(member.unit) ~= member or member.dead then
                 return 0
             end
-            self:trace(member, "sent")
+            self:trace(member, "sent", plan)
             return self.env.carry(member, GroupHealth.quietFor(plan))
         end,
     })
@@ -292,7 +307,7 @@ function Checks:onDiscard(unit, why, sample)
             member.recheck = sample.plan
         end
     end
-    self:trace(member, "lost", why)
+    self:trace(member, "lost", why, sample)
     if not GroupHealth.readbackRetries(why) and why ~= "stop" and member.again then
         member.again = false
         self:check(member.unit)

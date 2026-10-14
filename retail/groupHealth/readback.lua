@@ -545,6 +545,57 @@ function GroupHealth.newReadbackLine()
 end
 GroupHealth.readbackLine = GroupHealth.newReadbackLine()
 
+-- A thrown-away slot for the log: how many calls it made, why it was
+-- thrown away, and every start seen from its call to the end of its grace,
+-- in ms after the call, with the id counted from the lowest one seen and
+-- who called it as WowVision's speech module matched it ("WowVision": its
+-- speech queue; "not WowVision's": speech it cannot see, Blizzard's Combat
+-- Audio Alerts; none: called beside the queue, ours as far as it knows;
+-- "too soon": sooner than the engine starts anything, left out).
+local OWNER_WORDS = { queue = "WowVision", unseen = "not WowVision's" }
+
+function GroupHealth.describeSlot(slot)
+    if slot == nil then
+        return nil
+    end
+    local entries = {}
+    for _, entry in ipairs(slot.seen or {}) do
+        tinsert(entries, entry)
+    end
+    if slot.after ~= nil then
+        local listed = false
+        for _, entry in ipairs(entries) do
+            listed = listed or entry == slot.after
+        end
+        if not listed then
+            tinsert(entries, slot.after)
+        end
+    end
+    local lowest = nil
+    for _, entry in ipairs(entries) do
+        lowest = lowest == nil and entry.id or math.min(lowest, entry.id)
+    end
+    table.sort(entries, function(a, b)
+        return a.t < b.t
+    end)
+    local parts = {}
+    for _, entry in ipairs(entries) do
+        local words = { string.format("+%d ms id %d", math.floor(entry.t - slot.t + 0.5), entry.id - lowest) }
+        local owner = OWNER_WORDS[entry.owner]
+        if owner ~= nil then
+            tinsert(words, owner)
+        end
+        if entry.early then
+            tinsert(words, "too soon")
+        elseif entry.queue then
+            tinsert(words, "left out")
+        end
+        tinsert(parts, table.concat(words, " "))
+    end
+    return string.format("%s; %d calls; starts: %s", slot.why or "thrown away", slot.expect or 0,
+        #parts > 0 and table.concat(parts, ", ") or "none")
+end
+
 -- Whether utterance `id` is one of the line's silent timing samples (not
 -- a number carried with them, not our speech in a slot of its own): only
 -- in a slot whose starts are all ours so far. Speech of someone else that
@@ -601,7 +652,7 @@ end
 
 -- Counts for the log and the simulation's report.
 function Readback:resetStats()
-    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0, otherStarts = 0, unseenStarts = 0 }
+    self.stats = { samples = 0, readings = 0, discarded = {}, maxInflight = 0, purges = {}, ownCut = 0, otherStarts = 0, unseenStarts = 0, earlyStarts = 0 }
 end
 
 -- How long the starts of a slot of `count` utterances may take: the first
@@ -784,7 +835,7 @@ end
 function Readback:sampleBatch(batch)
     local env, line = self.env, self.line
     local now = env.now()
-    local slot = { t = now, starts = 0, expect = 0, window = R.START_WINDOW_MS, samples = {}, list = {}, finishes = {}, failed = {}, owner = self, carried = 0 }
+    local slot = { t = now, starts = 0, expect = 0, window = R.START_WINDOW_MS, samples = {}, list = {}, finishes = {}, failed = {}, owner = self, carried = 0, seen = {} }
     local ready = {}
     for _, request in ipairs(batch) do
         local opts = request.opts
@@ -862,6 +913,7 @@ function Readback:sampleBatch(batch)
             if not ok then
                 -- A missing call breaks the run: the slot's samples are lost.
                 slot.broken = true
+                slot.why = slot.why or "a call failed"
                 m.error = "speak: " .. tostring(err)
             end
         end
@@ -897,6 +949,25 @@ local function queueStartFits(slot, calledMs)
     return slot.expect > 0 and slot.starts >= slot.expect
 end
 
+-- Someone else's start before ours in a slot's window (left out): the
+-- engine prepared it first, so ours start one engine step later, and the
+-- window stretches by that step. (Else our last start fell past the window
+-- and the slot was thrown away: simulation, 2026-10-14.)
+function Readback:widen(slot)
+    if slot.samples == nil or slot.starts > 0 then
+        return
+    end
+    slot.window = slot.window + R.ENGINE_MS
+    -- The next slot keeps its distance to the longer window.
+    local line = self.line
+    line.nextSlotMs = math.max(line.nextSlotMs, slot.t + slot.window + R.SLOT_MS - R.START_WINDOW_MS)
+    local owner = slot.owner or self
+    local wait = slot.t + slot.window + R.GRACE_MS - self.env.now()
+    owner.env.after(math.max(0, wait) / 1000 + 0.001, function()
+        owner:checkSlot(slot)
+    end)
+end
+
 -- Every readback hears every start; the line records it once.
 function Readback:startEntry(id)
     local line = self.line
@@ -909,6 +980,7 @@ function Readback:startEntry(id)
     local owner, calledMs = nil, nil
     if self.env.startOwner ~= nil then
         owner, calledMs = self.env.startOwner(id)
+        entry.owner = owner or "unseen"
         if owner == nil then
             -- Counted for the log: how often the game speaks without us.
             self.stats.unseenStarts = self.stats.unseenStarts + 1
@@ -917,9 +989,17 @@ function Readback:startEntry(id)
             -- and every start after it got the call before its own). A
             -- slot that left out a start as WowVision's lately may have
             -- left out one of its own: it is not trusted.
+            -- Every start the speech module took for a call's since the
+            -- unseen start before this one may be shifted: a shift takes a
+            -- call too early, and the start whose call it took finds none
+            -- and is unseen, which ends the shift. Skips before it were
+            -- judged then.
+            local since = line.lastUnseenMs or -math.huge
+            line.lastUnseenMs = now
             for _, slot in ipairs(line.slots) do
-                if slot.queueSkips ~= nil and now - slot.t < R.SHIFT_MS then
+                if slot.queueSkips ~= nil and slot.lastSkipMs > since and now - slot.t < R.SHIFT_MS then
                     slot.ambiguous = true
+                    slot.why = slot.why or "a start left out as WowVision's speech, then speech we cannot see"
                     slot.run = nil
                 end
             end
@@ -928,10 +1008,28 @@ function Readback:startEntry(id)
     for i = #line.slots, 1, -1 do
         local slot = line.slots[i]
         if now >= slot.t and now <= slot.t + (slot.window or R.START_WINDOW_MS) + R.GRACE_MS then
+            -- Kept for the log (GroupHealth.describeSlot).
+            if slot.seen ~= nil and #slot.seen < 12 then
+                tinsert(slot.seen, entry)
+            end
             if owner == "queue" and calledMs ~= nil and slot.samples ~= nil and queueStartFits(slot, calledMs) then
                 -- WowVision's own speech, in an order that cannot be ours.
                 entry.queue = true
                 slot.queueSkips = (slot.queueSkips or 0) + 1
+                slot.lastSkipMs = now
+                if calledMs < slot.t then
+                    self:widen(slot)
+                end
+                break
+            end
+            if now - slot.t < R.FIRST_START_MS then
+                -- Sooner than the engine ever starts an utterance after its
+                -- call (now is debugprofilestop's clock, and a start is
+                -- handled at or after it happened): called before our slot,
+                -- someone else's. Left out instead of spoiling the slot.
+                entry.early = true
+                self.stats.earlyStarts = (self.stats.earlyStarts or 0) + 1
+                self:widen(slot)
                 break
             end
             if now > slot.t + (slot.window or R.START_WINDOW_MS) then
@@ -975,6 +1073,7 @@ function Readback:onStarted(id)
         tinsert(slot.list, entry)
     else
         slot.ambiguous = true
+        slot.why = slot.why or "more starts than calls"
     end
 end
 
@@ -991,6 +1090,9 @@ function Readback:slotRun(slot)
         return nil
     end
     if slot.broken or slot.ambiguous or #slot.list ~= slot.expect or #slot.list < 1 then
+        if not slot.broken and not slot.ambiguous then
+            slot.why = slot.why or "a start missing"
+        end
         return nil, true
     end
     local sorted = {}
@@ -1001,6 +1103,7 @@ function Readback:slotRun(slot)
         return x.id < y.id
     end)
     if sorted[#sorted].id - sorted[1].id ~= #sorted - 1 then
+        slot.why = slot.why or "ids not in a row"
         return nil, true
     end
     -- The id right after the run started by the end of the grace, and not
@@ -1012,6 +1115,8 @@ function Readback:slotRun(slot)
     if after ~= nil and not after.queue and after.t <= slot.t + slot.window + R.GRACE_MS then
         local nextSlot = after.slot
         if nextSlot == nil or (nextSlot ~= slot and after.t < nextSlot.t + R.FIRST_START_MS) then
+            slot.why = slot.why or "a start right after ours"
+            slot.after = after
             return nil, true
         end
     end
