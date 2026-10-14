@@ -97,25 +97,63 @@ testRunner:addSuite("TtsVoice", {
         end)
     end,
 
-    ["a speech voice choice comes first and means the Speech Voice setting"] = function(t)
+    ["a following voice shows the voice it follows, with no entry of its own"] = function(t)
         withVoices({ "Hedda", "Zira" }, function()
             local SPEECH = WowVision.classes.SPEECH_VOICE
+            local speechVoice = 1
             local set = WowVision.classes.newFieldSet({ key = "tts" })
-            local field = set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
-            local choices = field:getChoices(set)
-            t:assertEqual(#choices, 3)
-            t:assertEqual(choices[1].label, "Speech Voice")
-            t:assertEqual(choices[1].value, SPEECH)
-            t:assertEqual(field:getValueString(set, SPEECH), "Speech Voice")
+            local field = set:add({
+                key = "voice",
+                type = "TtsVoice",
+                followVoice = function()
+                    return speechVoice
+                end,
+                default = SPEECH,
+            })
+            t:assertEqual(#field:getChoices(set), 2)
+            t:assertEqual(field:shownVoice(set, SPEECH), 1)
+            t:assertEqual(field:getValueString(set, SPEECH), "Zira")
+            speechVoice = 0
+            t:assertEqual(field:shownVoice(set, SPEECH), 0)
+            t:assertEqual(field:getValueString(set, SPEECH), "Hedda")
+            t:assertEqual(field:shownVoice(set, 1), 1)
         end)
     end,
 
-    ["the speech voice choice is saved as itself, never pinned to a name"] = function(t)
+    ["picking the followed voice keeps following, another voice is kept"] = function(t)
+        withVoices({ "Hedda", "Zira" }, function()
+            local SPEECH = WowVision.classes.SPEECH_VOICE
+            local set = WowVision.classes.newFieldSet({ key = "tts" })
+            local field = set:add({
+                key = "voice",
+                type = "TtsVoice",
+                followVoice = function()
+                    return 0
+                end,
+                default = SPEECH,
+            })
+            t:assertEqual(field:pickedVoice(set, 0), SPEECH)
+            t:assertEqual(field:pickedVoice(set, 1), 1)
+        end)
+    end,
+
+    ["the following value is saved as itself, never pinned to a name"] = function(t)
         local SPEECH = WowVision.classes.SPEECH_VOICE
         local db = {}
-        withVoices({ "Hedda", "Zira" }, function()
+        local function voiceSet()
             local set = WowVision.classes.newFieldSet({ key = "tts" })
-            set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
+            set:add({
+                key = "voice",
+                type = "TtsVoice",
+                followVoice = function()
+                    return 0
+                end,
+                default = SPEECH,
+            })
+            return set
+        end
+        withVoices({ "Hedda", "Zira" }, function()
+            local set = voiceSet()
             set:setDB(db)
             t:assertEqual(set:getFieldValue("voice"), SPEECH)
             t:assertEqual(db.voice, nil)
@@ -125,17 +163,20 @@ testRunner:addSuite("TtsVoice", {
             t:assertEqual(db.voice, SPEECH)
         end)
         withVoices({ "Katja", "Hedda", "Zira" }, function()
-            local set = WowVision.classes.newFieldSet({ key = "tts" })
-            set:add({ key = "voice", type = "TtsVoice", speechVoice = "Speech Voice", default = SPEECH })
+            local set = voiceSet()
             set:setDB(db)
             t:assertEqual(set:getFieldValue("voice"), SPEECH)
         end)
     end,
 
-    ["without the option there is no speech voice choice"] = function(t)
+    ["without followVoice a value shows as itself"] = function(t)
         withVoices({ "Hedda", "Zira" }, function()
             local A = voiceClass()
-            t:assertEqual(#A:getField("voice"):getChoices(A:new()), 2)
+            local field = A:getField("voice")
+            local a = A:new()
+            t:assertEqual(#field:getChoices(a), 2)
+            t:assertEqual(field:shownVoice(a, 1), 1)
+            t:assertEqual(field:pickedVoice(a, 0), 0)
         end)
     end,
 

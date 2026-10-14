@@ -32,13 +32,15 @@ function tts:initialize(info)
                 return self.defaultInterrupt
             end,
         })
-        -- Spoken in the queue like all speech, with the Speech Voice setting
-        -- unless a voice of its own is picked here.
+        -- Spoken in the queue like all speech. Until a voice of its own is
+        -- picked here, it follows the Speech Voice setting (and shows it).
         self:addParameter({
             key = "voice",
             type = "TtsVoice",
             label = L["Voice"],
-            speechVoice = L["Speech Voice"],
+            followVoice = function()
+                return WowVision.base.speech.settings.voiceID
+            end,
             default = WowVision.classes.SPEECH_VOICE,
         })
     else

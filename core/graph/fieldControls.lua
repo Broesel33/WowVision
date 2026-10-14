@@ -60,8 +60,12 @@ end)
 settings.registerFieldControl("TtsVoice", function(field, owner)
     return nodes.choice({
         label = field:getLabel(),
-        get = getterOf(owner, field),
-        set = setterOf(owner, field),
+        get = function()
+            return field:shownVoice(owner, field:get(owner))
+        end,
+        set = function(value)
+            field:set(owner, field:pickedVoice(owner, value))
+        end,
         choices = function()
             return field:getChoices(owner)
         end,

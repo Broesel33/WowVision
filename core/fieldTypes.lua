@@ -667,8 +667,10 @@ classes.registerFieldType("VoicePack", {
 -- voice it means now. A stored name whose voice is not installed reads as
 -- the default but stays stored, so the choice returns with the voice (a
 -- Windows update can drop added voices for a while).
--- def key speechVoice = a label: adds a first choice, saved and read as
--- classes.SPEECH_VOICE, meaning "whatever the Speech Voice setting is".
+-- def key followVoice = function() -> voiceID: the value may be
+-- classes.SPEECH_VOICE, saved as itself, meaning "the voice followVoice
+-- names now" (the Speech Voice setting). It is shown as that voice, with no
+-- entry of its own, and picking that voice keeps the field following it.
 -- ---------------------------------------------------------------------------
 
 classes.SPEECH_VOICE = -1
@@ -704,8 +706,8 @@ end
 classes.registerFieldType("TtsVoice", {
     default = 0,
     valueString = function(field, obj, value)
-        if value == classes.SPEECH_VOICE and field.speechVoice ~= nil then
-            return field.speechVoice
+        if value == classes.SPEECH_VOICE and field.followVoice ~= nil then
+            value = field.followVoice()
         end
         local name = ttsVoiceName(value)
         if name == nil and value ~= nil then
@@ -743,13 +745,26 @@ classes.registerFieldType("TtsVoice", {
     api = {
         getChoices = function(field, obj)
             local result = {}
-            if field.speechVoice ~= nil then
-                tinsert(result, { label = field.speechVoice, value = classes.SPEECH_VOICE })
-            end
             for _, voice in ipairs(ttsVoices()) do
                 tinsert(result, { label = voice.name, value = voice.voiceID })
             end
             return result
+        end,
+        -- The voice to mark as chosen: a following value shows the voice
+        -- it follows.
+        shownVoice = function(field, obj, value)
+            if value == classes.SPEECH_VOICE and field.followVoice ~= nil then
+                return field.followVoice()
+            end
+            return value
+        end,
+        -- The value to store for a picked voice: the followed voice keeps
+        -- the field following it.
+        pickedVoice = function(field, obj, value)
+            if field.followVoice ~= nil and value == field.followVoice() then
+                return classes.SPEECH_VOICE
+            end
+            return value
         end,
     },
 })
