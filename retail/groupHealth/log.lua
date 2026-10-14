@@ -47,6 +47,8 @@ function module:keepLog()
         readback = self.checks ~= nil and self.checks.readback.stats or nil,
         respoken = self.respoken,
         stopSources = self.stopSources,
+        stopKinds = self.stopKinds,
+        stopsLeftOut = self.stopsLeftOut,
         stopStacks = self.stopStacks,
     }
 end
@@ -154,16 +156,44 @@ local function stackPlace(line)
     return nil
 end
 
+-- What a stop through WowVision's speech module cut, taken just before it
+-- (its own hook clears the state): whether WowVision itself was speaking
+-- (an utterance of its queue playing, or waiting), and how many checks of
+-- ours and numbers that may still play were out. A stop while WowVision
+-- was silent cut only other speech: ours, Blizzard's alerts. Only a look,
+-- the stop itself goes on unchanged.
+local speech = WowVision.base.speech
+local stopWithoutLook = speech.stop
+function speech:stop(...)
+    if module.logging then
+        local readback = module.checks ~= nil and module.checks.readback or nil
+        module.stopLook = {
+            speaking = self.speaking == true or #self.queue > 0,
+            checks = readback ~= nil and #readback.inflight or 0,
+        }
+    end
+    local result = stopWithoutLook(self, ...)
+    -- Still here: the hook below never ran, the stop was left out (only
+    -- silent samples playing).
+    if module.logging and module.stopLook ~= nil then
+        local look = module.stopLook
+        module.stopLook = nil
+        local source = module:stopSource(debugstack(2, 20, 0) or "")
+        module.stopsLeftOut = module.stopsLeftOut or {}
+        module.stopsLeftOut[source] = (module.stopsLeftOut[source] or 0) + 1
+        append({ logTime(), string.format("stop left out (only silent checks playing) from %s%s, %d checks kept", source, InCombatLockdown() and ", in combat" or "", look.checks) })
+    end
+    return result
+end
+
 -- Who stopped all speech, while the log is on: the first place in the call
 -- stack past the hooks and the speech module (only the messenger), with
 -- whether Ctrl was held (Blizzard's Ctrl stop, the "Stop Text to Speech"
 -- binding). Counted per source; each source's first stack is kept whole,
 -- and every stop gets a log line, to set beside lost checks.
-hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
-    if not module.logging then
-        return
-    end
-    local stack = debugstack(2, 20, 0) or ""
+-- The first place in a stack past the hooks and the speech module, and
+-- whether Ctrl is held.
+function module:stopSource(stack)
     local source = nil
     for line in stack:gmatch("[^\n]+") do
         local place = stackPlace(line)
@@ -178,13 +208,40 @@ hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
     if IsControlKeyDown() then
         source = source .. ", Ctrl held"
     end
+    return source
+end
+
+hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
+    if not module.logging then
+        return
+    end
+    local stack = debugstack(2, 20, 0) or ""
+    local source = module:stopSource(stack)
     module.stopSources = module.stopSources or {}
     module.stopSources[source] = (module.stopSources[source] or 0) + 1
     module.stopStacks = module.stopStacks or {}
     if module.stopStacks[source] == nil then
         module.stopStacks[source] = stack:sub(1, 1500)
     end
-    append({ logTime(), "stop of all speech by " .. source })
+    -- Per source: stops while WowVision spoke, while it was silent (only
+    -- other speech cut), not through its speech module; checks cut by each.
+    local look = module.stopLook
+    module.stopLook = nil
+    local kind = look == nil and "other" or (look.speaking and "speaking" or "silent")
+    module.stopKinds = module.stopKinds or {}
+    local kinds = module.stopKinds[source] or { speaking = 0, silent = 0, other = 0, checksCutSpeaking = 0, checksCutSilent = 0, inCombat = 0 }
+    if InCombatLockdown() then
+        kinds.inCombat = kinds.inCombat + 1
+    end
+    module.stopKinds[source] = kinds
+    kinds[kind] = kinds[kind] + 1
+    if look ~= nil then
+        local key = look.speaking and "checksCutSpeaking" or "checksCutSilent"
+        kinds[key] = kinds[key] + look.checks
+    end
+    local what = (InCombatLockdown() and ", in combat" or "")
+        .. (look == nil and "" or string.format(", WowVision %s, %d checks out", look.speaking and "speaking" or "silent", look.checks))
+    append({ logTime(), "stop of all speech by " .. source .. what })
 end)
 
 local function counts(list)
@@ -230,6 +287,8 @@ module:registerCommand({
             module.healthEvents = 0
             module.respoken = 0
             module.stopSources = nil
+            module.stopKinds = nil
+            module.stopsLeftOut = nil
             if module.checks ~= nil then
                 module.checks.readback:resetStats()
             end

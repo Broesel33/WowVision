@@ -737,6 +737,10 @@ ruleSetting.events.valueChange:subscribe(module, function()
     end
 end)
 
+-- WowVision's own stops (keys, Ctrl, interrupting alerts) leave out the
+-- stop while only our silent samples play.
+WowVision.base.speech:addSilentJudge(GroupHealth.isOwnSilent)
+
 -- Anyone stopping all speech cuts the samples and our speech with them:
 -- the readback drops the cut samples, reads those members again and hands
 -- back the cut speech.

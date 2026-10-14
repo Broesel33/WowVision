@@ -29,8 +29,55 @@ local START_WAIT = 2
 local pendingStarts = {}
 local asideUtterances = {}
 
-local function expectStart(owner)
-    tinsert(pendingStarts, { owner = owner, at = GetTime() })
+-- `silent`: called at volume 0 (it may wait without anything to hear).
+local function expectStart(owner, silent)
+    tinsert(pendingStarts, { owner = owner, at = GetTime(), silent = silent })
+end
+
+-- Utterances playing now (started, not ended; a stop ends them all, and
+-- a stopped one never reports its end), by id, with when they started.
+local playing = {}
+-- Longer than any utterance plays: an entry this old lost its end.
+local PLAYING_FORGET = 30
+
+-- Who can tell that an utterance of theirs is silent (the group health
+-- monitor's timing samples, readback.lua): function(id) true when silent.
+local silentJudges = {}
+
+function module:addSilentJudge(judge)
+    tinsert(silentJudges, judge)
+end
+
+local function knownSilent(id)
+    for _, judge in ipairs(silentJudges) do
+        if judge(id) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Whether anything that can be heard is playing or about to: our queue,
+-- anything else playing (other speech, Blizzard's alerts, numbers beside
+-- the queue), or speech called and not started yet that is not silent.
+function module:audibleNow()
+    if self.speaking or #self.queue > 0 then
+        return true
+    end
+    local now = GetTime()
+    for id, startedAt in pairs(playing) do
+        if now - startedAt > PLAYING_FORGET then
+            playing[id] = nil
+        elseif not knownSilent(id) then
+            return true
+        end
+    end
+    for _, entry in ipairs(pendingStarts) do
+        if not entry.silent and now - entry.at <= START_WAIT then
+            return true
+        end
+    end
+    return false
 end
 
 local function takeStart()
@@ -123,6 +170,11 @@ WowVision.speechSounds.attach(module, settings, L)
 
 local function frame_OnEvent(frame, event, utteranceID)
     if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
+        playing[utteranceID] = GetTime()
+    else
+        playing[utteranceID] = nil
+    end
+    if event == "VOICE_CHAT_TTS_PLAYBACK_STARTED" then
         if takeStart() == "aside" then
             asideUtterances[utteranceID] = true
             return
@@ -203,13 +255,21 @@ function module:speakAside(voice, text, rate, volume)
     elseif volume < 0 then
         volume = 0
     end
-    expectStart("aside")
+    expectStart("aside", volume == 0)
     oldSpeak(voice, text, rate or 0, volume, true)
 end
 
+-- Stops all speech; the game has only one stop, for every utterance at
+-- once. With nothing to hear playing (only the group health monitor's
+-- silent timing samples) there is nothing to stop, and the stop is left
+-- out: those samples go on (2026-10-14; a stop costs the monitor every
+-- check out, and keys and Ctrl come often). What can be heard is stopped
+-- exactly as before.
 function module:stop()
     self.queue = {}
-    C_VoiceChat.StopSpeakingText()
+    if self:audibleNow() then
+        C_VoiceChat.StopSpeakingText()
+    end
     self.speaking = false
 end
 
@@ -218,6 +278,7 @@ end
 -- never start. Without this a stale entry would take the queue's next
 -- start as speech beside it, swallow its end and stall the queue.
 hooksecurefunc(C_VoiceChat, "StopSpeakingText", function()
+    wipe(playing)
     wipe(pendingStarts)
     wipe(asideUtterances)
     module.speaking = false

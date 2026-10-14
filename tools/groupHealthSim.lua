@@ -11,8 +11,9 @@
 -- The engine copies what was measured on WoW: Forever (2026-10-13):
 -- - a start comes 34 to 56 ms after the call, events land on frames;
 -- - an utterance 'a<silence msec="s"/>' at rate 10 plays 190 + 0.3314 * s ms
---   (plus a few ms of noise; opts.baseMs and opts.slope replace the two
---   numbers, for another voice); utterances overlap freely;
+--   (opts.baseMs and opts.slope replace the two numbers, for another
+--   voice), plus Sim.LATE_MS and a spread of Sim.SPREAD_MS (below);
+--   utterances overlap freely;
 -- - other WowVision speech plays beside ours; now and then a stop of all
 --   speech (hooked, like C_VoiceChat.StopSpeakingText: the readback purges,
 --   reads everyone again and hands back cut numbers), a stop followed by
@@ -47,6 +48,14 @@ local function levelOf(health)
     end
     return #Sim.LEVELS
 end
+-- The spread of the played times, from 192 single utterances on the
+-- user's machine (/wv ghprobe jitter, 2026-10-14, Sound in Background on,
+-- game in front): off a level median 0.10, 90 percent within 0.26, 99
+-- within 0.41, worst 0.47, 0.04 late on average, 1 of 192 thrown away.
+-- The simulated probe (frames at 60 fps, these two values) gives about
+-- 0.12, 0.25, 0.38, and 0.5 percent thrown away.
+Sim.LATE_MS = 4
+Sim.SPREAD_MS = 13
 Sim.SPACING = 0.2
 -- Preparing one utterance in the engine, ms (see engineSpeak).
 Sim.ENGINE_MS = { 33, 40 }
@@ -317,7 +326,7 @@ function Sim.run(opts)
     local line = GroupHealth.newReadbackLine()
     local function speakSample(text)
         local silence = tonumber(text:match('msec="(%d+)"'))
-        local played = (opts.baseMs or 190) + (opts.slope or 0.3314) * silence + world.r.normal(opts.noiseMs or 4)
+        local played = (opts.baseMs or 190) + (opts.slope or 0.3314) * silence + (opts.lateMs or Sim.LATE_MS) + world.r.normal(opts.noiseMs or Sim.SPREAD_MS)
         engineSpeak(world, played, handlers)
     end
     -- The monitor's real checks (retail/groupHealth/checks.lua) on the

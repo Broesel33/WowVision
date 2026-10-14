@@ -539,6 +539,18 @@ function GroupHealth.newReadbackLine()
 end
 GroupHealth.readbackLine = GroupHealth.newReadbackLine()
 
+-- Whether utterance `id` is one of the line's silent timing samples (not
+-- a number carried with them, not our speech in a slot of its own): only
+-- in a slot whose starts are all ours so far. Speech of someone else that
+-- started in our window makes the slot ambiguous, and then none of its
+-- utterances counts as silent.
+function GroupHealth.isOwnSilent(id)
+    local entry = GroupHealth.readbackLine.byId[id]
+    local slot = entry ~= nil and entry.slot or nil
+    return slot ~= nil and slot.samples ~= nil and not slot.ambiguous and not slot.broken
+        and entry.order > slot.carried and entry.order <= slot.expect
+end
+
 local Readback = WowVision.Class("GroupHealthReadback")
 GroupHealth.Readback = Readback
 
@@ -1197,6 +1209,8 @@ function Readback:decode(m)
     local playedHigh = finishes[first.id] - first.t
     local playedLow = second ~= nil and finishes[second.id] - second.t or nil
     local value, why, rawHigh, rawLow = GroupHealth.readbackValue(m.plan, playedHigh, playedLow)
+    -- Kept on the sample, so whoever hears of a discard sees what it played.
+    m.rawHigh, m.rawLow = rawHigh, rawLow
     if value == nil then
         return nil, why
     end
