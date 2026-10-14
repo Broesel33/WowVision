@@ -16,8 +16,10 @@
 --   0.3314 * silence (rate 10 shortens the silence too); every sample was
 --   within 0.27 of a level. Fixed values, no calibration; two more
 --   machines' headsets and speakers timed the same. Measured on levels 0
---   to 3 (and 1500 ms of silence in the flood probe); the levels above,
---   which one utterance now uses, are checked by /wv ghprobe check.
+--   to 3 (and 1500 ms of silence in the flood probe); the levels up to 16,
+--   which one utterance now uses, read right too (2026-10-14: all 16, and
+--   191 of 192 in a longer run; the developer probe is not part of this
+--   change).
 --   Offline (SAPI to a file, 2026-10-13) Hedda, Katja, Stefan and Zira all
 --   shorten silence to exactly a third at rate 10, their "a" within 16 ms
 --   of Hedda's; the simulation keeps reading up to about 20 ms off.
@@ -37,7 +39,7 @@
 --   never reports its end; the hook below tells.
 --
 -- A sample is ONE utterance (R.LAYOUT "single"; "pair", two digits, is the
--- first form, left for the probe), called in the same frame as the number
+-- first form, kept as an option), called in the same frame as the number
 -- it checks, so both read the same health. Its level is the value of the
 -- band the health is in under the sample's PLAN. The events carry only an
 -- utterance id; ids count up in call order (checked in game).
@@ -130,7 +132,7 @@ local R = {
     -- for all speech, and in a fight that limits the checks, not how long
     -- they play (simulation, 2026-10-14: utterances half as long changed
     -- nothing, one start less per check did). "pair": two utterances in
-    -- base 4 (the first form, checked in game; the probe still uses it).
+    -- base 4 (the first form, checked in game).
     LAYOUT = "single",
     -- The levels a single utterance uses, value 0 first. Level 2 is left
     -- out: with the game in the background every utterance plays about

@@ -49,7 +49,7 @@ local function levelOf(health)
     return #Sim.LEVELS
 end
 -- The spread of the played times, from 192 single utterances on the
--- user's machine (/wv ghprobe jitter, 2026-10-14, Sound in Background on,
+-- user's machine (a developer probe, 2026-10-14, Sound in Background on,
 -- game in front): off a level median 0.10, 90 percent within 0.26, 99
 -- within 0.41, worst 0.47, 0.04 late on average, 1 of 192 thrown away.
 -- The simulated probe (frames at 60 fps, these two values) gives about
