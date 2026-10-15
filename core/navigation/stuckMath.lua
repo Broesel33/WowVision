@@ -46,18 +46,12 @@ function stuckMath.standstill(actual, dt)
     return nil
 end
 
--- A game walk (the interact key) that ended this quickly cannot have
--- arrived anywhere: the game refused the way at once.
-stuckMath.SHORT_WALK = 0.3
-
--- Whether a walk the game made ended short of its goal: it was refused at
--- once, or its last check was slowed. An arrival keeps full pace to the end
--- (graded 5 at worst, from frame jitter); a walk the game gives up against
--- something was slowed first.
-function stuckMath.walkEndedShort(duration, lastSeverity)
-    if duration < stuckMath.SHORT_WALK then
-        return true
-    end
+-- Whether a walk the game made (the interact key) ended short of its goal:
+-- its last check was slowed. An arrival keeps full pace to the end (graded
+-- 5 at worst, from frame jitter); a walk the game gives up against something
+-- was slowed first. A very short walk says nothing: next to an NPC just out
+-- of reach the game walks a yard and arrives.
+function stuckMath.walkEndedShort(lastSeverity)
     return lastSeverity ~= nil and lastSeverity <= 4
 end
 

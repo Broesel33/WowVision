@@ -40,15 +40,13 @@ testRunner:addSuite("StuckMath", {
         t:assertNil(stuckMath.standstill(0, nil))
     end,
 
-    ["a game walk ended short when refused at once or slowed at the end"] = function(t)
-        -- Refused: stopped a tenth of a second after it began.
-        t:assertTrue(stuckMath.walkEndedShort(0.1, nil))
+    ["a game walk ended short only when slowed at the end"] = function(t)
         -- Gave up against something: the last check was slowed.
-        t:assertTrue(stuckMath.walkEndedShort(0.8, 4))
-        t:assertTrue(stuckMath.walkEndedShort(3, 1))
-        -- Arrived: full pace to the end.
-        t:assertFalse(stuckMath.walkEndedShort(5.6, nil))
-        t:assertFalse(stuckMath.walkEndedShort(4.9, 5))
+        t:assertTrue(stuckMath.walkEndedShort(4))
+        t:assertTrue(stuckMath.walkEndedShort(1))
+        -- Arrived: full pace to the end, however short the walk.
+        t:assertFalse(stuckMath.walkEndedShort(nil))
+        t:assertFalse(stuckMath.walkEndedShort(5))
     end,
 
     ["cadence fires every Nth impeded sample and resets when free"] = function(t)

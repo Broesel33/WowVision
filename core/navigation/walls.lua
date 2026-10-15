@@ -51,9 +51,9 @@ end
 
 -- A walk the game makes with no key held (the interact key, click to move)
 -- ends on its own when the way is blocked, mostly before three checks could
--- grade it. A walk that ended short plays the blocked sound once. The game
--- reports a stop and a start in the same instant as such a walk begins, so a
--- stop counts only once it held for STOP_SETTLE.
+-- grade it. A walk that ended short of its goal plays the blocked sound
+-- once. The game reports a stop and a start in the same instant as such a
+-- walk begins, so a stop counts only once it held for STOP_SETTLE.
 local STOP_SETTLE = 0.2
 local gameWalkStart = nil
 -- When the game said the walk stopped, and the last check's severity then
@@ -75,17 +75,19 @@ function module:onEvent(event)
 end
 
 local function checkGameWalkEnd(self, now)
-    if WowVision.movement:isTranslating() then
-        -- The player took over with a key.
+    local movement = WowVision.movement
+    -- A movement key during the walk made it the player's own (the start
+    -- comes before the key's Start function, so a quick tap shows only in
+    -- lastCommandAt).
+    if movement:isTranslating() or movement.lastCommandAt >= gameWalkStart then
         gameWalkStart, stoppedAt = nil, nil
         return
     end
     if stoppedAt == nil or now - stoppedAt < STOP_SETTLE then
         return
     end
-    local duration = stoppedAt - gameWalkStart
     gameWalkStart, stoppedAt = nil, nil
-    if not lostControl() and stuckMath.walkEndedShort(duration, stoppedSeverity) then
+    if not lostControl() and stuckMath.walkEndedShort(stoppedSeverity) then
         self:fireAlert("stuck", { action = "stuck1" })
     end
 end

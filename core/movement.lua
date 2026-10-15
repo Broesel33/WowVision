@@ -20,6 +20,11 @@ local movement = {
         autorun = false,
         following = false,
     },
+    -- GetTime() of the last translation command (a movement key going down,
+    -- autorun). The game reports PLAYER_STARTED_MOVING before the key's Start
+    -- function runs, in the same frame, so a start with no flag set can still
+    -- be the player's own: compare against this.
+    lastCommandAt = 0,
 }
 WowVision.movement = movement
 
@@ -74,6 +79,19 @@ hooksecurefunc("StopAutoRun", flagSetter("autorun", false))
 hooksecurefunc("ToggleAutoRun", function()
     movement.flags.autorun = not movement.flags.autorun
 end)
+local function noteCommand()
+    movement.lastCommandAt = GetTime()
+end
+for _, name in ipairs({
+    "MoveForwardStart",
+    "MoveBackwardStart",
+    "StrafeLeftStart",
+    "StrafeRightStart",
+    "StartAutoRun",
+    "ToggleAutoRun",
+}) do
+    hooksecurefunc(name, noteCommand)
+end
 hooksecurefunc("FollowUnit", flagSetter("following", true))
 -- Any manual movement command ends follow.
 hooksecurefunc("MoveForwardStart", flagSetter("following", false))

@@ -59,7 +59,10 @@ loadAddonFile("core/navigation/stuckTests.lua")
 -- suite can play the game's side.
 do
     local hooks, eventFrame = {}, nil
-    local game = { moving = false, falling = false }
+    local game = { moving = false, falling = false, now = 0 }
+    function GetTime()
+        return game.now
+    end
     function IsPlayerMoving()
         return game.moving
     end
@@ -136,6 +139,23 @@ do
             call("MoveForwardStart")
             t:assertTrue(movement:isMoving())
             call("MoveForwardStop")
+        end,
+
+        ["a movement key or autorun notes the time of the command"] = function(t)
+            reset()
+            movement.lastCommandAt = 0
+            game.now = 5
+            call("MoveForwardStart")
+            t:assertEqual(movement.lastCommandAt, 5)
+            call("MoveForwardStop")
+            game.now = 7
+            call("ToggleAutoRun")
+            t:assertEqual(movement.lastCommandAt, 7)
+            -- Turning is no translation command.
+            game.now = 9
+            call("TurnLeftStart")
+            t:assertEqual(movement.lastCommandAt, 7)
+            call("TurnLeftStop")
         end,
 
         ["a stale key flag does not count while the game says standing"] = function(t)
