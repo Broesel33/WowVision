@@ -137,6 +137,16 @@ do
             t:assertTrue(movement:isMoving())
             call("MoveForwardStop")
         end,
+
+        ["a stale key flag does not count while the game says standing"] = function(t)
+            reset()
+            -- The Stop function never ran: the flag stays on.
+            call("MoveForwardStart")
+            t:assertFalse(movement:isMoving())
+            game.moving = true
+            t:assertTrue(movement:isMoving())
+            call("MoveForwardStop")
+        end,
     })
 end
 loadAddonFile("core/navigation/camera.lua")

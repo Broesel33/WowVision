@@ -37,12 +37,14 @@ end
 
 -- Whether the player is moving by any means: a commanded movement, or the
 -- game moving them with no key held (autorun, the interact key walking to
--- its target, click to move). The game's moving state stays on while the
--- player pushes against something, and turning has a state of its own
--- (PLAYER_STARTED_TURNING). Falls are left out: a fall straight down has no
--- sideways movement to judge.
+-- its target, click to move). The game's moving state is the ground truth:
+-- it stays on while the player pushes against something (and while stunned
+-- with a key held), turning has a state of its own (PLAYER_STARTED_TURNING),
+-- and it stays off when a flag above went stale (a key release that never
+-- reached its Stop function). Falls without a key are left out: a fall
+-- straight down has no sideways movement to judge.
 function movement:isMoving()
-    return self:isTranslating() or (IsPlayerMoving() and not IsFalling())
+    return IsPlayerMoving() and (self:isTranslating() or not IsFalling())
 end
 
 local function flagSetter(key, value)
