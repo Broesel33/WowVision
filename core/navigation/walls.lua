@@ -39,7 +39,7 @@ settings:addRef("stuck", alert.parameters)
 local cadence = stuckMath.newCadence(3)
 local lastCheck = 0
 local lastX, lastY = nil, nil
-local wasTranslating = false
+local wasMoving = false
 -- The last check's severity, for judging how a game walk ended.
 local lastSeverity = nil
 
@@ -102,7 +102,7 @@ module:hasUpdate(function(self)
 
     if UnitOnTaxi("player") then
         lastX, lastY = nil, nil
-        wasTranslating = false
+        wasMoving = false
         lastSeverity = nil
         cadence:sample(nil)
         return
@@ -113,14 +113,14 @@ module:hasUpdate(function(self)
     end
 
     local px, py = UnitPosition("player")
-    local translating = WowVision.movement:isMoving()
+    local moving = WowVision.movement:isMoving()
 
-    -- Only judge intervals where the player was moving end to end and both
-    -- position samples exist.
     if lostControl() then
         lastSeverity = nil
         cadence:sample(nil)
-    elseif translating and wasTranslating and px ~= nil and lastX ~= nil then
+    -- Only judge intervals where the player was moving end to end and both
+    -- position samples exist.
+    elseif moving and wasMoving and px ~= nil and lastX ~= nil then
         local dx, dy = px - lastX, py - lastY
         local actual = math.sqrt(dx * dx + dy * dy)
         local speed, _, _, swimSpeed = GetUnitSpeed("player")
@@ -149,5 +149,5 @@ module:hasUpdate(function(self)
     end
 
     lastX, lastY = px, py
-    wasTranslating = translating
+    wasMoving = moving
 end)
