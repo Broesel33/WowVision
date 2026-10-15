@@ -1,6 +1,8 @@
 -- Chat tabs: the game's own chat windows decide which messages each tab
 -- receives (the chat settings, per tab); WowVision only decides how a tab
--- is spoken. The rules here are pure so the headless tests run them.
+-- is spoken. The rules here are pure so the headless tests run them; the
+-- name readers at the end ask the game.
+local L = WowVision:getLocale()
 local chatTabs = {}
 WowVision.chatTabs = chatTabs
 
@@ -46,20 +48,46 @@ function chatTabs.lineKey(eventArgs, text)
     return nil
 end
 
--- The first tab to speak a message claims it; the others stay quiet. Claims
--- only live for one moment (every tab handles the event in the same frame).
+-- The first tab to speak a message claims it; the other tabs stay quiet.
+-- Claims only live for one moment (every tab handles the event in the same
+-- frame), and never silence the claiming tab itself: two equal lines in one
+-- tab (the same combat log hit twice) are two messages.
 function chatTabs.newClaims()
-    local claims = { time = nil, keys = {} }
-    function claims:claim(key, now)
+    local claims = { time = nil, owners = {} }
+    function claims:claim(key, now, tab)
         if now ~= self.time then
             self.time = now
-            self.keys = {}
+            self.owners = {}
         end
-        if self.keys[key] then
+        local owner = self.owners[key]
+        if owner ~= nil and owner ~= tab then
             return false
         end
-        self.keys[key] = true
+        self.owners[key] = tab
         return true
     end
     return claims
+end
+
+-- A tab's name as the game shows it. A whisper tab is named after the
+-- partner, which can be a secret: it is passed on, never inspected.
+function chatTabs.tabName(frame)
+    local name = frame.name
+    if not WowVision.secrets.hasText(name) then
+        local tab = _G[frame:GetName() .. "Tab"]
+        name = tab ~= nil and tab:GetText() or nil
+    end
+    if not WowVision.secrets.hasText(name) then
+        return L["Chat Tab %d"]:format(frame:GetID())
+    end
+    return name
+end
+
+-- A permanent window's saved name, for settings and buffer choices.
+function chatTabs.tabLabel(index)
+    local name = GetChatWindowInfo(index)
+    if name == nil or name == "" then
+        return L["Chat Tab %d"]:format(index)
+    end
+    return name
 end

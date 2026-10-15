@@ -112,29 +112,6 @@ function module.getMessageString(data)
     return data.message .. " " .. data.datetime
 end
 
--- A tab's name as the game shows it. A whisper tab is named after the
--- partner, which can be a secret: it is passed on, never inspected.
-function chatTabs.tabName(frame)
-    local name = frame.name
-    if name == nil or (not WowVision.secrets.isSecret(name) and name == "") then
-        local tab = _G[frame:GetName() .. "Tab"]
-        name = tab ~= nil and tab:GetText() or nil
-    end
-    if name == nil or (not WowVision.secrets.isSecret(name) and name == "") then
-        return L["Chat Tab %d"]:format(frame:GetID())
-    end
-    return name
-end
-
--- A permanent window's label for settings and buffer choices: its saved name.
-function chatTabs.tabLabel(index)
-    local name = GetChatWindowInfo ~= nil and GetChatWindowInfo(index) or nil
-    if name == nil or name == "" then
-        return L["Chat Tab %d"]:format(index)
-    end
-    return name
-end
-
 -- Stores live as long as the session: a tab closed and opened again (or a
 -- temporary window reused for another conversation) refills the same one.
 local function ensureStore(key, messages)
@@ -177,7 +154,7 @@ end
 
 function module.onMessage(frame, message, r, g, b, typeID, accessID, lineTypeID, event, eventArgs)
     local ref = module.frames ~= nil and module.frames[frame:GetID()] or nil
-    if ref == nil or ref.frame ~= frame then
+    if ref == nil then
         return
     end
     local chatType = nil
@@ -206,7 +183,7 @@ function module.onMessage(frame, message, r, g, b, typeID, accessID, lineTypeID,
         return
     end
     local key = chatTabs.lineKey(eventArgs, message)
-    if key ~= nil and not claims:claim(key, GetTime()) then
+    if key ~= nil and not claims:claim(key, GetTime(), frame) then
         return
     end
     alert:fire(data)
@@ -272,10 +249,6 @@ end
 function module:runCompareFrames(frame, i)
     local ref = self.frames[i]
     local validFrame = FCF_IsValidChatFrame(frame)
-    if ref ~= nil and ref.frame ~= frame then
-        self:removeFrame(ref.frame, i)
-        ref = nil
-    end
     if not ref and validFrame then
         self:addFrame(frame, i)
         return
@@ -287,31 +260,29 @@ end
 
 -- The game opening a whisper tab: the first whisper arrives right after, in
 -- the same call stack, before the next tick could pick the window up. So it
--- is picked up here, as the game sets the window's conversation; the lines
--- the game then copies in from the source tab stay quiet until it is done.
-local copying = {}
+-- is picked up here, as the game sets the window's conversation (a reused
+-- window starts empty); the lines the game then copies in from the source
+-- tab stay quiet until it is done.
+local copying = nil
 
 function module:onTemporaryWindow(frame)
     local index = frame:GetID()
     local ref = self.frames[index]
-    if ref == nil or ref.frame ~= frame then
-        if ref ~= nil then
-            self:removeFrame(ref.frame, index)
-        end
+    if ref == nil then
         ref = self:addFrame(frame, index)
     else
         ref.store:clear()
         classify(ref)
     end
     ref.silent = true
-    copying[ref] = true
+    copying = ref
 end
 
 function module:onTemporaryWindowOpened()
-    for ref in pairs(copying) do
-        ref.silent = false
+    if copying ~= nil then
+        copying.silent = false
+        copying = nil
     end
-    copying = {}
 end
 
 local temporaryHooked = false
@@ -344,8 +315,7 @@ function module:orderedFrames()
     local frames = self.frames or {}
     if GENERAL_CHAT_DOCK ~= nil and FCFDock_GetChatFrames ~= nil then
         for _, frame in ipairs(FCFDock_GetChatFrames(GENERAL_CHAT_DOCK) or {}) do
-            local ref = frames[frame:GetID()]
-            if ref ~= nil and ref.frame == frame and not seen[frame] then
+            if frames[frame:GetID()] ~= nil then
                 seen[frame] = true
                 tinsert(result, frame)
             end
@@ -397,9 +367,7 @@ function module:onEnable()
     self:hasUpdate(function(self)
         -- Opening finished within its own call; a tick later nothing is
         -- being copied any more, whatever happened in between.
-        if next(copying) ~= nil then
-            self:onTemporaryWindowOpened()
-        end
+        self:onTemporaryWindowOpened()
         for i = 1, chatTabs.MAX_WINDOWS do
             local frame = _G["ChatFrame" .. i]
             if frame ~= nil then

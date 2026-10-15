@@ -30,15 +30,21 @@ testRunner:addSuite("ChatTabs", {
 
     ["the same message through two tabs is claimed once"] = function(t)
         local claims = chatTabs.newClaims()
-        t:assertEqual(claims:claim("line:1", 10), true)
-        t:assertEqual(claims:claim("line:1", 10), false)
-        t:assertEqual(claims:claim("line:2", 10), true)
+        t:assertEqual(claims:claim("line:1", 10, "General"), true)
+        t:assertEqual(claims:claim("line:1", 10, "Party"), false)
+        t:assertEqual(claims:claim("line:2", 10, "Party"), true)
+    end,
+
+    ["two equal lines in one tab are both spoken"] = function(t)
+        local claims = chatTabs.newClaims()
+        t:assertEqual(claims:claim("text:You hit for 12.", 10, "Combat Log"), true)
+        t:assertEqual(claims:claim("text:You hit for 12.", 10, "Combat Log"), true)
     end,
 
     ["claims expire with the moment"] = function(t)
         local claims = chatTabs.newClaims()
-        claims:claim("text:Disconnected", 10)
-        t:assertEqual(claims:claim("text:Disconnected", 11), true)
+        claims:claim("text:Disconnected", 10, "General")
+        t:assertEqual(claims:claim("text:Disconnected", 11, "Party"), true)
     end,
 
     ["a whisper tab is a temporary whisper window"] = function(t)

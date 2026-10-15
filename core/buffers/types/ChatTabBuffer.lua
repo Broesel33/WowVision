@@ -55,7 +55,7 @@ function ChatTabBuffer:getLabel()
         return L["Whisper Tabs"]
     end
     local index = self.tab ~= nil and tonumber(self.tab:match("^chat%.(%d+)$")) or nil
-    if index ~= nil and WowVision.chatTabs.tabLabel ~= nil then
+    if index ~= nil then
         return WowVision.chatTabs.tabLabel(index)
     end
     return L["Chat Tab"]
