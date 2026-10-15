@@ -30,6 +30,22 @@ function stuckMath.severity(actual, speed, dt)
     return nil
 end
 
+-- Without the speed only a standstill is judged: below this many yards per
+-- second the player is not getting anywhere. The slowest normal movement,
+-- walking (not running), is 2.5.
+stuckMath.STANDSTILL_SPEED = 1
+
+-- Severity 1 when the player barely moved in dt seconds, else nil.
+function stuckMath.standstill(actual, dt)
+    if dt == nil or dt <= 0 then
+        return nil
+    end
+    if actual / dt < stuckMath.STANDSTILL_SPEED then
+        return 1
+    end
+    return nil
+end
+
 -- The cadence counter: impeded checks fire a sound every `period` in a row
 -- (rhythmic clunks, not a machine gun); moving freely resets the rhythm.
 -- Returns the severity to SOUND, or nil.

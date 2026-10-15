@@ -30,6 +30,16 @@ testRunner:addSuite("StuckMath", {
         t:assertNil(stuckMath.severity(3.5 * 0.15, 3.5, 0.15))
     end,
 
+    ["standstill judges only barely moving"] = function(t)
+        t:assertEqual(stuckMath.standstill(0, 0.15), 1)
+        t:assertEqual(stuckMath.standstill(0.1, 0.15), 1)
+        -- Walking pace (2.5 yd/s) and a snared backward run still move.
+        t:assertNil(stuckMath.standstill(2.5 * 0.15, 0.15))
+        t:assertNil(stuckMath.standstill(1.5 * 0.15, 0.15))
+        t:assertNil(stuckMath.standstill(0, 0))
+        t:assertNil(stuckMath.standstill(0, nil))
+    end,
+
     ["cadence fires every Nth impeded sample and resets when free"] = function(t)
         local cadence = stuckMath.newCadence(3)
         t:assertNil(cadence:sample(1))

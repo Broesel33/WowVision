@@ -64,18 +64,21 @@ module:hasUpdate(function(self)
     if translating and wasTranslating and px ~= nil and lastX ~= nil then
         local dx, dy = px - lastX, py - lastY
         local actual = math.sqrt(dx * dx + dy * dy)
-        -- Speed is a secret value in combat on the modern engine, and the
-        -- grading compares it; no reading until it is plain again.
         local speed, _, _, swimSpeed = GetUnitSpeed("player")
         -- In water the first return stays the run speed, which would read
         -- every stroke as a shortfall.
         if IsSwimming() then
             speed = swimSpeed
         end
+        local severity
         if WowVision.isSecret(speed) then
-            speed = nil
+            -- Speed is a secret value in combat on the modern engine, and the
+            -- grading compares it. The position stays plain, so a standstill
+            -- is still judged.
+            severity = stuckMath.standstill(actual, dt)
+        else
+            severity = stuckMath.severity(actual, speed, dt)
         end
-        local severity = stuckMath.severity(actual, speed, dt)
         local sound = cadence:sample(severity)
         if sound ~= nil then
             self:fireAlert("stuck", { action = "stuck" .. sound })
