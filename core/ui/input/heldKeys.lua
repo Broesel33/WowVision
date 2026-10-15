@@ -8,11 +8,12 @@
 -- the key pressed again. Verified in game on WoW: Forever. So overrides
 -- wait until the keys they take are up.
 --
--- Modern clients (Retail, Forever) answer IsKeyDown directly. Classic
--- clients lack it; there the key's game binding command is checked against
--- the movement flags the hooks in core/movement.lua maintain, which covers
--- every command the game runs on press and ends on release. Unit speed and
--- "is moving" are secret on the modern clients, so neither is used.
+-- Two signals, and either one counts: IsKeyDown where the client has it
+-- (Retail, Forever; Mists and older lack it), and the key's game binding
+-- command checked against the movement flags the hooks in core/movement.lua
+-- maintain, which covers every command the game runs on press and ends on
+-- release. Unit speed and "is moving" are secret on the modern clients, so
+-- neither is used.
 --
 -- Pure Lua: the game functions arrive through an env table (gameEnv builds
 -- the real one) so the headless tests run it.
@@ -30,6 +31,9 @@ heldKeys.HELD_COMMANDS = {
     TURNRIGHT = "turnRight",
     JUMP = "ascend",
     SITORSTAND = "descend",
+    PITCHUP = "pitchUp",
+    PITCHDOWN = "pitchDown",
+    MOVEANDSTEER = "moveAndSteer",
 }
 
 -- The key an input ends with: "CTRL-SHIFT-TAB" is TAB. The minus key itself
@@ -53,6 +57,23 @@ function heldKeys.gameEnv()
     }
 end
 
+-- The held command this key is bound to in the game, as its movement flag
+-- name and the command, or nil.
+local function heldCommand(key, env)
+    if env.bindingAction == nil or env.flags == nil then
+        return nil
+    end
+    local ok, action = pcall(env.bindingAction, key)
+    if not ok or action == nil then
+        return nil
+    end
+    local flag = heldKeys.HELD_COMMANDS[action]
+    if flag == nil then
+        return nil
+    end
+    return flag, action
+end
+
 -- Whether the key of this input is physically down.
 -- env: { isKeyDown = function(key)?, bindingAction = function(key)?, flags = table? }
 function heldKeys.isHeld(input, env)
@@ -62,19 +83,43 @@ function heldKeys.isHeld(input, env)
     end
     if env.isKeyDown ~= nil then
         local ok, down = pcall(env.isKeyDown, key)
-        if ok then
-            return down == true
+        if ok and down == true then
+            return true
         end
     end
-    if env.bindingAction == nil or env.flags == nil then
-        return false
-    end
-    local ok, action = pcall(env.bindingAction, key)
-    if not ok or action == nil then
-        return false
-    end
-    local flag = heldKeys.HELD_COMMANDS[action]
+    local flag = heldCommand(key, env)
     return flag ~= nil and env.flags[flag] == true
+end
+
+-- What the two signals say about these inputs, as one plain line for the key
+-- log (/wv keylog): which keys read down, and the state of each movement
+-- command they are bound to.
+function heldKeys.describe(inputs, env)
+    local parts = {}
+    for _, input in ipairs(inputs) do
+        local key = heldKeys.baseKey(input)
+        local notes = {}
+        if env.isKeyDown ~= nil then
+            local ok, down = pcall(env.isKeyDown, key)
+            if not ok then
+                tinsert(notes, "key query refused")
+            elseif down == true then
+                tinsert(notes, "down")
+            end
+        end
+        local flag, action = heldCommand(key, env)
+        if flag ~= nil then
+            tinsert(notes, action .. (env.flags[flag] == true and " on" or " off"))
+        end
+        if #notes > 0 then
+            tinsert(parts, input .. " " .. table.concat(notes, ", "))
+        end
+    end
+    local head = env.isKeyDown ~= nil and "key state available" or "key state unavailable"
+    if #parts == 0 then
+        return head
+    end
+    return head .. ". " .. table.concat(parts, ". ")
 end
 
 -- Whether any input in the list is physically down.

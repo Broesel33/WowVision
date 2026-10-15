@@ -6,11 +6,10 @@ local function modernEnv(downKeys)
         isKeyDown = function(key)
             return downKeys[key] == true
         end,
-        -- Present but must not be consulted when isKeyDown answers.
         bindingAction = function()
-            error("bindingAction consulted")
+            return nil
         end,
-        flags = { turnLeft = true },
+        flags = {},
     }
 end
 
@@ -67,6 +66,47 @@ testRunner:addSuite("HeldKeys", {
         t:assertFalse(heldKeys.isHeld("CTRL-TAB", env))
         -- Unbound key.
         t:assertFalse(heldKeys.isHeld("ENTER", env))
+    end,
+
+    ["both signals count: a movement flag reads held even when the key state says up"] = function(t)
+        local env = {
+            isKeyDown = function()
+                return false
+            end,
+            bindingAction = function(key)
+                return key == "DOWN" and "MOVEBACKWARD" or nil
+            end,
+            flags = { moveBackward = true },
+        }
+        t:assertTrue(heldKeys.isHeld("DOWN", env))
+        t:assertFalse(heldKeys.isHeld("UP", env))
+    end,
+
+    ["pitch and steer commands are held commands"] = function(t)
+        local actions = { INSERT = "PITCHUP", DELETE = "PITCHDOWN", NUMPAD0 = "MOVEANDSTEER" }
+        local env = classicEnv(actions, { pitchUp = true, pitchDown = false, moveAndSteer = true })
+        t:assertTrue(heldKeys.isHeld("INSERT", env))
+        t:assertFalse(heldKeys.isHeld("DELETE", env))
+        t:assertTrue(heldKeys.isHeld("NUMPAD0", env))
+    end,
+
+    ["describe names the keys down and the commands they hold"] = function(t)
+        local env = {
+            isKeyDown = function(key)
+                return key == "DOWN"
+            end,
+            bindingAction = function(key)
+                return ({ DOWN = "MOVEBACKWARD", UP = "MOVEFORWARD", TAB = "TARGETNEARESTENEMY" })[key]
+            end,
+            flags = { moveBackward = true, moveForward = false },
+        }
+        t:assertEqual(
+            heldKeys.describe({ "UP", "DOWN", "TAB", "CTRL-TAB" }, env),
+            "key state available. UP MOVEFORWARD off. DOWN down, MOVEBACKWARD on"
+        )
+        t:assertEqual(heldKeys.describe({ "ENTER" }, env), "key state available")
+        t:assertEqual(heldKeys.describe({ "UP" }, classicEnv({ UP = "MOVEFORWARD" }, { moveForward = true })),
+            "key state unavailable. UP MOVEFORWARD on")
     end,
 
     ["classic client: autorun and follow are not held keys"] = function(t)

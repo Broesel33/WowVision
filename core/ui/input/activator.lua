@@ -118,4 +118,19 @@ function Activator:anyInputHeld(keymapKeys)
     return heldKeys.anyHeld(inputs, heldKeys.gameEnv())
 end
 
+-- One plain line on what the held check sees for these keymaps (the key log).
+function Activator:describeInputs(keymapKeys)
+    local inputs = {}
+    for _, key in ipairs(keymapKeys) do
+        local keymap = self.inputManager:getBinding(key)
+        if keymap ~= nil then
+            for _, input in ipairs(keymap.inputs) do
+                tinsert(inputs, input)
+            end
+        end
+    end
+    local heldKeys = WowVision.heldKeys
+    return heldKeys.describe(inputs, heldKeys.gameEnv())
+end
+
 WowVision.inputActivator = Activator:new(WowVision.input, WowVision.inputActions)

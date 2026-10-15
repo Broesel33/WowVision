@@ -59,6 +59,10 @@ function GraphHost:initialize()
     self._bindingsDirty = false
     -- The focused node's bindings are waiting for a held key to be released.
     self._engageDeferred = false
+    -- /wv keylog: print when the navigation keys are taken, waited for and
+    -- released, with what the held check saw, for chasing stuck keys.
+    self.keyLog = false
+    self._navWaitLogged = false
 
     self.frame = CreateFrame("Frame")
     self.frame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -146,6 +150,9 @@ end
 
 function GraphHost:update()
     if #self.stacks == 0 then
+        if #self._navHandles > 0 then
+            self:_logKeys("released the navigation keys")
+        end
         self:_releaseNavBindings()
         self:_dropNodeFocus()
         return
@@ -153,8 +160,17 @@ function GraphHost:update()
     if InCombatLockdown() then
         return
     end
-    if #self._navHandles == 0 and not WowVision.inputActivator:anyInputHeld(NAV_KEYMAPS) then
-        self:_engageNavBindings()
+    if #self._navHandles == 0 then
+        if WowVision.inputActivator:anyInputHeld(NAV_KEYMAPS) then
+            if not self._navWaitLogged then
+                self:_logKeys("waiting for a held key before taking the navigation keys")
+                self._navWaitLogged = true
+            end
+        else
+            self:_engageNavBindings()
+            self:_logKeys("took the navigation keys")
+            self._navWaitLogged = false
+        end
     end
     self:_syncCloseKey()
 
@@ -222,6 +238,13 @@ function GraphHost:_speak(text)
     if text ~= nil and text ~= "" then
         WowVision:speak(text)
     end
+end
+
+function GraphHost:_logKeys(what)
+    if not self.keyLog then
+        return
+    end
+    print("WowVision keys: " .. what .. ". " .. WowVision.inputActivator:describeInputs(NAV_KEYMAPS))
 end
 
 -- ---- focused-node lifecycle: onFocus/onUnfocus + per-node bindings ----

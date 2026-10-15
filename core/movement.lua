@@ -19,6 +19,9 @@ local movement = {
         descend = false,
         autorun = false,
         following = false,
+        pitchUp = false,
+        pitchDown = false,
+        moveAndSteer = false,
     },
 }
 WowVision.movement = movement
@@ -31,6 +34,7 @@ function movement:isTranslating()
         or flags.moveBackward
         or flags.strafeLeft
         or flags.strafeRight
+        or flags.moveAndSteer
         or flags.autorun
         or flags.following
 end
@@ -63,6 +67,21 @@ hooksecurefunc("ToggleAutoRun", function()
     movement.flags.autorun = not movement.flags.autorun
 end)
 hooksecurefunc("FollowUnit", flagSetter("following", true))
+
+-- Pitch and move-and-steer are held commands too (the key takeover guard in
+-- core/ui/input/heldKeys.lua asks for them); their functions are not on
+-- every client.
+local function hookIfPresent(name, func)
+    if type(_G[name]) == "function" then
+        hooksecurefunc(name, func)
+    end
+end
+hookIfPresent("PitchUpStart", flagSetter("pitchUp", true))
+hookIfPresent("PitchUpStop", flagSetter("pitchUp", false))
+hookIfPresent("PitchDownStart", flagSetter("pitchDown", true))
+hookIfPresent("PitchDownStop", flagSetter("pitchDown", false))
+hookIfPresent("MoveAndSteerStart", flagSetter("moveAndSteer", true))
+hookIfPresent("MoveAndSteerStop", flagSetter("moveAndSteer", false))
 -- Any manual movement command ends follow.
 hooksecurefunc("MoveForwardStart", flagSetter("following", false))
 hooksecurefunc("MoveBackwardStart", flagSetter("following", false))

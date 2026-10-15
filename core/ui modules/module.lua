@@ -12,6 +12,18 @@ settings:add({
     default = false,
 })
 
+-- Chasing stuck movement keys with testers: prints when windows take, wait
+-- for and release the navigation keys, and what the held check saw.
+module:registerCommand({
+    name = "keylog",
+    description = "Toggle logging of when windows take and release the navigation keys",
+    func = function()
+        local host = WowVision.graphHost
+        host.keyLog = not host.keyLog
+        print("WowVision key log " .. (host.keyLog and "on" or "off"))
+    end,
+})
+
 module:registerBindings({
     {
         type = "Virtual",
