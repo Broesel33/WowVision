@@ -5,6 +5,8 @@
   <Script file="binding.lua" />
   <Script file="bindings.lua" />
   <Script file="actions.lua" />
+  <Script file="heldKeys.lua" />
+  <Script file="heldKeysTests.lua" />
   <Script file="activator.lua" />
   <Script file="tests.lua" />
 

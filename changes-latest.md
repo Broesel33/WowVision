@@ -34,6 +34,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added two Merchant settings (Windows > Merchant): "Automatically Sell Poor Items" and "Automatically Repair If Possible", both off by default. When turned on, opening a vendor sells your grey items and repairs your gear on its own, with a chat message confirming what was sold or repaired. Repair is skipped if the vendor doesn't offer it or you can't afford it.
 * Fixed the compass's indoors/outdoors, flying, swimming, and diving announcements never firing inside dungeons and other instances, where the game does not report your facing.
 * Added Sku's Beacon 6 as a beacon sound.
+* Fixed characters turning or running on their own, mostly in parties. When a window opened while a movement key was held (a shared quest, a ready check, a popup, or any window once combat ended mid-run), the addon took over the arrow keys at that instant and the game never saw the key released. Windows now wait to take their keys until every key they use is up.
 
 ### Modern
 * Fixed errors on WoW: Forever and Retail when the game hides a unit's identity or raid marker from addons: the target change, soft target, range, tooltip and window announcements no longer fail, and the raid target marker is still announced on target change. Those clients hide which marker it is from addons entirely, so it is spoken as its number (1 Star, 2 Circle, 3 Diamond, 4 Triangle, 5 Moon, 6 Square, 7 X, 8 Skull) instead of its name.

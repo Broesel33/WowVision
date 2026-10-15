@@ -101,4 +101,21 @@ function Activator:activate(spec)
     return handle
 end
 
+-- Whether a key any of these keymaps would take is physically held. An
+-- override set on a held key eats its release and leaves the game's command
+-- (a turn, a move) running; callers wait a tick and ask again.
+function Activator:anyInputHeld(keymapKeys)
+    local inputs = {}
+    for _, key in ipairs(keymapKeys) do
+        local keymap = self.inputManager:getBinding(key)
+        if keymap ~= nil then
+            for _, input in ipairs(keymap.inputs) do
+                tinsert(inputs, input)
+            end
+        end
+    end
+    local heldKeys = WowVision.heldKeys
+    return heldKeys.anyHeld(inputs, heldKeys.gameEnv())
+end
+
 WowVision.inputActivator = Activator:new(WowVision.input, WowVision.inputActions)
