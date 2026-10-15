@@ -40,6 +40,55 @@ local cadence = stuckMath.newCadence(3)
 local lastCheck = 0
 local lastX, lastY = nil, nil
 local wasTranslating = false
+-- The last check's severity, for judging how a game walk ended.
+local lastSeverity = nil
+
+-- Stunned, rooted and the like: standing still is no wall then. The game
+-- shows it on screen (the loss of control alert).
+local function lostControl()
+    return C_LossOfControl.GetActiveLossOfControlDataCount() > 0
+end
+
+-- A walk the game makes with no key held (the interact key, click to move)
+-- ends on its own when the way is blocked, mostly before three checks could
+-- grade it. A walk that ended short plays the blocked sound once. The game
+-- reports a stop and a start in the same instant as such a walk begins, so a
+-- stop counts only once it held for STOP_SETTLE.
+local STOP_SETTLE = 0.2
+local gameWalkStart = nil
+-- When the game said the walk stopped, and the last check's severity then
+-- (checks after the stop see a standing player).
+local stoppedAt, stoppedSeverity = nil, nil
+
+module:registerEvent("event", "PLAYER_STARTED_MOVING")
+module:registerEvent("event", "PLAYER_STOPPED_MOVING")
+
+function module:onEvent(event)
+    if event == "PLAYER_STARTED_MOVING" then
+        if stoppedAt == nil then
+            gameWalkStart = not WowVision.movement:isTranslating() and GetTime() or nil
+        end
+        stoppedAt = nil
+    elseif event == "PLAYER_STOPPED_MOVING" and gameWalkStart ~= nil then
+        stoppedAt, stoppedSeverity = GetTime(), lastSeverity
+    end
+end
+
+local function checkGameWalkEnd(self, now)
+    if WowVision.movement:isTranslating() then
+        -- The player took over with a key.
+        gameWalkStart, stoppedAt = nil, nil
+        return
+    end
+    if stoppedAt == nil or now - stoppedAt < STOP_SETTLE then
+        return
+    end
+    local duration = stoppedAt - gameWalkStart
+    gameWalkStart, stoppedAt = nil, nil
+    if not lostControl() and stuckMath.walkEndedShort(duration, stoppedSeverity) then
+        self:fireAlert("stuck", { action = "stuck1" })
+    end
+end
 
 module:hasUpdate(function(self)
     local now = GetTime()
@@ -52,8 +101,13 @@ module:hasUpdate(function(self)
     if UnitOnTaxi("player") then
         lastX, lastY = nil, nil
         wasTranslating = false
+        lastSeverity = nil
         cadence:sample(nil)
         return
+    end
+
+    if gameWalkStart ~= nil then
+        checkGameWalkEnd(self, now)
     end
 
     local px, py = UnitPosition("player")
@@ -61,7 +115,10 @@ module:hasUpdate(function(self)
 
     -- Only judge intervals where the player was moving end to end and both
     -- position samples exist.
-    if translating and wasTranslating and px ~= nil and lastX ~= nil then
+    if lostControl() then
+        lastSeverity = nil
+        cadence:sample(nil)
+    elseif translating and wasTranslating and px ~= nil and lastX ~= nil then
         local dx, dy = px - lastX, py - lastY
         local actual = math.sqrt(dx * dx + dy * dy)
         local speed, _, _, swimSpeed = GetUnitSpeed("player")
@@ -79,11 +136,13 @@ module:hasUpdate(function(self)
         else
             severity = stuckMath.severity(actual, speed, dt)
         end
+        lastSeverity = severity
         local sound = cadence:sample(severity)
         if sound ~= nil then
             self:fireAlert("stuck", { action = "stuck" .. sound })
         end
     else
+        lastSeverity = nil
         cadence:sample(nil)
     end
 
