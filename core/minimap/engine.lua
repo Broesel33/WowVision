@@ -183,6 +183,23 @@ function Engine.shrink(cursorX, cursorY)
     Minimap:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cursorX / scale, cursorY / scale)
 end
 
+-- Forever's minimap (the build of 2026-10-16 on) names the dots under the
+-- cursor only in its soft cursor mode, a software-driven pointer (the
+-- gamepad UI's), which is what a parked cursor under a moved minimap is;
+-- the hardware cursor's own mouseover came back empty on that build while
+-- this mode answered at once (measured next to Coldridge Valley's quest
+-- givers). Switched on after the minimap is placed, off at the task's end;
+-- clients without the method (Retail, classic) are unchanged.
+function Engine.softCursor()
+    if Minimap.SetUsingSoftCursor == nil then
+        return
+    end
+    Engine.onCleanup(function()
+        pcall(Minimap.SetUsingSoftCursor, Minimap, false)
+    end)
+    pcall(Minimap.SetUsingSoftCursor, Minimap, true)
+end
+
 -- Full size, centred on the cursor.
 function Engine.fullSize(state, cursorX, cursorY)
     local scale = Minimap:GetEffectiveScale()
@@ -241,14 +258,24 @@ function Engine.frameBudget()
 end
 
 -- True when the cursor rests over the game world (nothing else would let
--- the minimap receive it).
+-- the minimap receive it); otherwise false and the name of the frame in
+-- the way, so the cancel message can say what it was.
 function Engine.cursorOverWorld()
     if GetMouseFoci == nil then
         return true
     end
     for _, focus in ipairs(GetMouseFoci()) do
         if focus ~= WorldFrame then
-            return false
+            local ok, name = pcall(function()
+                if focus.GetDebugName ~= nil then
+                    return focus:GetDebugName()
+                end
+                return focus:GetName()
+            end)
+            if not ok or name == nil or name == "" then
+                name = "unnamed frame"
+            end
+            return false, tostring(name)
         end
     end
     return true

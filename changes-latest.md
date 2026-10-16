@@ -34,6 +34,11 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added two Merchant settings (Windows > Merchant): "Automatically Sell Poor Items" and "Automatically Repair If Possible", both off by default. When turned on, opening a vendor sells your grey items and repairs your gear on its own, with a chat message confirming what was sold or repaired. Repair is skipped if the vendor doesn't offer it or you can't afford it.
 * Fixed the compass's indoors/outdoors, flying, swimming, and diving announcements never firing inside dungeons and other instances, where the game does not report your facing.
 * Added Sku's Beacon 6 as a beacon sound.
+* Questie's one-time "Welcome to Questie" dialog, which asks you to choose between Questie, pfQuest and Blizzard quest objectives on WoW Forever and the newer classic clients, is now read as a window with its three buttons. It used to sit silently in the middle of the screen, where it also blocked every minimap scan.
+* The minimap scan's "Scan canceled, window" message now names the frame under the cursor, and the scan log records it.
+
+#### Forever
+* Fixed the minimap scanner and the walking announcements finding nothing after the October 16 client build. The minimap now names its dots only in its new soft cursor mode, which the scan switches on while it runs.
 * Fixed characters turning or running on their own, mostly in parties. When a window opened while a movement key was held (a shared quest, a ready check, a popup, or any window once combat ended mid-run), the addon took over the arrow keys at that instant and the game never saw the key released. Windows now wait to take their keys until every key they use is up. If it still happens to you, type /wv keylog, play until it happens, and send the WowVision keys lines from your chat log along with what you were doing.
 
 ### Modern
