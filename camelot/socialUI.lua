@@ -529,7 +529,11 @@ local function renderBattleNetBar(builder, frame)
     end
     local menu = container.BattleNetMenuButton
     if menu ~= nil then
-        local vtable = nodes.proxyDropdown({ target = menu, label = SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL })
+        -- Named by its tooltip, whose string the Forever client may lack.
+        local vtable = nodes.proxyDropdown({
+            target = menu,
+            label = SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL or CONTACTS_MENU_NAME or L["Battle.net"],
+        })
         if vtable ~= nil then
             builder:addItem(ControlId.forObject(menu), vtable)
         end
@@ -553,8 +557,10 @@ local function renderTabs(builder, frame)
     table.sort(tabs, function(a, b)
         return (a.tabData.tabOrder or 0) < (b.tabData.tabOrder or 0)
     end)
+    -- A row, like every tab strip, though the game draws these down the side.
     builder:beginStop("tabs")
     builder:pushContext("tabs", L["Tabs"])
+    builder:startRow()
     for _, tab in ipairs(tabs) do
         local captured = tab
         local tabType = tab.tabData.tabType
@@ -590,6 +596,7 @@ local function renderTabs(builder, frame)
             bindings = { { binding = "leftClick", type = "Click", emulatedKey = "LeftButton", target = captured } },
         })
     end
+    builder:endRow()
     builder:popContext()
 end
 
