@@ -25,6 +25,11 @@ namespace WowVisionInstaller
     {
         private Label _installerLangLabel;
         private ComboBox _installerLangCombo;
+        private Label _channelLabel, _channelDesc;
+        private ComboBox _channelCombo;
+
+        // Combo order == this array.
+        private static readonly Channel[] _channelOrder = { Channel.Beta, Channel.Stable };
         private CheckBox _forceCheck, _shortcutCheck, _sapi2srCheck, _windowsVoicesCheck, _loginToolCheck;
         private Label _forceDesc, _shortcutDesc, _sapi2srDesc, _windowsVoicesDesc, _loginToolDesc;
         private Label _managedLabel;
@@ -76,6 +81,23 @@ namespace WowVisionInstaller
             Controls.Add(_installerLangCombo);
             y += 40;
 
+            // Stable or beta: one choice for every selected game version.
+            _channelLabel = AddContentLabel(ContentLeft, y, ContentWidth, 18);
+            y += 20;
+            _channelCombo = new ComboBox
+            {
+                Location = new Point(ContentLeft, y),
+                Size = new Size(ContentWidth, 24),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            foreach (var c in _channelOrder) _channelCombo.Items.Add("");
+            _channelCombo.SelectedIndex = Math.Max(0, Array.IndexOf(_channelOrder, Config.CurrentChannel));
+            _channelCombo.SelectedIndexChanged += (s, e) => RefreshChannelTexts();
+            Controls.Add(_channelCombo);
+            y += 28;
+            _channelDesc = AddContentLabel(ContentLeft + 22, y, ContentWidth - 22, 32);
+            y += 40;
+
             AddOption(ref _shortcutCheck, ref _shortcutDesc, ref y, Options.DesktopShortcut);
             AddOption(ref _sapi2srCheck, ref _sapi2srDesc, ref y, Options.InstallSapi2Sr);
             AddOption(ref _windowsVoicesCheck, ref _windowsVoicesDesc, ref y, Options.InstallWindowsVoices);
@@ -106,7 +128,7 @@ namespace WowVisionInstaller
             y += _managedList.Height + 12;
 
             SetContentHeight(y);
-            ActiveControl = _shortcutCheck;
+            ActiveControl = _channelCombo;
         }
 
         /// <summary>
@@ -161,6 +183,13 @@ namespace WowVisionInstaller
             _installerLangLabel.Text = Loc.Get("ui.installerLanguage");
             _installerLangCombo.AccessibleName = Loc.Get("acc.installerLanguage");
 
+            _channelLabel.Text = Loc.Get("channel.label");
+            int keep = _channelCombo.SelectedIndex;
+            for (int i = 0; i < _channelOrder.Length; i++)
+                _channelCombo.Items[i] = Loc.Get(_channelOrder[i] == Channel.Beta ? "channel.beta" : "channel.stable");
+            _channelCombo.SelectedIndex = keep;
+            RefreshChannelTexts();
+
             SetOptionText(_shortcutCheck, _shortcutDesc, "shortcut");
             SetOptionText(_sapi2srCheck, _sapi2srDesc, "sapi2sr");
             SetOptionText(_windowsVoicesCheck, _windowsVoicesDesc, "windowsVoices");
@@ -181,6 +210,20 @@ namespace WowVisionInstaller
             AnnouncePage();
         }
 
+        private Channel SelectedChannel =>
+            _channelOrder[Math.Max(0, Math.Min(_channelOrder.Length - 1, _channelCombo.SelectedIndex))];
+
+        /// <summary>
+        /// The description under the channel list says what the selected entry
+        /// means, and the list's accessible name carries it, so arrowing to
+        /// "Stable" explains itself.
+        /// </summary>
+        private void RefreshChannelTexts()
+        {
+            _channelDesc.Text = Loc.Get(SelectedChannel == Channel.Beta ? "channel.betaDesc" : "channel.stableDesc");
+            _channelCombo.AccessibleName = $"{Loc.Get("channel.acc")}. {_channelDesc.Text}";
+        }
+
         /// <summary>
         /// Applies an option's label and description, and composes the two into
         /// the accessible name so focusing the checkbox explains it.
@@ -198,6 +241,22 @@ namespace WowVisionInstaller
             for (int i = 0; i < ManagedAddons.Entries.Count; i++)
                 managed[ManagedAddons.Entries[i].PrefKey] = _managedList.GetItemChecked(i);
             ManagedPrefs.Save(managed);   // one-click runs reuse the same choices
+
+            // A changed channel takes effect now: the release to install is the
+            // other channel's, so it is looked up again (a second or two).
+            if (SelectedChannel != Config.CurrentChannel)
+            {
+                Cursor previous = Cursor;
+                Cursor = Cursors.WaitCursor;
+                try
+                {
+                    Config.SetChannel(SelectedChannel);
+                    GitHubClient.ResolveAndAdoptLatestRelease();
+                }
+                finally { Cursor = previous; }
+                Logger.Info($"Channel changed to {Config.CurrentChannel}.");
+            }
+            ChannelPrefs.Save(Config.CurrentChannel);
 
             Options = new InstallOptions
             {

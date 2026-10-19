@@ -15,7 +15,7 @@ namespace WowVisionInstaller
     /// It lives here rather than on <see cref="WizardForm"/> (where it started)
     /// because two things outside the window now depend on it: the self-update
     /// check, which compares this against the published number, and
-    /// release.ps1, whose Get-InstallerVersion trims the version
+    /// build.ps1, whose Get-InstallerVersion trims the version
     /// resource by exactly the same rule so the download page and the window
     /// title can never disagree. It also keeps the number reachable from the
     /// headless WowVisionSelfTest harness, which has no WinForms at all.

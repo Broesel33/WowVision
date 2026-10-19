@@ -768,7 +768,8 @@ namespace WowVisionInstaller
             sb.AppendLine("WowVision — diagnostic log bundle");
             sb.AppendLine($"Captured:             {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
             sb.AppendLine($"Installer version:    {InstallerVersion()}");
-            sb.AppendLine($"Latest release:       {Config.LatestTag} ({Config.AssetName})");
+            sb.AppendLine($"Channel:              {Config.CurrentChannel}");
+            sb.AppendLine($"Latest release:       {Config.LatestTag} ({Config.AssetName}) {Config.LatestBuild ?? ""} {Config.LatestBuildDate?.ToString("u") ?? ""}");
             sb.AppendLine($"Login tool version:   {Config.LoginToolVersion} (what this installer deploys)");
             sb.AppendLine($"OS:                   {Environment.OSVersion}");
             sb.AppendLine($"CLR:                  {Environment.Version}");

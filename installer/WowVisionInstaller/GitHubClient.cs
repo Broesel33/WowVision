@@ -52,6 +52,12 @@ namespace WowVisionInstaller
         /// </summary>
         public static void ResolveAndAdoptLatestRelease()
         {
+            if (Config.CurrentChannel == Channel.Beta)
+            {
+                ResolveAndAdoptBeta();
+                return;
+            }
+
             using (var github = new GitHubClient())
             {
                 string resolved = github.ResolveLatestTagAsync().GetAwaiter().GetResult();
@@ -75,6 +81,79 @@ namespace WowVisionInstaller
                 Config.OverrideLatest(resolved, asset);
                 Logger.Info($"Release asset: {Config.AssetName}");
             }
+        }
+
+        /// <summary>
+        /// The beta channel: the tag is always "beta"; what is resolved is the zip's
+        /// name (release.json) and the id plus upload time of the zip that is up
+        /// there now. Offline, the id stays null — "unknown", which never counts
+        /// as an update.
+        /// </summary>
+        private static void ResolveAndAdoptBeta()
+        {
+            using (var github = new GitHubClient())
+            {
+                string asset = github.ResolveAssetNameAsync(Config.BetaTag).GetAwaiter().GetResult()
+                               ?? Config.ConventionalAssetName(Config.BetaTag);
+                var (build, date) = github.ResolveBetaBuildAsync(asset).GetAwaiter().GetResult();
+                Config.OverrideLatest(Config.BetaTag, asset, build, date);
+                Logger.Info($"Beta: {asset}, build {build ?? "(unknown)"}, uploaded {date?.ToString("u") ?? "(unknown)"}.");
+            }
+        }
+
+        /// <summary>
+        /// The id of the zip on a release, read from the download redirect
+        /// (github.com/…/releases/download/beta/WowVision-beta.zip answers 302 to
+        /// …/github-production-release-asset/&lt;repo id&gt;/&lt;asset id&gt;?…). The id
+        /// is the same on every request and changes exactly when the packager
+        /// uploads a new zip, which makes it the beta's version. The upload time
+        /// comes from that storage object's Last-Modified. Not an API call.
+        /// Returns (null, null) on any failure.
+        /// </summary>
+        public async Task<(string build, DateTime? date)> ResolveBetaBuildAsync(string assetName)
+        {
+            string url = BuildAddonDownloadUrl(Config.BetaTag, assetName);
+            try
+            {
+                using (var handler = new HttpClientHandler { AllowAutoRedirect = false })
+                using (var noRedirect = new HttpClient(handler))
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+                {
+                    noRedirect.DefaultRequestHeaders.Add("User-Agent", "WowVisionInstaller");
+                    using (var resp = await noRedirect.SendAsync(new HttpRequestMessage(HttpMethod.Head, url), cts.Token))
+                    {
+                        Uri location = resp.Headers.Location;
+                        string build = BuildIdFromUri(location);
+                        if (build == null)
+                        {
+                            Logger.Warning($"{url} -> HTTP {(int)resp.StatusCode}, no asset id in the redirect.");
+                            return (null, null);
+                        }
+
+                        DateTime? date = null;
+                        try
+                        {
+                            using (var head = await _http.SendAsync(new HttpRequestMessage(HttpMethod.Head, location), cts.Token))
+                                date = head.Content.Headers.LastModified?.UtcDateTime;
+                        }
+                        catch (Exception ex) { Logger.Info($"No upload time for the beta: {ex.Message}"); }
+                        return (build, date);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Could not read the beta build ({ex.Message}).");
+                return (null, null);
+            }
+        }
+
+        /// <summary>The asset id in a release-asset storage URL, or null.</summary>
+        internal static string BuildIdFromUri(Uri uri)
+        {
+            if (uri == null) return null;
+            var m = Regex.Match(uri.AbsolutePath, @"/github-production-release-asset/\d+/([^/?]+)$");
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         /// <summary>
@@ -178,13 +257,15 @@ namespace WowVisionInstaller
         /// <summary>
         /// The ROLLING download URL for an asset on whichever INSTALLER release
         /// currently carries the "Latest" badge, e.g.
-        /// https://github.com/JeanStiletto/WowVision-Installer/releases/latest/download/WowVisionInstaller.exe .
+        /// https://github.com/wow-vision/WowVision/releases/latest/download/WowVisionInstaller.exe (stable) or .../releases/download/beta/WowVisionInstaller.exe (beta) .
         /// <see cref="SelfUpdater"/> uses it so an exe built a year ago still
         /// resolves today's build without knowing any tag.
         /// </summary>
         public static string BuildInstallerDownloadUrl(string assetName) =>
-            $"https://github.com/{Config.InstallerRepo}/releases/latest/download/" +
-            $"{Uri.EscapeDataString(assetName)}";
+            Config.CurrentChannel == Channel.Beta
+                ? BuildDownloadUrl(Config.InstallerRepo, Config.BetaTag, assetName)
+                : $"https://github.com/{Config.InstallerRepo}/releases/latest/download/" +
+                  $"{Uri.EscapeDataString(assetName)}";
 
         /// <summary>
         /// Fetches a small text asset. Returns null on any failure — a missing
@@ -228,10 +309,23 @@ namespace WowVisionInstaller
         public async Task DownloadFileAsync(string url, string destPath,
                                             Action<long, long> progress = null,
                                             CancellationToken cancel = default(CancellationToken))
+            => await DownloadFileWithIdAsync(url, destPath, progress, cancel);
+
+        /// <summary>
+        /// As <see cref="DownloadFileAsync"/>, and returns the id of the file that
+        /// was actually served (<see cref="BuildIdFromUri"/>), or null. For the
+        /// beta that is the build to record: if a new zip went up between the
+        /// check and the download, the id says which one arrived.
+        /// </summary>
+        public async Task<string> DownloadFileWithIdAsync(string url, string destPath,
+                                                          Action<long, long> progress = null,
+                                                          CancellationToken cancel = default(CancellationToken))
         {
+            string servedId;
             using (var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancel))
             {
                 resp.EnsureSuccessStatusCode();
+                servedId = BuildIdFromUri(resp.RequestMessage?.RequestUri);
                 long total = resp.Content.Headers.ContentLength ?? -1L;
 
                 using (var src = await resp.Content.ReadAsStreamAsync())
@@ -250,6 +344,7 @@ namespace WowVisionInstaller
                 }
             }
             Logger.Info($"Downloaded: {Path.GetFileName(destPath)}");
+            return servedId;
         }
 
         public void Dispose() => _http?.Dispose();

@@ -16,7 +16,7 @@
     <!-- Single source of truth for the installer's own version. Surfaced in the
          window title (WizardForm.InstallerVersion) so it's announced by the
          screen reader, compared by the self-updater, and written into
-         installer-version.txt by release.ps1.
+         installer-version.txt by build.ps1.
 
          This is the INSTALLER's version and is independent of the WowVision
          addon version: an addon release needs no new installer (the installer
@@ -41,6 +41,12 @@
     <Authors>JeanStiletto</Authors>
     <Copyright>Copyright (c) 2026 JeanStiletto and the WowVision and Sku contributors</Copyright>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The .NET Framework reference assemblies as a package, so the build needs
+         no targeting pack installed (CI runners, a fresh dev machine). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System.Net.Http" />

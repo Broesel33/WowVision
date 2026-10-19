@@ -15,6 +15,19 @@ namespace WowVisionInstaller
         public string Message;     // human/screen-reader line
     }
 
+    /// <summary>What an installed WowVision means for the chosen channel (<see cref="AddonInstaller.Decide"/>).</summary>
+    public enum AddonState
+    {
+        /// <summary>The current build of the chosen channel is installed.</summary>
+        UpToDate,
+        /// <summary>Install the current build: newer, or the other channel is installed.</summary>
+        Update,
+        /// <summary>A test build that is neither a release nor the beta; kept unless Reinstall.</summary>
+        TestBuildKept,
+        /// <summary>Beta installed, but the online beta could not be checked (offline).</summary>
+        Unknown,
+    }
+
     /// <summary>One addon folder of the release that gets installed into a client this run.</summary>
     public class PlanItem
     {
@@ -108,18 +121,15 @@ namespace WowVisionInstaller
         }
 
         /// <summary>
-        /// Decide whether the release <paramref name="tag"/> must be installed
-        /// into this client, reporting <paramref name="firstInstall"/>. In order:
+        /// Decide whether the current release (<see cref="Config.LatestTag"/>, and
+        /// for the beta <see cref="Config.LatestBuild"/>) must be installed into
+        /// this client, reporting <paramref name="firstInstall"/>:
         ///   * main folder missing           -> Install (first install)
         ///   * main folder is a symlink      -> Skip, adopt (a developer's checkout)
-        ///   * a test build is installed     -> Skip (never replaced unasked)
-        ///   * manifest knows its tag        -> Install iff that version is older
-        ///   * no manifest record            -> pre-existing manual install:
-        ///       compare the installed TOC "## Version" against the release; Install
-        ///       only if older, otherwise ADOPT (record the tag) so future runs are
-        ///       precise.
-        ///   * a folder recorded at this tag has gone missing -> Install (repair)
-        /// May record adopted tags into the manifest (caller persists it).
+        ///   * otherwise                     -> <see cref="Decide"/> on what is there
+        ///   * up to date, but a folder recorded at this release has gone
+        ///     missing                       -> Install (repair)
+        /// May record an adopted tag into the manifest (caller persists it).
         /// </summary>
         public bool NeedsWork(string tag, out bool firstInstall)
         {
@@ -139,44 +149,26 @@ namespace WowVisionInstaller
             }
 
             string tocVersion = WowLocator.ReadTocVersion(_addonsFolder, primary, _product);
-            if (IsTestBuild(tocVersion))
-            {
-                Logger.Info($"{primary}: test build '{tocVersion}' installed; left alone (Reinstall replaces it).");
-                return false;
-            }
+            var state = Decide(tocVersion, _manifest.GetTag(primary), _manifest.GetBuild(primary),
+                               Config.CurrentChannel, tag, Config.LatestBuild);
+            Logger.Info($"{primary}: TOC {tocVersion ?? "-"}, manifest {_manifest.GetTag(primary) ?? "-"} " +
+                        $"{_manifest.GetBuild(primary) ?? ""}, {Config.CurrentChannel} {tag} {Config.LatestBuild ?? ""} -> {state}.");
+            if (state == AddonState.Update) return true;
+            if (state != AddonState.UpToDate) return false;
 
-            // The manifest records what the INSTALLER last wrote, so it can lag the
-            // folder (a release unzipped by hand since) but never lead it: the
-            // newer of the two is what is installed.
-            string installedTag = _manifest.GetTag(primary);
-            string have = installedTag;
-            if (IsReleaseVersion(tocVersion) && (have == null || CompareVersions(tocVersion, have) > 0))
-                have = tocVersion;
-
-            // Compare by version ORDER, not tag inequality, so we only ever move
-            // forward. The effective "latest" can fall BACK to the build-time pin
-            // when the live redirect can't be resolved (offline, a slow link). An
-            // equality test would then plan a DOWNGRADE for a user already on a
-            // newer release; ordering makes that a no-op instead.
-            if (CompareVersions(have, tag) < 0)
-                return true;
-
-            if (installedTag == null)
-            {
-                _manifest.SetTag(primary, tag);   // pre-existing install, up to date -> adopt
-                Logger.Info($"{primary}: TOC {tocVersion} >= release {tag}; adopting {tag}.");
-            }
-            else
-            {
-                Logger.Info($"{primary}: installed {installedTag} >= release {tag}; skipping (no downgrade).");
-            }
+            // A pre-existing manual install of this very release: adopt its tag so
+            // later runs are precise.
+            if (_manifest.GetTag(primary) == null && IsReleaseVersion(tocVersion))
+                _manifest.SetTag(primary, tag);
 
             // A folder the installer put there with this release and that is gone
-            // now (deleted by hand, or by a cleanup tool) is a broken install.
+            // now (deleted by hand, or by a cleanup tool) is a broken install. Only
+            // WowVision's own folders count; the extra addons keep their own keys.
             foreach (var kv in _manifest.InstalledTags)
             {
                 if (string.Equals(kv.Key, primary, StringComparison.OrdinalIgnoreCase)) continue;
-                if (CompareVersions(kv.Value, tag) != 0) continue;
+                if (ManagedAddons.IsManagedKey(kv.Key)) continue;
+                if (!SameRelease(kv.Value, tag)) continue;
                 if (!Directory.Exists(Path.Combine(_addonsFolder, kv.Key)))
                 {
                     Logger.Info($"{kv.Key}: recorded at {kv.Value} but missing; reinstalling the release.");
@@ -187,16 +179,68 @@ namespace WowVisionInstaller
             return false;
         }
 
+        private static bool SameRelease(string a, string b) =>
+            IsBeta(a) || IsBeta(b) ? IsBeta(a) && IsBeta(b) : CompareVersions(a, b) == 0;
+
         /// <summary>
-        /// A version that is not a release number: upstream's "beta" pre-release,
-        /// a dev build. The packager writes the tag into the TOC, so a beta zip
-        /// says "## Version: beta". Comparing it as a number would read as 0 and
-        /// "update" a tester back to the last stable release — a downgrade they
-        /// never asked for. An unexpanded "@project-version@" (a raw git checkout
-        /// copied by hand) counts as a test build too.
+        /// What an installed WowVision means for the chosen channel. One function,
+        /// so the plan and the status line on screen can never disagree.
+        ///
+        ///   Stable channel: a release older than the newest -> Update; the beta ->
+        ///     Update (switching to stable is the user's decision); otherwise current.
+        ///   Beta channel: the beta whose recorded build is the one online ->
+        ///     current; any other beta (an older upload, or one installed by hand
+        ///     with no build on record) -> Update; a release -> Update (switch).
+        ///     When the online build cannot be read (offline) an installed beta is
+        ///     Unknown, which never triggers a download.
+        ///   Either channel: a version that is neither a release number nor "beta"
+        ///     (an unexpanded "@project-version@" from a copied git checkout, a
+        ///     custom build) is a test build and left alone; Reinstall replaces it.
+        ///
+        /// The manifest records what the INSTALLER last wrote, so it can lag the
+        /// folder (a release unzipped by hand since) but never lead it: of two
+        /// release numbers, the newer is what is installed.
+        /// </summary>
+        public static AddonState Decide(string tocVersion, string manifestTag, string manifestBuild,
+                                        Channel channel, string latestTag, string latestBuild)
+        {
+            if (IsTestBuild(tocVersion)) return AddonState.TestBuildKept;
+
+            bool installedBeta = IsBeta(tocVersion) || (tocVersion == null && IsBeta(manifestTag));
+
+            if (channel == Channel.Beta)
+            {
+                if (!installedBeta) return AddonState.Update;
+                if (string.IsNullOrEmpty(latestBuild)) return AddonState.Unknown;
+                return string.Equals(manifestBuild, latestBuild, StringComparison.OrdinalIgnoreCase)
+                    ? AddonState.UpToDate : AddonState.Update;
+            }
+
+            if (installedBeta) return AddonState.Update;
+
+            string have = IsBeta(manifestTag) ? null : manifestTag;
+            if (IsReleaseVersion(tocVersion) && (have == null || CompareVersions(tocVersion, have) > 0))
+                have = tocVersion;
+
+            // Compare by version ORDER, not tag inequality, so we only ever move
+            // forward: the effective "latest" can fall BACK to the build-time pin
+            // when the live redirect can't be resolved, and an equality test would
+            // then plan a DOWNGRADE for a user already on a newer release.
+            return CompareVersions(have, latestTag) < 0 ? AddonState.Update : AddonState.UpToDate;
+        }
+
+        /// <summary>The upstream beta: the packager writes its tag, "beta", into the TOC.</summary>
+        public static bool IsBeta(string version) =>
+            string.Equals(version?.Trim(), Config.BetaTag, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A version that is neither a release number nor the beta: an unexpanded
+        /// "@project-version@" (a raw git checkout copied by hand) or a custom
+        /// build. Comparing it as a number would read as 0 and "update" it, so it
+        /// is left alone unless the user asks for Reinstall.
         /// </summary>
         public static bool IsTestBuild(string version) =>
-            !string.IsNullOrWhiteSpace(version) && !IsReleaseVersion(version);
+            !string.IsNullOrWhiteSpace(version) && !IsReleaseVersion(version) && !IsBeta(version);
 
         /// <summary>"V0.9.0", "0.9.0", "1.2" — digits and dots after an optional V.</summary>
         public static bool IsReleaseVersion(string version) =>
@@ -299,8 +343,9 @@ namespace WowVisionInstaller
             else
             {
                 _manifest.SetTag(folderName, package.Tag);
+                _manifest.SetBuild(folderName, package.Build, package.BuildDate);
                 _report(new InstallProgress { Addon = folderName, Phase = "done",
-                    Percent = 100, Message = Loc.Format("ai.installed", folderName, package.Tag.TrimStart('v', 'V')) });
+                    Percent = 100, Message = Loc.Format("ai.installed", folderName, Config.SpokenVersion(package.Tag, package.BuildDate)) });
                 Logger.Info($"{folderName}: installed {package.Tag}.");
             }
             return true;

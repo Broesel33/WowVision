@@ -37,6 +37,15 @@ namespace WowVisionInstaller
         /// <summary>Installed WowVision version in this client ("V0.9.0", "beta"), or null.</summary>
         public string InstalledVersion;
 
+        /// <summary>The beta build recorded for it (manifest), or null.</summary>
+        public string InstalledBuild;
+        public DateTime? InstalledBuildDate;
+
+        /// <summary>What the installed WowVision means for the chosen channel.</summary>
+        public AddonState State =>
+            AddonInstaller.Decide(InstalledVersion, InstalledVersion, InstalledBuild,
+                                  Config.CurrentChannel, Config.LatestTag, Config.LatestBuild);
+
         /// <summary>True when WowVision is already installed in this client.</summary>
         public bool HasAddon => !string.IsNullOrEmpty(AddOnsPath) && AddonInstalled(AddOnsPath);
 
@@ -48,12 +57,12 @@ namespace WowVisionInstaller
 
         /// <summary>
         /// True when an update is available for the WowVision install in this
-        /// client. A client without WowVision is a fresh install, not an update; a
-        /// test build is never "updated" unasked.
+        /// client — a newer build of the chosen channel, or a switch to it. A
+        /// client without WowVision is a fresh install, not an update; a test
+        /// build is never "updated" unasked. Same rule as the plan
+        /// (<see cref="AddonInstaller.Decide"/>).
         /// </summary>
-        public bool UpdateAvailable =>
-            HasAddon && !HasTestBuild && !IsDevSymlink &&
-            AddonInstaller.CompareVersions(InstalledVersion, Config.LatestTag) < 0;
+        public bool UpdateAvailable => HasAddon && !IsDevSymlink && State == AddonState.Update;
 
         /// <summary>True when WowVision here is a symlink/junction to a folder we don't manage.</summary>
         public bool IsDevSymlink =>
@@ -74,9 +83,21 @@ namespace WowVisionInstaller
         public void RefreshInstalledVersion()
         {
             InstalledVersion = null;
+            InstalledBuild = null;
+            InstalledBuildDate = null;
             if (!HasAddon) return;
 
             string tocVersion = WowLocator.ReadTocVersion(AddOnsPath, Config.PrimaryFolder, Product);
+            var recorded = InstallManifest.Load(AddOnsPath);
+            InstalledBuild = recorded.GetBuild(Config.PrimaryFolder);
+            InstalledBuildDate = recorded.GetBuildDate(Config.PrimaryFolder);
+
+            // The beta names itself in the TOC; its build is the manifest's.
+            if (AddonInstaller.IsBeta(tocVersion))
+            {
+                InstalledVersion = tocVersion;
+                return;
+            }
 
             // A symlinked folder is managed outside the installer entirely, and a
             // test build names itself: read the TOC and stop.
@@ -86,7 +107,8 @@ namespace WowVisionInstaller
                 return;
             }
 
-            string manifestVersion = InstallManifest.Load(AddOnsPath).GetTag(Config.PrimaryFolder);
+            string manifestVersion = recorded.GetTag(Config.PrimaryFolder);
+            if (AddonInstaller.IsBeta(manifestVersion)) manifestVersion = null;   // TOC says otherwise
 
             if (manifestVersion == null) { InstalledVersion = tocVersion; return; }
             if (tocVersion == null) { InstalledVersion = manifestVersion; return; }
@@ -95,9 +117,11 @@ namespace WowVisionInstaller
                 ? tocVersion : manifestVersion;
         }
 
-        /// <summary>A version as the user hears it: "0.9.0", never "V0.9.0".</summary>
-        public static string Spoken(string version) =>
-            string.IsNullOrEmpty(version) ? version : version.Trim().TrimStart('v', 'V');
+        /// <summary>A version as the user hears it: "0.9.0", never "V0.9.0"; the beta with its date.</summary>
+        public static string Spoken(string version) => Config.SpokenVersion(version, null);
+
+        /// <summary>This client's installed version as heard, beta date included when known.</summary>
+        public string SpokenInstalled => Config.SpokenVersion(InstalledVersion, InstalledBuildDate);
 
         /// <summary>
         /// A one-line status sentence for this client, e.g.
@@ -116,7 +140,7 @@ namespace WowVisionInstaller
 
             string installed = string.IsNullOrEmpty(InstalledVersion) || InstalledVersion.Contains("@")
                 ? Loc.Get("target.versionUnknown")
-                : Spoken(InstalledVersion);
+                : SpokenInstalled;
 
             // Say so plainly rather than offering an update that will be silently
             // skipped: a symlinked folder is somebody's working copy and the
@@ -126,6 +150,9 @@ namespace WowVisionInstaller
 
             if (HasTestBuild)
                 return Loc.Format("target.testBuild", installed, Config.LatestVersion);
+
+            if (State == AddonState.Unknown)
+                return Loc.Format("target.betaUnchecked", installed);
 
             return UpdateAvailable
                 ? Loc.Format("target.updateAvailable", installed, Config.LatestVersion)

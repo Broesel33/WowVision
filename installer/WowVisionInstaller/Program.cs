@@ -41,6 +41,12 @@ namespace WowVisionInstaller
             // Every branch here falls through to a normal run. Offline, no version
             // file published, hash mismatch, user says no: the installer carries on
             // with the exe that is already here and can still install WowVision.
+            // Stable or beta: one remembered choice for every game version. Read
+            // first, because the installer's own update follows it too (the beta
+            // release carries the newest installer build).
+            Config.SetChannel(ChannelPrefs.Load());
+            Logger.Info($"Channel: {Config.CurrentChannel}");
+
             SelfUpdater.CleanUpPreviousVersion(args);
 
             if (SelfUpdater.ShouldCheck(args))

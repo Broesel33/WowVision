@@ -387,7 +387,7 @@ namespace WowVisionInstaller
         private static IEnumerable<string> InstalledFolders(string addonsFolder, InstallManifest manifest)
         {
             var names = new List<string> { Config.PrimaryFolder };
-            names.AddRange(manifest.InstalledTags.Keys);
+            names.AddRange(manifest.InstalledTags.Keys.Where(k => !ManagedAddons.IsManagedKey(k)));
             return names.Distinct(StringComparer.OrdinalIgnoreCase)
                         .Where(n => Directory.Exists(Path.Combine(addonsFolder, n)));
         }
@@ -502,7 +502,8 @@ namespace WowVisionInstaller
                 {
                     lines.Add(Loc.Format("summary.clientOk", r.Target.DisplayName));
                     foreach (var item in r.Plan.Items)
-                        lines.Add(Loc.Format("summary.updated", item.FolderName, Config.LatestVersion));
+                        lines.Add(Loc.Format("summary.updated", item.FolderName,
+                                             Config.SpokenVersion(Config.LatestTag, Config.LatestBuildDate)));
                     var manifest = InstallManifest.Load(r.Target.AddOnsPath);
                     foreach (var managed in r.Plan.ManagedItems)
                     {

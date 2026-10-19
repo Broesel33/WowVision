@@ -86,22 +86,50 @@ zip: if none of its folders has a TOC that client loads, it is not installed
 there and the next run does not download it again. The opening screen names
 the extra addons "Update now" would update or install, per client.
 
+## Beta or stable
+
+One choice for all game versions, on the components page ("Which WowVision"),
+remembered in `%LOCALAPPDATA%\WowVisionUpdater\WowVisionChannel.txt` so
+"Update now" keeps following it. Beta is preselected while WowVision changes
+this fast; `Config.DefaultChannel` switches the default to stable later. The
+opening screen says which one the installer follows.
+
+- Stable: the newest numbered release, found from the redirect of
+  `github.com/wow-vision/WowVision/releases/latest`. Release numbers are
+  compared, never downgraded. `Config.FallbackTag` (V0.9.0) is used when GitHub
+  cannot be reached; a newer live tag always wins, an older one never does.
+- Beta: the moving pre-release `beta`, rebuilt on every push to main. Its tag
+  and its TOC version are always "beta", so they cannot tell one beta from the
+  next. The download redirect can: GitHub answers
+  `releases/download/beta/WowVision-beta.zip` with a storage address that
+  carries an id of the uploaded file, the same on every request and new with
+  every upload. That id is the beta's version; the manifest records the id of
+  the zip each client got (and its upload date, which is what the user hears:
+  "beta of 2026-10-16"). Offline, an installed beta counts as "could not be
+  checked", never as an update.
+- Switching is an update: a client on the other channel is offered the chosen
+  one. A build that is neither a release number nor "beta" (a copied git
+  checkout with "@project-version@") is left alone; "Reinstall everything"
+  replaces it.
+
 ## Where things come from
 
-- The addon: `wow-vision/WowVision`, the maintainers' repository. The newest
-  release is found from the redirect of `github.com/wow-vision/WowVision/releases/latest`
-  (the website, not `api.github.com`, which allows only 60 calls an hour per IP
-  and locked Sku users out). The zip's name is read from the `release.json`
+- The addon: `wow-vision/WowVision` (the redirect above for stable, the beta
+  tag for beta). Never `api.github.com`, which allows only 60 calls an hour per
+  IP and locked Sku users out. The zip's name is read from the `release.json`
   the packager puts beside it; if that fails, the naming `WowVision-<tag>.zip`
-  is used. The pre-release "beta" never carries the Latest badge, so it is
-  never offered.
-- The installer: its own repository, `JeanStiletto/WowVision-Installer`
-  (`Config.InstallerRepo`, still to be created). Its newest release carries
-  `WowVisionInstaller.exe`, `installer-version.txt` (version and SHA-256 of the
-  exe) and the bootstrap script. Installed updaters read the version file from
-  `releases/latest/download` and only run a downloaded exe whose hash matches.
-- `Config.FallbackTag` (V0.9.0) is used when GitHub cannot be reached. A newer
-  live tag always wins; an older one never does.
+  is used.
+- The installer: the same releases. The Installer workflow
+  (`.github/workflows/installer.yml`) runs after "Package and release" and after
+  "Beta pre-release", builds the installer on Windows, runs the offline tests,
+  and attaches `WowVisionInstaller.exe`, `installer-version.txt` (version and
+  SHA-256 of the exe) and the bootstrap script to that release. Installed
+  copies update themselves from `releases/latest/download` (stable) or from
+  the beta release (beta), and only run a downloaded exe whose hash matches.
+- The download link for people: `https://github.com/wow-vision/WowVision/releases/latest/download/WowVisionInstaller.exe`
+  (or the same file on the beta release). Whichever they start with, the
+  channel they then choose decides what gets installed.
+- `installer/` is in `.pkgmeta`'s ignore list, so it never lands in the addon zip.
 
 ## Rules worth knowing
 
@@ -221,17 +249,24 @@ writes, the real extra-addon choices.)
 
 ## Release
 
-`release.ps1 -BuildOnly` builds the Release exe and `dist\installer-version.txt`
-and checks the pair. `release.ps1 -Publish` does the same and then creates the
-release `installer-v<version>` on the installer repository with the exe, the
-version file and the bootstrap script, marked Latest. Bump `<Version>` in the
-csproj first. Afterwards run `WowVisionSelfTest.exe selfupdate`. Add `-DryRun`
-to see the steps without doing them.
+Nothing to do by hand: every addon release and every beta gets the installer
+from the Installer workflow. When the installer itself changed, bump
+`<Version>` in `WowVisionInstaller\WowVisionInstaller.csproj`; installed copies
+only replace themselves with a higher version.
+
+- `installer\build.ps1` builds the Release exe into `installer\dist\` with its
+  `installer-version.txt` and checks the pair; `-RunTests` adds the offline
+  suite (what the workflow runs).
+- `installer\build.ps1 -UploadTo <tag>` also attaches the three files to that
+  existing release by hand (gh with write access). The workflow's manual run
+  does the same from GitHub, e.g. for a release made before it existed.
+- Afterwards `WowVisionSelfTest.exe selfupdate` downloads the published exe and
+  verifies it the way installed copies will.
 
 ## Files
 
 - `WowVisionInstaller\`: the installer.
-  - `Config.cs`: repositories, release pin, file names.
+  - `Config.cs`: repository, channel (beta or stable) and its memory, release pin, file names.
   - `WowLocator.cs`: the client table, detection, TOC files, client builds.
   - `GitHubClient.cs`: latest-release redirect, release.json, downloads.
   - `ReleasePackage.cs`: the release zip, downloaded and unpacked once per run.
@@ -248,4 +283,5 @@ to see the steps without doing them.
     `WizardForm`, `CancelConfirm`; the entry point is `Program.cs`.
 - `WowVisionSelfTest\`: the headless test harness.
 - `bootstrap\Install-WowVisionUpdater.ps1`: download, check and start the exe in one line.
-- `release.ps1`: build and publish.
+- `build.ps1`: build, version file, checks; optional upload.
+- `../.github/workflows/installer.yml`: builds and attaches the installer to every release and beta.

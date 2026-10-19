@@ -36,6 +36,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added Sku's Beacon 6 as a beacon sound.
 * Questie's one-time "Welcome to Questie" dialog, which asks you to choose between Questie, pfQuest and Blizzard quest objectives on WoW Forever and the newer classic clients, is now read as a window with its three buttons. It used to sit silently in the middle of the screen, where it also blocked every minimap scan.
 * The minimap scan's "Scan canceled, window" message now names the frame under the cursor, and the scan log records it.
+* Added a Windows installer and updater (WowVisionInstaller.exe on the release page), fully usable with a screen reader. It finds your game versions, installs WowVision into each one you pick (beta or stable, one choice for all), keeps the TOC each game version reads in step with its build, sets the two game options that block blind players (load out of date addons, no script warning), and can add the NVDA voice for the game, the WoW Login Tool and well-known extra addons (Questie, AtlasLoot, Details, Pawn, Deadly Boss Mods, GTFO, BugSack), each only where it exists for that game version. It leaves a WowVision Updater shortcut that updates WowVision and itself.
 
 #### Forever
 * Fixed the minimap scanner and the walking announcements finding nothing after the October 16 client build. The minimap now names its dots only in its new soft cursor mode, which the scan switches on while it runs.

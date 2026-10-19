@@ -451,6 +451,13 @@ namespace WowVisionInstaller
         public static IEnumerable<ManagedPackage> PackagesFor(ManagedEntry entry, string product) =>
             entry.Packages.Where(p => p.AppliesTo(product));
 
+        /// <summary>
+        /// True for a manifest key that belongs to an extra-addon package
+        /// ("CurseQuestie", "BugSack", …) rather than to one of WowVision's folders.
+        /// </summary>
+        public static bool IsManagedKey(string key) =>
+            Entries.Any(e => e.Packages.Any(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase)));
+
         /// <summary>True when the entry has anything at all for this client.</summary>
         public static bool AvailableFor(ManagedEntry entry, string product) =>
             PackagesFor(entry, product).Any();

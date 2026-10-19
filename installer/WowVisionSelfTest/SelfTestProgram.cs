@@ -286,16 +286,17 @@ namespace WowVisionInstaller
                 Check("other clients untouched", !File.Exists(Path.Combine(wow.FlavorDir[Config.MistsFlavor], "WTF", "Config.wtf")));
 
                 Console.WriteLine("=== status lines ===");
+                Config.SetChannel(Channel.Stable);
                 Config.OverrideLatest("V0.9.0");
                 wow.PutWowVision(Config.AnniversaryFlavor, "V0.8.0");
-                wow.PutWowVision(Config.MistsFlavor, "beta");
+                wow.PutWowVision(Config.MistsFlavor, "@project-version@");
                 Directory.Delete(Path.Combine(wow.AddOns[Config.RetailFlavor], Config.PrimaryFolder), true);
                 var targets = InstallTarget.BuildAll();
                 foreach (var t in targets) Console.WriteLine($"    {t.DisplayName}: {t.StatusLine()}");
                 InstallTarget T(string p) => targets.Find(t => t.Product == p);
                 Check("Anniversary 0.8.0 -> update available", T(Config.AnniversaryFlavor).UpdateAvailable);
                 Check("Forever 0.9.0 -> up to date", T(Config.ForeverFlavor).HasAddon && !T(Config.ForeverFlavor).UpdateAvailable);
-                Check("Mists beta -> test build, no update offered",
+                Check("Mists copied git checkout -> test build, no update offered",
                       T(Config.MistsFlavor).HasTestBuild && !T(Config.MistsFlavor).UpdateAvailable);
                 Check("Retail without WowVision -> fresh install", T(Config.RetailFlavor).ClientFound && !T(Config.RetailFlavor).HasAddon);
 
@@ -393,12 +394,69 @@ namespace WowVisionInstaller
             Console.WriteLine("=== release numbers and test builds ===");
             Check("V0.9.0 is a release", AddonInstaller.IsReleaseVersion("V0.9.0"));
             Check("0.9.0 is a release", AddonInstaller.IsReleaseVersion("0.9.0"));
-            Check("beta is a test build", AddonInstaller.IsTestBuild("beta"));
+            Check("beta is the beta, not a test build", AddonInstaller.IsBeta("beta") && !AddonInstaller.IsTestBuild("beta"));
             Check("@project-version@ is a test build", AddonInstaller.IsTestBuild("@project-version@"));
             Check("V0.9.0-beta1 is a test build", AddonInstaller.IsTestBuild("V0.9.0-beta1"));
             Check("no version is not a test build", !AddonInstaller.IsTestBuild(null));
 
-            Console.WriteLine("=== what needs the release ===");
+            Console.WriteLine("=== the decision per channel ===");
+            void D(string label, string toc, string tag, string build, Channel ch, string latest, string latestBuild, AddonState want)
+            {
+                var got = AddonInstaller.Decide(toc, tag, build, ch, latest, latestBuild);
+                Check($"{label} -> {got}", got == want);
+            }
+            D("stable: older release",          "V0.8.0", "V0.8.0", null, Channel.Stable, "V0.9.0", null, AddonState.Update);
+            D("stable: current release",        "V0.9.0", "V0.9.0", null, Channel.Stable, "V0.9.0", null, AddonState.UpToDate);
+            D("stable: newer than online (pin)", "V0.10.0", null,   null, Channel.Stable, "V0.9.0", null, AddonState.UpToDate);
+            D("stable: beta installed -> switch", "beta",  "beta",  "b1", Channel.Stable, "V0.9.0", null, AddonState.Update);
+            D("beta: same build",               "beta",   "beta",  "b1", Channel.Beta,   "beta",   "b1", AddonState.UpToDate);
+            D("beta: older build",              "beta",   "beta",  "b0", Channel.Beta,   "beta",   "b1", AddonState.Update);
+            D("beta: by hand, no build on record", "beta", null,   null, Channel.Beta,   "beta",   "b1", AddonState.Update);
+            D("beta: offline, cannot check",    "beta",   "beta",  "b1", Channel.Beta,   "beta",   null, AddonState.Unknown);
+            D("beta: release installed -> switch", "V0.9.0", "V0.9.0", null, Channel.Beta, "beta", "b1", AddonState.Update);
+            D("either: git checkout copied",    "@project-version@", null, null, Channel.Beta, "beta", "b1", AddonState.TestBuildKept);
+
+            Console.WriteLine("=== channel choice is remembered ===");
+            string store = Path.Combine(Path.GetTempPath(), "WowVisionChannelTest");
+            ChannelPrefs.DirOverride = store;
+            try
+            {
+                if (Directory.Exists(store)) Directory.Delete(store, true);
+                Check("nothing stored -> the default (" + Config.DefaultChannel + ")", ChannelPrefs.Load() == Config.DefaultChannel);
+                ChannelPrefs.Save(Channel.Stable);
+                Check("stable survives a reload", ChannelPrefs.Load() == Channel.Stable);
+                ChannelPrefs.Save(Channel.Beta);
+                Check("beta survives a reload", ChannelPrefs.Load() == Channel.Beta);
+            }
+            finally { ChannelPrefs.DirOverride = null; try { Directory.Delete(store, true); } catch { } }
+            Check("beta is preselected", Config.DefaultChannel == Channel.Beta);
+
+            Console.WriteLine("=== beta build id from the download redirect ===");
+            Check("asset id read from the storage URL",
+                  GitHubClient.BuildIdFromUri(new Uri("https://release-assets.githubusercontent.com/github-production-release-asset/1109589856/b107f80f-951a-488f-b57b-7e410cd0b074?sp=r")) ==
+                  "b107f80f-951a-488f-b57b-7e410cd0b074");
+            Check("no id from an unrelated URL", GitHubClient.BuildIdFromUri(new Uri("https://github.com/x")) == null);
+
+            Console.WriteLine("=== manifest round-trip ===");
+            string mdir = Path.Combine(Path.GetTempPath(), "WowVisionManifestTest");
+            try
+            {
+                Directory.CreateDirectory(mdir);
+                var mf = new InstallManifest();
+                mf.SetTag("WowVision", "beta");
+                mf.SetBuild("WowVision", "b107f80f", new DateTime(2026, 10, 16, 0, 0, 0, DateTimeKind.Utc));
+                mf.SetTag("CurseQuestie", "bundle/v12.1.0+v1.0.6");
+                mf.Save(mdir);
+                var back = InstallManifest.Load(mdir);
+                Check("tags and builds survive", back.GetTag("WowVision") == "beta" && back.GetBuild("WowVision") == "b107f80f" &&
+                      back.GetBuildDate("WowVision")?.ToString("yyyy-MM-dd") == "2026-10-16" &&
+                      back.GetTag("CurseQuestie") == "bundle/v12.1.0+v1.0.6");
+                Check("extra-addon keys are told apart", ManagedAddons.IsManagedKey("CurseQuestie") && !ManagedAddons.IsManagedKey("WowVision_MapData_TBC"));
+            }
+            finally { try { Directory.Delete(mdir, true); } catch { } }
+
+            Console.WriteLine("=== what needs the release (stable) ===");
+            Config.SetChannel(Channel.Stable);
             using (var wow = new FakeWow("WowVisionVersionTest"))
             {
                 string addons = wow.AddOns[Config.AnniversaryFlavor];
@@ -423,7 +481,7 @@ namespace WowVisionInstaller
                 wow.PutWowVision(product, "V0.10.0");
                 Check("newer installed than the release -> nothing (no downgrade)", !Needs(new InstallManifest(), out _));
 
-                wow.PutWowVision(product, "beta");
+                wow.PutWowVision(product, "@project-version@");
                 Check("test build -> left alone", !Needs(new InstallManifest(), out _));
 
                 wow.PutWowVision(product, "V0.9.0");
@@ -763,9 +821,21 @@ namespace WowVisionInstaller
 
         private static void RunResolve()
         {
-            Console.WriteLine("=== resolve: the newest WowVision release online ===");
+            Console.WriteLine("=== resolve: the beta online ===");
+            Config.SetChannel(Channel.Beta);
+            GitHubClient.ResolveAndAdoptLatestRelease();
+            Console.WriteLine($"    asset {Config.AssetName}, build {Config.LatestBuild ?? "(none)"}, heard as \"{Config.LatestVersion}\"");
+            Check("beta build id read", !string.IsNullOrEmpty(Config.LatestBuild));
+            Check("beta upload date read", Config.LatestBuildDate.HasValue);
+            Check("the installer's self-update looks at the beta release",
+                  GitHubClient.BuildInstallerDownloadUrl("x").Contains("/releases/download/beta/"));
+
+            Console.WriteLine("=== resolve: the newest stable release online ===");
+            Config.SetChannel(Channel.Stable);
             Console.WriteLine($"    built-in pin : {Config.FallbackTag}");
             GitHubClient.ResolveAndAdoptLatestRelease();
+            Check("the installer's self-update looks at the latest release",
+                  GitHubClient.BuildInstallerDownloadUrl("x").Contains("/releases/latest/download/"));
             Console.WriteLine($"    effective    : {Config.LatestTag}, asset {Config.AssetName}");
             Console.WriteLine($"    download     : {GitHubClient.BuildAddonDownloadUrl(Config.LatestTag, Config.AssetName)}");
             Console.WriteLine($"    log          : {Logger.LastLine}");
@@ -776,10 +846,7 @@ namespace WowVisionInstaller
 
         private static void RunFullInstall()
         {
-            Console.WriteLine("=== fullinstall: real download into a throwaway WoW folder ===");
-            GitHubClient.ResolveAndAdoptLatestRelease();
-            Console.WriteLine($"    release: {Config.LatestTag} ({Config.AssetName})");
-
+            Console.WriteLine("=== fullinstall: real downloads into a throwaway WoW folder ===");
             using (var wow = new FakeWow("WowVisionFullInstall"))
             using (var github = new GitHubClient())
             {
@@ -795,46 +862,94 @@ namespace WowVisionInstaller
                     ManagedEnabled = ManagedAddons.Entries.ToDictionary(e => e.PrefKey, e => false),
                 };
 
-                List<TargetResult> first;
-                using (var runner = new InstallRunner(targets, options, github, Print))
-                {
-                    first = runner.BuildPlans();
-                    Check("every client plans a first install", first.All(r => r.Plan != null && r.Plan.AddonNeedsWork && r.Plan.FirstInstall));
-                    runner.PreparePackage(first);
-                    Check("first install needs the game closed", InstallRunner.NeedsGameClosed(first));
-                    runner.Execute(first);
-                    Console.WriteLine();
-                    Console.WriteLine(runner.ComposeSummary(first));
-                    Console.WriteLine();
-                }
+                // 1. Stable into five empty clients.
+                Config.SetChannel(Channel.Stable);
+                GitHubClient.ResolveAndAdoptLatestRelease();
+                Console.WriteLine($"=== stable: {Config.LatestTag} ({Config.AssetName}) ===");
+                var first = Run(targets, options, github);
+                Check("every client planned a first install", first.All(r => r.Plan != null && r.Plan.FirstInstall));
+                Check("first install needs the game closed", InstallRunner.NeedsGameClosed(first));
                 Check("no client failed", !InstallRunner.AnyFailed(first));
                 Check("the downloaded release was removed from %TEMP%",
                       !Directory.Exists(AddonInstaller.TempRoot) || !Directory.GetDirectories(AddonInstaller.TempRoot).Any());
+                CheckInstalled(targets, Config.LatestTag);
+                Check("no beta build recorded for a release",
+                      targets.All(t => InstallManifest.Load(t.AddOnsPath).GetBuild(Config.PrimaryFolder) == null));
+                SecondPass(targets, options, github);
 
+                // 2. Switch to the beta: every client is offered the beta.
+                Config.SetChannel(Channel.Beta);
+                GitHubClient.ResolveAndAdoptLatestRelease();
+                Console.WriteLine($"=== beta: {Config.AssetName}, build {Config.LatestBuild}, {Config.LatestVersion} ===");
+                Check("the beta build id was read", !string.IsNullOrEmpty(Config.LatestBuild));
+                foreach (var t in targets) t.RefreshInstalledVersion();
+                Check("every client offers the switch to beta", targets.All(t => t.UpdateAvailable));
+                var beta = Run(targets, options, github);
+                Check("no client failed", !InstallRunner.AnyFailed(beta));
+                CheckInstalled(targets, Config.BetaTag);
+                Check("beta build recorded in every client",
+                      targets.All(t => InstallManifest.Load(t.AddOnsPath).GetBuild(Config.PrimaryFolder) == Config.LatestBuild));
+
+                // The beta zip carries the TBC map data as its own folder.
                 foreach (var t in targets)
                 {
-                    string v = WowLocator.ReadTocVersion(t.AddOnsPath, Config.PrimaryFolder, t.Product);
-                    int iface = WowLocator.ClientInterface(t.AddOnsPath, t.Product);
-                    string line = TocSync.ReadInterface(t.AddOnsPath, Config.PrimaryFolder, t.Product) ?? "";
-                    Console.WriteLine($"    {t.ShortName,-8} version {v}, interface {line}");
-                    Check($"{t.ShortName}: release installed", AddonInstaller.CompareVersions(v, Config.LatestTag) == 0);
-                    Check($"{t.ShortName}: TOC names the client ({iface})",
-                          line.Split(',').Select(s => s.Trim()).Contains(iface.ToString()));
-                    Check($"{t.ShortName}: manifest records the release",
-                          InstallManifest.Load(t.AddOnsPath).GetTag(Config.PrimaryFolder) == Config.LatestTag);
-                    Check($"{t.ShortName}: game settings written", GameSettings.CheckNeeded(t.AddOnsPath).Count == 0);
+                    bool want = t.Product == Config.AnniversaryFlavor || t.Product == Config.ForeverFlavor;
+                    bool has = Directory.Exists(Path.Combine(t.AddOnsPath, "WowVision_MapData_TBC"));
+                    Check($"{t.ShortName}: map data {(want ? "installed" : "left out")}", has == want);
                 }
+                SecondPass(targets, options, github);
 
-                Console.WriteLine("=== second pass ===");
-                foreach (var t in targets) t.RefreshInstalledVersion();
-                using (var runner = new InstallRunner(targets, options, github, Print))
-                {
-                    var second = runner.BuildPlans();
-                    Check("nothing left to do", !InstallRunner.HasWork(second));
-                    runner.PreparePackage(second);
-                    Check("and nothing downloaded", second.All(r => r.Plan.Items.Count == 0));
-                    Console.WriteLine(runner.ComposeSummary(second));
-                }
+                // 3. A recorded build that is not the one online -> update offered.
+                var m = InstallManifest.Load(targets[0].AddOnsPath);
+                m.SetBuild(Config.PrimaryFolder, "an-older-upload", null);
+                m.Save(targets[0].AddOnsPath);
+                targets[0].RefreshInstalledVersion();
+                Check("an older beta build is offered the newer one", targets[0].UpdateAvailable);
+            }
+        }
+
+        private static List<TargetResult> Run(List<InstallTarget> targets, InstallOptions options, GitHubClient github)
+        {
+            using (var runner = new InstallRunner(targets, options, github, Print))
+            {
+                var results = runner.BuildPlans();
+                runner.PreparePackage(results);
+                runner.Execute(results);
+                Console.WriteLine();
+                Console.WriteLine(runner.ComposeSummary(results));
+                Console.WriteLine();
+                return results;
+            }
+        }
+
+        private static void CheckInstalled(List<InstallTarget> targets, string tag)
+        {
+            foreach (var t in targets)
+            {
+                string v = WowLocator.ReadTocVersion(t.AddOnsPath, Config.PrimaryFolder, t.Product);
+                int iface = WowLocator.ClientInterface(t.AddOnsPath, t.Product);
+                string line = TocSync.ReadInterface(t.AddOnsPath, Config.PrimaryFolder, t.Product) ?? "";
+                Console.WriteLine($"    {t.ShortName,-8} version {v}, interface {line}");
+                Check($"{t.ShortName}: {tag} installed", string.Equals(v, tag, StringComparison.OrdinalIgnoreCase));
+                Check($"{t.ShortName}: TOC names the client ({iface})",
+                      line.Split(',').Select(s => s.Trim()).Contains(iface.ToString()));
+                Check($"{t.ShortName}: manifest records {tag}",
+                      InstallManifest.Load(t.AddOnsPath).GetTag(Config.PrimaryFolder) == tag);
+                Check($"{t.ShortName}: game settings written", GameSettings.CheckNeeded(t.AddOnsPath).Count == 0);
+            }
+        }
+
+        private static void SecondPass(List<InstallTarget> targets, InstallOptions options, GitHubClient github)
+        {
+            Console.WriteLine("=== second pass ===");
+            foreach (var t in targets) t.RefreshInstalledVersion();
+            Check("no client offers an update", targets.All(t => !t.UpdateAvailable));
+            using (var runner = new InstallRunner(targets, options, github, Print))
+            {
+                var second = runner.BuildPlans();
+                Check("nothing left to do", !InstallRunner.HasWork(second));
+                runner.PreparePackage(second);
+                Check("and nothing downloaded", second.All(r => r.Plan.Items.Count == 0));
             }
         }
 
@@ -852,7 +967,7 @@ namespace WowVisionInstaller
         /// The whole self-update chain except the window and the restart: fetch
         /// installer-version.txt, compare, download the published exe, check it
         /// against the published SHA-256 and its own version resource. Proves
-        /// release.ps1 published the exe and its checksum as a matching pair; a
+        /// build.ps1 published the exe and its checksum as a matching pair; a
         /// mismatch here means every installed updater would offer an update it
         /// then refuses to apply. Run it after every release.
         /// </summary>
@@ -942,7 +1057,7 @@ namespace WowVisionInstaller
 
         /// <summary>
         /// Reads a version file exactly as the installer would (default:
-        /// dist\installer-version.txt as release.ps1 writes it). Guards the
+        /// dist\installer-version.txt as build.ps1 writes it). Guards the
         /// coupling between a PowerShell writer and a C# reader that nothing else
         /// would notice breaking: an unreadable file just makes the installer say
         /// nothing, which looks exactly like "no update".
@@ -957,7 +1072,7 @@ namespace WowVisionInstaller
             Console.WriteLine($"    file : {path}");
             if (!File.Exists(path))
             {
-                Console.WriteLine("    -> not found. Run release.ps1 -BuildOnly first.");
+                Console.WriteLine("    -> not found. Run build.ps1 first.");
                 Check("version file present", false);
                 return;
             }

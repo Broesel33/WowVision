@@ -29,6 +29,14 @@ namespace WowVisionInstaller
         public string Tag { get; private set; }
         public string AssetName { get; private set; }
 
+        /// <summary>
+        /// Beta only: the id of the zip that was actually downloaded (it may be a
+        /// newer upload than the one checked at startup), and its upload time when
+        /// that is the build checked. Null for a stable release.
+        /// </summary>
+        public string Build { get; private set; }
+        public DateTime? BuildDate { get; private set; }
+
         /// <summary>Folder holding the extracted top-level addon folders.</summary>
         public string Root { get; private set; }
 
@@ -61,7 +69,7 @@ namespace WowVisionInstaller
                 string label = Config.DisplayName;
                 int lastPct = -2;
                 long lastMb = -1;
-                await github.DownloadFileAsync(url, pkg._zipPath, (done, total) =>
+                string servedId = await github.DownloadFileWithIdAsync(url, pkg._zipPath, (done, total) =>
                 {
                     int pct = total > 0 ? (int)(done * 100 / total) : -1;
                     long mbDone = done / 1048576;
@@ -81,6 +89,14 @@ namespace WowVisionInstaller
 
                 cancel.ThrowIfCancellationRequested();
 
+                if (AddonInstaller.IsBeta(tag))
+                {
+                    pkg.Build = servedId ?? Config.LatestBuild;
+                    pkg.BuildDate = string.Equals(pkg.Build, Config.LatestBuild, StringComparison.OrdinalIgnoreCase)
+                        ? Config.LatestBuildDate : null;
+                    Logger.Info($"Beta build downloaded: {pkg.Build ?? "(unknown)"}.");
+                }
+
                 report(new InstallProgress { Addon = label, Phase = "extract", Percent = -1,
                     Message = Loc.Format("ai.extracting", label) });
                 Directory.CreateDirectory(pkg.Root);
@@ -98,7 +114,7 @@ namespace WowVisionInstaller
 
                 Logger.Info($"Release {tag} holds: {string.Join(", ", pkg.Folders)}");
                 report(new InstallProgress { Addon = label, Phase = "ready", Percent = 100,
-                    Message = Loc.Format("ai.packageReady", label, tag.TrimStart('v', 'V'),
+                    Message = Loc.Format("ai.packageReady", label, Config.SpokenVersion(tag, pkg.BuildDate),
                                          string.Join(", ", pkg.Folders)) });
                 return pkg;
             }

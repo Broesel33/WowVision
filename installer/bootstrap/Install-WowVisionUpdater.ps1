@@ -1,7 +1,7 @@
 # Downloads the newest WowVision installer, checks it against the published
 # SHA-256 and starts it. For people who would rather run one PowerShell line
 # than download an exe by hand:
-#   irm https://github.com/JeanStiletto/WowVision-Installer/releases/latest/download/Install-WowVisionUpdater.ps1 | iex
+#   irm https://github.com/wow-vision/WowVision/releases/latest/download/Install-WowVisionUpdater.ps1 | iex
 # (Taken from the Sku installer's bootstrap.)
 [CmdletBinding()]
 param()
@@ -9,7 +9,7 @@ param()
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$base = 'https://github.com/JeanStiletto/WowVision-Installer/releases/latest/download'
+$base = 'https://github.com/wow-vision/WowVision/releases/latest/download'
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('WowVisionSetup-' + [Guid]::NewGuid().ToString('N'))
 $metadataPath = Join-Path $temp 'installer-version.txt'
 $downloadPath = Join-Path $temp 'WowVisionInstaller.exe'

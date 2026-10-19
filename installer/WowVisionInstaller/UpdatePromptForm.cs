@@ -218,6 +218,11 @@ namespace WowVisionInstaller
                 return sb.ToString();
             }
 
+            // Which WowVision this installer follows, first, so every line below
+            // is heard against it.
+            sb.AppendLine(Loc.Format(Config.CurrentChannel == Channel.Beta ? "update.channelBeta" : "update.channelStable",
+                                     Config.LatestVersion));
+
             foreach (var t in Found)
                 sb.AppendLine($"{t.DisplayName}: {t.StatusLine()}");
 

@@ -54,11 +54,11 @@ namespace WowVisionInstaller
     ///     update ITSELF must still be able to update WowVision.
     ///
     /// The version is published as a tiny key=value asset next to the exe on the
-    /// rolling releases/latest/download URL of the INSTALLER's own repository
-    /// (<see cref="Config.InstallerRepo"/>, written by release.ps1) — not the
-    /// addon's: WowVision itself is released by its maintainers in
-    /// <see cref="Config.AddonRepo"/>, and the installer ships on its own rhythm
-    /// beside it. That is a plain github.com download, NOT
+    /// WowVision releases themselves (written by build.ps1, attached by the
+    /// Installer workflow): for the stable channel the rolling
+    /// releases/latest/download URL, for the beta channel the beta release, so a
+    /// beta tester also gets installer fixes first. That is a plain github.com
+    /// download, NOT
     /// api.github.com, so it cannot hit the 60-request/hour rate limit that made us
     /// avoid the REST API everywhere else.
     /// </summary>
@@ -234,7 +234,7 @@ namespace WowVisionInstaller
         }
 
         /// <summary>
-        /// Reads the two lines release.ps1 writes:
+        /// Reads the two lines build.ps1 writes:
         ///   version=4.3
         ///   sha256=&lt;64 hex&gt;
         /// Unknown keys, blank lines and # comments are ignored, so the format can
@@ -243,7 +243,7 @@ namespace WowVisionInstaller
         /// and a stray CR must not end up inside the hash.
         ///
         /// Kept separate from <see cref="Check"/> so the WowVisionSelfTest harness can
-        /// feed it the exact bytes release.ps1 produced and prove the two halves
+        /// feed it the exact bytes build.ps1 produced and prove the two halves
         /// still agree — that coupling has no other test.
         /// </summary>
         internal static void ParseVersionFile(string text, out string version, out string sha)
@@ -334,7 +334,7 @@ namespace WowVisionInstaller
                 throw new InvalidDataException("The downloaded file carries no version information.");
 
             // Only that it is genuinely newer than us. The announced number is not
-            // re-derived from the resource: release.ps1 trims trailing zero
+            // re-derived from the resource: build.ps1 trims trailing zero
             // components ("4.3"), the resource does not ("4.3.0.0"), and
             // CompareVersions treats the missing components as zero anyway.
             if (AddonInstaller.CompareVersions(fileVersion, info.RunningVersion) <= 0)
