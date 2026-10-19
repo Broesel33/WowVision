@@ -174,10 +174,15 @@ end
 -- rebindable: a player name goes into the open chat box, or becomes a /who
 -- with none open (as the game does); a link goes into the chat box, which is
 -- opened for it when none is -- a keyboard user cannot have the chat box and
--- this window focused at once.
+-- this window focused at once. A channel name opens the chat channels
+-- window, as the game's channel link handler does on a modified click.
 function chatLinks.shiftClick(part, chatFrame)
     if part.kind == "channel" then
-        return false
+        if ChannelFrame == nil or ChannelFrame.Toggle == nil then
+            return false
+        end
+        ChannelFrame:Toggle()
+        return true
     end
     if part.kind == "player" then
         if part.linkType == "BNplayer" or part.linkType == "BNplayerCommunity" then

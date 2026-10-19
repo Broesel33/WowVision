@@ -225,6 +225,9 @@ local function messagesNode(screen)
                 elseif part.kind == "channel" then
                     left = L["Write to %s"]
                     right = L["Channel Menu for %s"]
+                    if ChannelFrame ~= nil then
+                        shift = L["Chat Channels Window"]
+                    end
                 else
                     left = L["Read Tooltip of %s"]
                     shift = L["Link %s in Chat"]
