@@ -272,6 +272,7 @@ local parseOnly = {
     "retail/containers/Bags.lua",
     "retail/containers/Bank.lua",
     "retail/channels.lua",
+    "camelot/friends.lua",
     "retail/QuestLog.lua",
     "retail/cooldownManager.lua",
     "retail/talentTree.lua",
