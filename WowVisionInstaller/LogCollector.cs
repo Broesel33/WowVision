@@ -22,7 +22,8 @@ namespace WowVisionInstaller
     /// <c>Logs\</c> (General.log records every Lua error with its stack) and
     /// <c>Errors\</c> folders; <c>Config.wtf</c>; WowVision's TOCs;
     /// <c>.build.info</c>; and a listing of every installed addon with its
-    /// version. Once globally: this installer's own log, a <c>voices.txt</c>
+    /// version. Once globally: the WoW Login Tool's <c>log.txt</c>, this
+    /// installer's own log, a <c>voices.txt</c>
     /// listing every SAPI voice registration, and a <c>system-info.txt</c>
     /// describing the machine and each client.</para>
     ///
@@ -32,8 +33,7 @@ namespace WowVisionInstaller
     /// 10-20x, so collecting all of them costs almost nothing and is the only
     /// variant with no silent wrong answer.</para>
     ///
-    /// <para>Taken over from the Sku installer's collector, without the parts
-    /// that only Sku has (its login tool and recognition textures).</para>
+    /// <para>Taken over from the Sku installer's collector.</para>
     ///
     /// <para>Selection is conservative about SIZE but not about COVERAGE: files
     /// that are not copied are still LISTED in system-info.txt with their size
@@ -53,6 +53,7 @@ namespace WowVisionInstaller
             /// <summary>Clients that contributed to the bundle.</summary>
             public int ClientCount;
             public bool IncludedInstallerLog;
+            public bool IncludedLoginToolLog;
             public string Error;
 
             /// <summary>Uncompressed size as a short human string, for the result message.</summary>
@@ -151,6 +152,7 @@ namespace WowVisionInstaller
                     foreach (var site in sites)
                         CollectClient(site, staging, result, notes);
 
+                    CollectLoginToolLogs(sites, staging, result, notes);
                     CollectInstallerLog(staging, result, notes);
                     WriteVoiceRegistrations(Path.Combine(staging, "voices.txt"), result, notes);
 
@@ -420,6 +422,74 @@ namespace WowVisionInstaller
             {
                 notes.Add($"{site.ShortName}: addon list failed ({ex.Message})");
             }
+        }
+
+        /// <summary>
+        /// The WoW Login Tool writes log.txt into its own program folder
+        /// (&lt;WoW base&gt;\WoW Login Tool) — the same folder the installer deploys
+        /// it to and deliberately preserves across upgrades (see
+        /// LoginToolInstaller.SkipNames), so the path is already stable and needs
+        /// no new convention. Deduped by folder, because two clients under one WoW
+        /// base share a single tool install.
+        /// </summary>
+        private static void CollectLoginToolLogs(List<ClientSite> sites, string staging, Result result, List<string> notes)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int n = 0;
+
+            foreach (var site in sites)
+            {
+                string toolDir;
+                try { toolDir = LoginToolInstaller.ResolveToolDir(site.AddOnsPath); }
+                catch { continue; }
+
+                if (string.IsNullOrEmpty(toolDir) || !seen.Add(toolDir)) continue;
+                if (!Directory.Exists(toolDir))
+                {
+                    notes.Add($"login tool: not installed at {toolDir}");
+                    continue;
+                }
+
+                // Suffix only when a machine really has more than one tool install,
+                // so the ordinary bundle carries a plain "LoginTool" folder.
+                string destDir = Path.Combine(staging, n == 0 ? "LoginTool" : $"LoginTool-{n + 1}");
+                n++;
+
+                // By NAME, not by extension. The tool folder also holds its readme
+                // and two license files — a *.txt sweep pulled 67 KB of AutoHotkey
+                // licence text into the first live bundle, which is noise a reader
+                // has to step over on the way to the log.
+                //
+                // No age filter: there is one log.txt and its age is a clue, not a
+                // reason to drop it.
+                int before = result.FileCount;
+                foreach (string file in SafeEnumerateFiles(toolDir))
+                {
+                    if (!IsLoginToolLogFile(Path.GetFileName(file))) continue;
+                    CopyInto(file, Path.Combine(destDir, Path.GetFileName(file)), result, notes, "login tool");
+                }
+                // The AHK driver also drops per-run logs beside itself.
+                CopyFolder(Path.Combine(toolDir, "v2", "logs"), Path.Combine(destDir, "v2-logs"),
+                           new[] { ".log", ".txt" }, "login tool/v2", result, notes, NoAgeLimit);
+
+                if (result.FileCount > before) result.IncludedLoginToolLog = true;
+                else notes.Add($"login tool: installed at {toolDir} but has written no log yet");
+            }
+        }
+
+        /// <summary>
+        /// The tool's own logs and its version marker: log.txt (the live session),
+        /// log-1..log-5.txt (the rotated previous sessions — the tool clears its log
+        /// at every start, so the rotation is what survives a relaunch), and
+        /// installed-release.txt, which says which build produced them.
+        /// </summary>
+        private static bool IsLoginToolLogFile(string name)
+        {
+            if (string.Equals(name, "installed-release.txt", StringComparison.OrdinalIgnoreCase)) return true;
+            if (!name.StartsWith("log", StringComparison.OrdinalIgnoreCase)) return false;
+            return name.Equals("log.txt", StringComparison.OrdinalIgnoreCase) ||
+                   (name.StartsWith("log-", StringComparison.OrdinalIgnoreCase) &&
+                    name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -699,6 +769,7 @@ namespace WowVisionInstaller
             sb.AppendLine($"Captured:             {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}");
             sb.AppendLine($"Installer version:    {InstallerVersion()}");
             sb.AppendLine($"Latest release:       {Config.LatestTag} ({Config.AssetName})");
+            sb.AppendLine($"Login tool version:   {Config.LoginToolVersion} (what this installer deploys)");
             sb.AppendLine($"OS:                   {Environment.OSVersion}");
             sb.AppendLine($"CLR:                  {Environment.Version}");
             sb.AppendLine($"64-bit OS:            {Environment.Is64BitOperatingSystem}");
@@ -729,6 +800,20 @@ namespace WowVisionInstaller
                 try { iface = WowLocator.ClientInterface(site.AddOnsPath, site.Product); } catch { }
                 sb.AppendLine($"Client interface:     {(iface > 0 ? iface.ToString() : "(unknown)")}");
                 sb.AppendLine($"TOC interface line:   {TocSync.ReadInterface(site.AddOnsPath, Config.PrimaryFolder, site.Product) ?? "(none)"}");
+
+                string toolDir = null;
+                try { toolDir = LoginToolInstaller.ResolveToolDir(site.AddOnsPath); } catch { }
+                bool toolPresent = toolDir != null && Directory.Exists(toolDir);
+                sb.AppendLine($"Login tool folder:    {toolDir ?? "(unresolved)"}{(toolPresent ? "" : "  (not present)")}");
+                if (toolPresent) AppendFileListing(sb, toolDir, "  login tool folder");
+
+                // WoW Forever narrates its own glue screens; the login tool needs
+                // no recognition textures there, and Mists/Retail get no tool, so
+                // "missing" would be a false alarm on those.
+                if (LoginToolInstaller.ClientNeedsTextures(site.Product))
+                    AppendFiducialTextureInfo(sb, site);
+                else
+                    sb.AppendLine("Recognition textures: not used on this client");
 
                 // The full SavedVariables listing, INCLUDING the files that were not
                 // copied. This is the index that makes an omission visible.
@@ -764,6 +849,7 @@ namespace WowVisionInstaller
             sb.AppendLine($"Files included:       {result.FileCount}");
             sb.AppendLine($"Uncompressed size:    {result.SizeText}");
             sb.AppendLine($"Installer log:        {(result.IncludedInstallerLog ? "included" : "not included")}");
+            sb.AppendLine($"Login tool log:       {(result.IncludedLoginToolLog ? "included" : "not included")}");
 
             if (notes.Count > 0)
             {
@@ -778,6 +864,63 @@ namespace WowVisionInstaller
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
             result.FileCount++;
+        }
+
+        /// <summary>
+        /// Whether the login tool's recolored recognition textures are in the
+        /// client's Interface folder. Screen recognition classifies every glue
+        /// screen from the exact colours of these textures, so a missing marker
+        /// means the tool can only ever answer "unknown screen" — the one fact
+        /// the first live "tool says unknown on every screen" bundle could not
+        /// settle, because nothing in it looked at Interface\.
+        /// </summary>
+        private static void AppendFiducialTextureInfo(StringBuilder sb, ClientSite site)
+        {
+            try
+            {
+                string interfaceDir = Directory.GetParent(site.AddOnsPath)?.FullName;
+                if (interfaceDir == null) return;
+
+                bool markerPresent = File.Exists(Path.Combine(interfaceDir, LoginToolInstaller.FiducialMarkerRelPath));
+
+                int total = 0;
+                DateTime newestUtc = DateTime.MinValue;
+                var parts = new List<string>();
+                foreach (string folder in LoginToolInstaller.InterfaceTextureFolders)
+                {
+                    string dir = Path.Combine(interfaceDir, folder);
+                    if (!Directory.Exists(dir)) { parts.Add(folder + " missing"); continue; }
+
+                    int n = 0;
+                    try
+                    {
+                        foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                        {
+                            if (!f.EndsWith(".blp", StringComparison.OrdinalIgnoreCase)) continue;
+                            n++; total++;
+                            try
+                            {
+                                DateTime t = File.GetLastWriteTimeUtc(f);
+                                if (t > newestUtc) newestUtc = t;
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                    parts.Add($"{folder} {n}");
+                }
+
+                string detail = string.Join(", ", parts);
+                sb.AppendLine(markerPresent
+                    ? $"Recognition textures: present — marker OK, {total} .blp ({detail}), " +
+                      $"newest {newestUtc:yyyy-MM-ddTHH:mm:ssZ}"
+                    : $"Recognition textures: MISSING — Interface\\{LoginToolInstaller.FiducialMarkerRelPath} " +
+                      $"not found, screen recognition cannot work ({total} .blp: {detail})");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"Recognition textures: (check failed: {ex.Message})");
+            }
         }
 
         /// <summary>The ten newest files of a folder, with UTC date and size.</summary>

@@ -263,6 +263,33 @@ namespace WowVisionInstaller
             ["voices.backupFailed"]  = "Windows voices: the voice list could not be backed up, so nothing was changed.",
             ["voices.failedOne"]     = "Windows voices: {0} could not be added ({1}).",
             ["voices.failed"]        = "Windows voices failed: {0}",
+            // ── extra addons (ManagedAddons) ─────────────────────────────────
+            ["managed.label"]        = "Additional recommended addons",
+            ["managed.acc"]          = "Additional recommended addons. These well-known addons are installed and kept up to date together with WowVision; each game version gets the build that matches it, and an addon that does not exist for a game version is left out there. Space toggles the highlighted addon.",
+            ["managed.notAvailable"] = "not available for: {0}",
+            ["managed.notForClient"] = "{0}: not available for {1}, skipped.",
+            ["managed.badHash"]      = "{0}: the download failed its integrity check and was not installed.",
+            ["managed.obsoleteRemoved"] = "{0}: removed the old folder {1}, which would clash with the new version.",
+            ["update.managedUpdates"]  = "{0}: updates available for additional addons: {1}.",
+            ["update.managedInstalls"] = "{0}: additional addons that will be installed: {1}.",
+            ["ai.upToDate"]          = "{0}: up to date ({1}).",
+
+            // ── WoW Login Tool (LoginToolInstaller progress) ─────────────────
+            ["opt.loginTool.label"]  = "Install the WoW Login Tool (recommended)",
+            ["opt.loginTool.desc"]   = "A separate program giving the login, server and character screens an audio menu, for WoW Forever, Anniversary and Classic Era. Those screens are not accessible on their own.",
+            ["status.loginTool"]     = "Installing the WoW Login Tool for {0}…",
+            ["summary.loginTool"]    = "The WoW Login Tool is ready — start it from the \"WoW Login Tool\" shortcut on your desktop (also in the Start menu).",
+            ["lt.downloading"]       = "WoW Login Tool: downloading {0}",
+            ["lt.extracting"]        = "WoW Login Tool: extracting…",
+            ["lt.deploying"]         = "WoW Login Tool: copying program files…",
+            ["lt.textures"]          = "WoW Login Tool: installing login-screen textures…",
+            ["lt.fonts"]             = "WoW Login Tool: installing the readable font override…",
+            ["lt.ahk"]               = "WoW Login Tool: adding the AutoHotkey runtime…",
+            ["lt.shortcut"]          = "WoW Login Tool: creating the launcher shortcut…",
+            ["lt.present"]           = "WoW Login Tool: already installed, skipped.",
+            ["lt.noInterface"]       = "WoW Login Tool: could not find the Interface folder — login-screen textures were NOT installed.",
+            ["lt.done"]              = "WoW Login Tool: ready. Start it from the \"WoW Login Tool\" shortcut (desktop / Start menu).",
+            ["lt.failed"]            = "WoW Login Tool install failed: {0}",
         };
 
         private static readonly Dictionary<string, string> De = new Dictionary<string, string>
@@ -470,6 +497,33 @@ namespace WowVisionInstaller
             ["voices.backupFailed"]  = "Windows-Stimmen: die Stimmenliste konnte nicht gesichert werden, deshalb wurde nichts geändert.",
             ["voices.failedOne"]     = "Windows-Stimmen: {0} konnte nicht hinzugefügt werden ({1}).",
             ["voices.failed"]        = "Windows-Stimmen fehlgeschlagen: {0}",
+            // ── Zusätzliche AddOns ───────────────────────────────────────────
+            ["managed.label"]        = "Zusätzliche empfohlene AddOns",
+            ["managed.acc"]          = "Zusätzliche empfohlene AddOns. Diese bekannten AddOns werden zusammen mit WowVision installiert und aktuell gehalten; jede Spielversion erhält die zu ihr passende Fassung, und ein AddOn, das es für eine Spielversion nicht gibt, wird dort ausgelassen. Die Leertaste schaltet das markierte AddOn um.",
+            ["managed.notAvailable"] = "nicht verfügbar für: {0}",
+            ["managed.notForClient"] = "{0}: für {1} nicht verfügbar, übersprungen.",
+            ["managed.badHash"]      = "{0}: Der Download hat die Integritätsprüfung nicht bestanden und wurde nicht installiert.",
+            ["managed.obsoleteRemoved"] = "{0}: alten Ordner {1} entfernt, er würde mit der neuen Fassung kollidieren.",
+            ["update.managedUpdates"]  = "{0}: Updates für zusätzliche AddOns verfügbar: {1}.",
+            ["update.managedInstalls"] = "{0}: Zusätzliche AddOns, die neu installiert werden: {1}.",
+            ["ai.upToDate"]          = "{0}: aktuell ({1}).",
+
+            // ── WoW Login Tool ───────────────────────────────────────────────
+            ["opt.loginTool.label"]  = "WoW Login Tool installieren (empfohlen)",
+            ["opt.loginTool.desc"]   = "Ein eigenes Programm, das Login-, Server- und Charakterbildschirm ein Audiomenü gibt, für WoW Forever, Anniversary und Classic Era. Diese Bildschirme sind von sich aus nicht zugänglich.",
+            ["status.loginTool"]     = "Installiere das WoW Login Tool für {0}…",
+            ["summary.loginTool"]    = "Das WoW Login Tool ist bereit – starte es über die Verknüpfung „WoW Login Tool“ auf dem Desktop (auch im Startmenü).",
+            ["lt.downloading"]       = "WoW Login Tool: lade herunter {0}",
+            ["lt.extracting"]        = "WoW Login Tool: entpacke…",
+            ["lt.deploying"]         = "WoW Login Tool: kopiere Programmdateien…",
+            ["lt.textures"]          = "WoW Login Tool: installiere Login-Bildschirm-Texturen…",
+            ["lt.fonts"]             = "WoW Login Tool: installiere die besser lesbare Schriftart…",
+            ["lt.ahk"]               = "WoW Login Tool: füge die AutoHotkey-Laufzeit hinzu…",
+            ["lt.shortcut"]          = "WoW Login Tool: erstelle die Startverknüpfung…",
+            ["lt.present"]           = "WoW Login Tool: bereits installiert, übersprungen.",
+            ["lt.noInterface"]       = "WoW Login Tool: Interface-Ordner nicht gefunden – Login-Bildschirm-Texturen wurden NICHT installiert.",
+            ["lt.done"]              = "WoW Login Tool: bereit. Starte es über die Verknüpfung „WoW Login Tool“ (Desktop / Startmenü).",
+            ["lt.failed"]            = "WoW Login Tool-Installation fehlgeschlagen: {0}",
         };
 
         // ── French ───────────────────────────────────────────────────────────
@@ -680,6 +734,33 @@ namespace WowVisionInstaller
             ["voices.backupFailed"]  = "Voix Windows : la liste des voix n'a pas pu être sauvegardée ; rien n'a été modifié.",
             ["voices.failedOne"]     = "Voix Windows : {0} n'a pas pu être ajoutée ({1}).",
             ["voices.failed"]        = "Échec des voix Windows : {0}",
+            // ── addons supplémentaires ───────────────────────────────────────
+            ["managed.label"]        = "Addons supplémentaires recommandés",
+            ["managed.acc"]          = "Addons supplémentaires recommandés. Ces addons connus sont installés et maintenus à jour avec WowVision ; chaque version du jeu reçoit la version qui lui correspond, et un addon qui n'existe pas pour une version du jeu y est laissé de côté. La barre d'espace bascule l'addon en surbrillance.",
+            ["managed.notAvailable"] = "non disponible pour : {0}",
+            ["managed.notForClient"] = "{0} : non disponible pour {1}, ignoré.",
+            ["managed.badHash"]      = "{0} : le téléchargement a échoué au contrôle d'intégrité et n'a pas été installé.",
+            ["managed.obsoleteRemoved"] = "{0} : ancien dossier {1} supprimé, il entrerait en conflit avec la nouvelle version.",
+            ["update.managedUpdates"]  = "{0} : mises à jour disponibles pour les addons supplémentaires : {1}.",
+            ["update.managedInstalls"] = "{0} : addons supplémentaires qui seront installés : {1}.",
+            ["ai.upToDate"]          = "{0} : à jour ({1}).",
+
+            // ── WoW Login Tool ───────────────────────────────────────────────
+            ["opt.loginTool.label"]  = "Installer le WoW Login Tool (recommandé)",
+            ["opt.loginTool.desc"]   = "Un programme séparé qui donne un menu audio aux écrans de connexion, de serveur et de personnage, pour WoW Forever, Anniversary et Classic Era. Ces écrans ne sont pas accessibles par eux-mêmes.",
+            ["status.loginTool"]     = "Installation du WoW Login Tool pour {0}…",
+            ["summary.loginTool"]    = "Le WoW Login Tool est prêt — lancez-le depuis le raccourci « WoW Login Tool » sur votre bureau (également dans le menu Démarrer).",
+            ["lt.downloading"]       = "WoW Login Tool : téléchargement de {0}",
+            ["lt.extracting"]        = "WoW Login Tool : extraction…",
+            ["lt.deploying"]         = "WoW Login Tool : copie des fichiers du programme…",
+            ["lt.textures"]          = "WoW Login Tool : installation des textures de l'écran de connexion…",
+            ["lt.fonts"]             = "WoW Login Tool : installation de la police plus lisible…",
+            ["lt.ahk"]               = "WoW Login Tool : ajout du moteur AutoHotkey…",
+            ["lt.shortcut"]          = "WoW Login Tool : création du raccourci de lancement…",
+            ["lt.present"]           = "WoW Login Tool : déjà installé, ignoré.",
+            ["lt.noInterface"]       = "WoW Login Tool : dossier Interface introuvable — les textures de l'écran de connexion n'ont PAS été installées.",
+            ["lt.done"]              = "WoW Login Tool : prêt. Lancez-le depuis le raccourci « WoW Login Tool » (bureau / menu Démarrer).",
+            ["lt.failed"]            = "Échec de l'installation du WoW Login Tool : {0}",
         };
     }
 }

@@ -12,6 +12,18 @@ namespace WowVisionInstaller
         public bool DesktopShortcut = true;
         public bool InstallSapi2Sr = true;
         public bool InstallWindowsVoices = true;
+        public bool InstallLoginTool = true;
+
+        /// <summary>
+        /// Which extra addons to handle, keyed by <see cref="ManagedEntry.PrefKey"/>.
+        /// Null = load the persisted choices (<see cref="ManagedPrefs"/>) — the
+        /// one-click path.
+        /// </summary>
+        public Dictionary<string, bool> ManagedEnabled;
+
+        /// <summary>The effective extra-addon choices, loading the persisted store on demand.</summary>
+        public Dictionary<string, bool> EffectiveManaged()
+            => ManagedEnabled ?? (ManagedEnabled = ManagedPrefs.Load());
 
         /// <summary>Reinstall everything, ignoring version checks (repair).</summary>
         public bool Force = false;
@@ -167,6 +179,17 @@ namespace WowVisionInstaller
                     bool symlink = AddonInstaller.IsSymlinked(r.Target.AddOnsPath, folder);
                     if (symlink) continue;   // a developer's checkout: never written to
 
+                    // The other folders of the zip go only where they can load:
+                    // WowVision_MapData_TBC ("## Interface: 20506, 16001") belongs
+                    // in Anniversary and WoW Forever, not in Era, Mists or Retail.
+                    // The main folder serves every client by its own TOCs.
+                    bool primary = string.Equals(folder, Config.PrimaryFolder, StringComparison.OrdinalIgnoreCase);
+                    if (!primary && !WowLocator.FolderServesClient(_package.Root, folder, r.Target.Product))
+                    {
+                        Logger.Info($"{folder}: not written for {r.Target.Product}; not installed there.");
+                        continue;
+                    }
+
                     var item = new PlanItem
                     {
                         FolderName = folder,
@@ -221,6 +244,21 @@ namespace WowVisionInstaller
                         installer.InstallFolder(_package, item.FolderName);
                     }
 
+                    // The extra addons each download on their own; between them is
+                    // a clean stopping point.
+                    foreach (var managed in r.Plan.ManagedItems)
+                    {
+                        if (_cancel.IsCancellationRequested) { WasCancelled = true; break; }
+
+                        SayScoped(Loc.Format("status.installingAddon", managed.Entry.DisplayName), true);
+                        ManagedAddonInstaller.InstallEntryAsync(
+                                r.Target.AddOnsPath, r.Target.Product, managed.Entry, _github,
+                                manifest, OnProgress, _options.Force, _cancel)
+                            .GetAwaiter().GetResult();
+                    }
+
+                    if (WasCancelled) break;
+
                     if (r.Plan.SettingsNeedWriting)
                     {
                         SayScoped(Loc.Get("status.writingSettings"), true);
@@ -247,6 +285,13 @@ namespace WowVisionInstaller
                                                       r.Plan.ClientInterface, m => SayScoped(m)))
                                 r.Plan.TocInterfaceNeedsSync = true;
                         }
+                    }
+
+                    if (_options.InstallLoginTool && LoginToolInstaller.ClientSupported(r.Target.Product))
+                    {
+                        SayScoped(Loc.Format("status.loginTool", r.Target.DisplayName), true);
+                        LoginToolInstaller.Install(r.Target.AddOnsPath, _github,
+                                                   m => SayScoped(m), _options.Force, r.Target.Product);
                     }
 
                     manifest.Save(r.Target.AddOnsPath);
@@ -371,6 +416,26 @@ namespace WowVisionInstaller
             }
             if (plan.FirstInstall) plan.NeedsGameClosed = true;
 
+            // Extra addons: each client gets the packages that exist for it. Any
+            // work here forces the game closed: these are whole-folder swaps of
+            // addons the running client may hold open.
+            if (ManagedAddons.AppliesTo(target))
+            {
+                var enabled = _options.EffectiveManaged();
+                foreach (var entry in ManagedAddons.Entries)
+                {
+                    if (!enabled.TryGetValue(entry.PrefKey, out bool on) || !on) continue;
+                    if (!ManagedAddons.AvailableFor(entry, target.Product)) continue;
+                    bool installed = ManagedAddons.EntryInstalled(addonsFolder, target.Product, entry);
+                    if (_options.Force ||
+                        ManagedAddons.EntryNeedsWork(addonsFolder, target.Product, manifest, entry))
+                    {
+                        plan.ManagedItems.Add(new ManagedPlanItem { Entry = entry, FirstInstall = !installed });
+                        plan.NeedsGameClosed = true;
+                    }
+                }
+            }
+
             plan.SettingsIssues = GameSettings.CheckNeeded(addonsFolder);
             if (plan.SettingsIssues.Count > 0)
             {
@@ -438,7 +503,20 @@ namespace WowVisionInstaller
                     lines.Add(Loc.Format("summary.clientOk", r.Target.DisplayName));
                     foreach (var item in r.Plan.Items)
                         lines.Add(Loc.Format("summary.updated", item.FolderName, Config.LatestVersion));
-                    if (r.Plan.Items.Count == 0)
+                    var manifest = InstallManifest.Load(r.Target.AddOnsPath);
+                    foreach (var managed in r.Plan.ManagedItems)
+                    {
+                        var first = ManagedAddons.PackagesFor(managed.Entry, r.Target.Product).FirstOrDefault();
+                        if (first != null && ManagedAddons.KnownUnavailable(manifest, first))
+                        {
+                            lines.Add(Loc.Format("managed.notForClient", managed.Entry.DisplayName, r.Target.DisplayName));
+                            continue;
+                        }
+                        string ver = first == null ? "" : (ManagedAddons.Resolved(first).Version ?? "");
+                        lines.Add(Loc.Format("summary.updated", managed.Entry.DisplayName,
+                                             ManagedAddons.DisplayVersion(ver)));
+                    }
+                    if (r.Plan.Items.Count == 0 && r.Plan.ManagedItems.Count == 0)
                         lines.Add(r.Target.HasTestBuild
                             ? Loc.Format("summary.testBuildKept", InstallTarget.Spoken(r.Target.InstalledVersion))
                             : Loc.Get("summary.addonsCurrent"));
@@ -446,6 +524,9 @@ namespace WowVisionInstaller
                         lines.Add(Loc.Get("summary.settings"));
                     if (r.Plan.TocInterfaceNeedsSync)
                         lines.Add(Loc.Format("summary.client", r.Plan.ClientInterface));
+                    if (_options.InstallLoginTool && LoginToolInstaller.ClientSupported(r.Target.Product) &&
+                        LoginToolInstaller.IsInstalled(r.Target.AddOnsPath))
+                        lines.Add(Loc.Get("summary.loginTool"));
                 }
 
                 blocks.Add(string.Join(Environment.NewLine, lines));

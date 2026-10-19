@@ -86,7 +86,25 @@ namespace WowVisionInstaller
         /// </summary>
         public async Task<string> ResolveLatestTagAsync()
         {
-            string url = $"https://github.com/{Config.AddonRepo}/releases/latest";
+            string tag = await ResolveLatestTagAsync(Config.AddonRepo);
+            if (tag != null && !Regex.IsMatch(tag, @"^[vV]\d[\d.]*$"))
+            {
+                Logger.Warning($"{Config.AddonRepo}/releases/latest is '{tag}' — not a release tag; using the built-in pin.");
+                return null;
+            }
+            return tag;
+        }
+
+        /// <summary>
+        /// Resolve the newest release TAG of any GitHub project from its
+        /// /releases/latest redirect — not an API call, so it cannot rate-limit.
+        /// Used for the addon and for the extra addons (Questie, DBM, …), whose tag
+        /// formats vary ("v11.37.1", "12.1.8", "r261"), hence the loose validation.
+        /// Returns null on any failure; the caller falls back to its pin.
+        /// </summary>
+        public async Task<string> ResolveLatestTagAsync(string ownerRepo, string tagPrefix = null)
+        {
+            string url = $"https://github.com/{ownerRepo}/releases/latest";
             try
             {
                 // Own short timeout: _http.Timeout is sized for the addon download
@@ -99,18 +117,24 @@ namespace WowVisionInstaller
                     // .../releases/tag/<tag>. ResponseHeadersRead avoids pulling
                     // the HTML release page body.
                     string finalPath = resp.RequestMessage?.RequestUri?.AbsolutePath ?? string.Empty;
-                    var m = Regex.Match(finalPath, @"/releases/tag/([vV]\d[\d.]*)$");
+                    // A tag prefix opts one package into tags of the form
+                    // "bundle/v12.1.0+v1.0.6" (Questie since v12): the prefix may
+                    // carry a "/", the rest also "+" (or its %2B escape).
+                    string pattern = tagPrefix == null
+                        ? @"/releases/tag/([A-Za-z0-9._\-]+)$"
+                        : @"/releases/tag/(" + Regex.Escape(tagPrefix) + @"[A-Za-z0-9._\-+%]+)$";
+                    var m = Regex.Match(finalPath, pattern);
                     if (!m.Success)
                     {
-                        Logger.Warning($"/releases/latest resolved to '{finalPath}' — not a release tag; using the built-in pin.");
+                        Logger.Warning($"{ownerRepo}/releases/latest resolved to '{finalPath}' — no usable tag.");
                         return null;
                     }
-                    return m.Groups[1].Value;
+                    return Uri.UnescapeDataString(m.Groups[1].Value);
                 }
             }
             catch (Exception ex)
             {
-                Logger.Warning($"Could not resolve /releases/latest ({ex.Message}); using the built-in pin.");
+                Logger.Warning($"Could not resolve {ownerRepo}/releases/latest ({ex.Message}).");
                 return null;
             }
         }
@@ -144,7 +168,11 @@ namespace WowVisionInstaller
         /// api.github.com host.
         /// </summary>
         public static string BuildAddonDownloadUrl(string tag, string assetName) =>
-            $"https://github.com/{Config.AddonRepo}/releases/download/" +
+            BuildDownloadUrl(Config.AddonRepo, tag, assetName);
+
+        /// <summary>The github.com release-download URL of a tagged asset in any repository.</summary>
+        public static string BuildDownloadUrl(string ownerRepo, string tag, string assetName) =>
+            $"https://github.com/{ownerRepo}/releases/download/" +
             $"{Uri.EscapeDataString(tag)}/{Uri.EscapeDataString(assetName)}";
 
         /// <summary>

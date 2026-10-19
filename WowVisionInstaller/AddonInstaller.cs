@@ -22,6 +22,13 @@ namespace WowVisionInstaller
         public bool FirstInstall;  // target folder doesn't exist yet
     }
 
+    /// <summary>One extra (third-party) addon entry that needs installing/updating this run.</summary>
+    public class ManagedPlanItem
+    {
+        public ManagedEntry Entry;
+        public bool FirstInstall;  // some required folder doesn't exist yet
+    }
+
     /// <summary>
     /// The decided work for one client: whether the release goes in, whether the
     /// game must be fully closed first, and the settings / TOC repairs.
@@ -42,6 +49,9 @@ namespace WowVisionInstaller
 
         public List<PlanItem> Items = new List<PlanItem>();
 
+        /// <summary>Extra addons (Questie, DBM, …) needing work in this client this run.</summary>
+        public List<ManagedPlanItem> ManagedItems = new List<ManagedPlanItem>();
+
         public bool NeedsGameClosed;
 
         /// <summary>Required game-client CVars that are currently wrong and need writing.</summary>
@@ -58,7 +68,7 @@ namespace WowVisionInstaller
         public List<string> TocInterfaceIssues = new List<string>();
 
         /// <summary>True if there's anything to do at all (addon, settings, or TOC sync).</summary>
-        public bool HasWork => AddonNeedsWork || SettingsNeedWriting || TocInterfaceNeedsSync;
+        public bool HasWork => AddonNeedsWork || ManagedItems.Count > 0 || SettingsNeedWriting || TocInterfaceNeedsSync;
     }
 
     /// <summary>

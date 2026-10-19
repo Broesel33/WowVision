@@ -27,8 +27,9 @@
          (WoW Forever, Anniversary, Classic Era, Mists Classic, Retail), the
          one-zip release downloaded once per run, TOC interface sync per client,
          game settings, NVDA voice bridge, Windows voices, remembered folders,
-         log collection, self-update. Left out on purpose: companion and
-         third-party addons, voice packs and the Sku login tool. -->
+         log collection, self-update, the WoW Login Tool (Forever, Anniversary,
+         Era) and Sku's extra addons with a check per game version. Left out:
+         voice packs (WowVision has none) and macOS. -->
     <Version>1.0</Version>
     <!-- File properties (Explorer "Details", and what antivirus reputation
          scoring reads). The exe is NOT Authenticode-signed (no paid
@@ -54,6 +55,11 @@
          x86 + companions + the signing script), identical to the Sku
          installer's. Extracted+installed at runtime by Sapi2SrInstaller. -->
     <EmbeddedResource Include="payload\sapi2sr-payload.zip" />
+    <!-- Portable AutoHotkey v2 runtime + GPL license, dropped next to the WoW
+         Login Tool so it runs without a system-wide AHK install. Runs the
+         v2\START.ahk driver. Deployed at runtime by LoginToolInstaller. -->
+    <EmbeddedResource Include="payload\AutoHotkey64_v2.exe" />
+    <EmbeddedResource Include="payload\AutoHotkey-license.txt" />
   </ItemGroup>
 
 </Project>

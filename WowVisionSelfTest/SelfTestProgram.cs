@@ -51,6 +51,10 @@ namespace WowVisionInstaller
                 case "logtest":         RunLogTest(); break;
                 case "resolve":         RunResolve(); break;
                 case "fullinstall":     RunFullInstall(); break;
+                case "availability":    RunAvailabilityTest(); break;
+                case "texturesweep":    RunTextureSweepTest(); break;
+                case "managedinstall":  RunManagedInstallTest(arg1 ?? Config.MistsFlavor); break;
+                case "logintool":       RunLoginToolTest(arg1 ?? Config.AnniversaryFlavor); break;
                 case "selfupdate":      RunSelfUpdateTest(arg1 ?? "0.1"); break;
                 case "selfupdateproof": RunSelfUpdateProof(); break;
                 case "versionfile":     RunVersionFileTest(arg1); break;
@@ -58,7 +62,7 @@ namespace WowVisionInstaller
                 case "offline":
                     // Everything that needs no network, in one go.
                     RunClientTest(); RunTocTest(); RunVersionTest(); RunPathMemoryTest();
-                    RunLocTest(); RunLogTest();
+                    RunLocTest(); RunLogTest(); RunAvailabilityTest(); RunTextureSweepTest();
                     break;
                 default:
                     Console.WriteLine("WowVisionSelfTest commands:");
@@ -69,6 +73,10 @@ namespace WowVisionInstaller
                     Console.WriteLine("  pathmemory       remembered folders (throwaway store)");
                     Console.WriteLine("  loc              the three text tables have the same keys and placeholders");
                     Console.WriteLine("  logtest          the log bundle from a throwaway WoW folder");
+                    Console.WriteLine("  availability     which client gets the map data, the login tool and each extra addon");
+                    Console.WriteLine("  texturesweep     the login tool's stale-texture cleanup (throwaway folders)");
+                    Console.WriteLine("  managedinstall [product]  REAL downloads of every extra addon for one client (default wow_classic)");
+                    Console.WriteLine("  logintool [product]       REAL login tool download into a throwaway client (default wow_anniversary)");
                     Console.WriteLine("  resolve          the newest WowVision release online (no download)");
                     Console.WriteLine("  fullinstall      REAL download, installed into a throwaway WoW folder, twice");
                     Console.WriteLine("  selfupdate [v]   the published installer: version file, download, hash (poses as v, default 0.1)");
@@ -545,6 +553,214 @@ namespace WowVisionInstaller
             }
         }
 
+        /// <summary>
+        /// Who gets what, network-free: the map data's plain TOC, the login tool
+        /// table, and the extra addons' per-client package lists (which mirror
+        /// the probe of the real zips from 2026-10-19).
+        /// </summary>
+        private static void RunAvailabilityTest()
+        {
+            Console.WriteLine("=== availability: map data ===");
+            string root = Path.Combine(Path.GetTempPath(), "WowVisionAvailability");
+            try
+            {
+                string dir = Path.Combine(root, "WowVision_MapData_TBC");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "WowVision_MapData_TBC.toc"),
+                                  "## Interface: 20506, 16001\n## Title: TBC Map Data\n## Dependencies: WowVision\n");
+                foreach (var c in WowLocator.Clients)
+                {
+                    bool want = c.Product == Config.AnniversaryFlavor || c.Product == Config.ForeverFlavor;
+                    Check($"map data {(want ? "goes to" : "stays out of")} {c.Label}",
+                          WowLocator.FolderServesClient(root, "WowVision_MapData_TBC", c.Product) == want);
+                }
+                string wv = Path.Combine(root, "WowVision");
+                Directory.CreateDirectory(wv);
+                File.WriteAllText(Path.Combine(wv, "WowVision_Mists.toc"), "## Interface: 50503, 50504\n");
+                Check("a suffix TOC serves its client", WowLocator.FolderServesClient(root, "WowVision", Config.MistsFlavor));
+                Check("a folder without a TOC for the client does not",
+                      !WowLocator.FolderServesClient(root, "WowVision", Config.RetailFlavor));
+            }
+            finally { try { Directory.Delete(root, true); } catch { } }
+
+            Console.WriteLine("=== availability: login tool ===");
+            Check("Forever: tool only, no textures",
+                  LoginToolInstaller.ClientSupported(Config.ForeverFlavor) && !LoginToolInstaller.ClientNeedsTextures(Config.ForeverFlavor));
+            Check("Anniversary and Era: tool with textures",
+                  LoginToolInstaller.ClientNeedsTextures(Config.AnniversaryFlavor) && LoginToolInstaller.ClientNeedsTextures(Config.EraFlavor));
+            Check("Mists: no tool (it has no Mists screen data)", !LoginToolInstaller.ClientSupported(Config.MistsFlavor));
+            Check("Retail: no tool", !LoginToolInstaller.ClientSupported(Config.RetailFlavor));
+
+            Console.WriteLine("=== availability: extra addons ===");
+            string Keys(string product) => string.Join(", ",
+                ManagedAddons.Entries.SelectMany(e => ManagedAddons.PackagesFor(e, product)).Select(p => p.Key));
+            foreach (var c in WowLocator.Clients)
+                Console.WriteLine($"    {c.Short,-8} {Keys(c.Product)}");
+            Check("Forever (Sku's list)", Keys(Config.ForeverFlavor) ==
+                  "CurseQuestie, CurseAtlasLootContinued, CurseDetails, CursePawnForever, DBMCore, DBMRaidsVanilla, DBMDungeons, CurseGTFO, BugSack, CurseBugGrabber");
+            Check("Anniversary (Sku's list)", Keys(Config.AnniversaryFlavor) ==
+                  "CurseQuestie, CurseAtlasLootContinued, CurseDetails, CursePawnTBC, DBMCore, DBMRaidsBC, DBMDungeons, CurseGTFO, BugSack, CurseBugGrabber");
+            Check("Era (Sku's list)", Keys(Config.EraFlavor) ==
+                  "CurseQuestie, CurseAtlasLootContinued, CurseDetails, CursePawnVanilla, DBMCore, DBMRaidsVanilla, DBMDungeons, CurseGTFO, BugSack, CurseBugGrabber");
+            Check("Mists: no AtlasLoot, Pandaria Pawn, DBM MoP raids", Keys(Config.MistsFlavor) ==
+                  "CurseQuestie, CurseDetails, CursePawnMists, DBMCore, DBMRaidsMoP, DBMDungeons, CurseGTFO, BugSack, CurseBugGrabber");
+            Check("Retail: no Questie, no AtlasLoot, retail Pawn", Keys(Config.RetailFlavor) ==
+                  "CurseDetails, CursePawnRetail, DBMCore, DBMDungeons, CurseGTFO, BugSack, CurseBugGrabber");
+            var atlas = ManagedAddons.Entries.Find(e => e.PrefKey == "ManageAtlasLoot");
+            Check("an entry with nothing for a client is not available there",
+                  !ManagedAddons.AvailableFor(atlas, Config.RetailFlavor) && ManagedAddons.AvailableFor(atlas, Config.EraFlavor));
+        }
+
+        /// <summary>
+        /// Every extra addon of one client with the REAL downloads (needs network,
+        /// a few hundred MB): live release resolution, download, hash/shape
+        /// validation, the per-client TOC check, install into a throwaway AddOns
+        /// folder of that client, then a second pass that must find nothing to do.
+        /// </summary>
+        private static void RunManagedInstallTest(string product)
+        {
+            Console.WriteLine($"=== managedinstall: every extra addon for {WowLocator.ProductLabel(product)} (real downloads) ===");
+            using (var wow = new FakeWow("WowVisionManagedInstall"))
+            using (var github = new GitHubClient())
+            {
+                string addons = wow.AddOns[product];
+
+                // Old AtlasLoot sets that must go, and look-alikes that must stay.
+                string[] obsolete = { "AtlasLootClassic", "AtlasLoot_Favourites" };
+                string[] keep = { "AtlasLootClassic_TBC_Phase_1_Karazhan" };
+                foreach (var name in obsolete.Concat(keep))
+                {
+                    Directory.CreateDirectory(Path.Combine(addons, name));
+                    File.WriteAllText(Path.Combine(addons, name, name + ".toc"), "## Interface: 20506\n");
+                }
+
+                ManagedAddons.ResolveAll(github, TimeSpan.FromSeconds(30));
+                var manifest = InstallManifest.Load(addons);
+                foreach (var entry in ManagedAddons.Entries)
+                {
+                    if (!ManagedAddons.AvailableFor(entry, product))
+                    {
+                        Console.WriteLine($"    {entry.DisplayName}: not available for this client (by the list)");
+                        continue;
+                    }
+                    foreach (var p in ManagedAddons.PackagesFor(entry, product))
+                    {
+                        var r = ManagedAddons.Resolved(p);
+                        Console.WriteLine($"    {p.Key,-26} {r.Version,-24} {(r.Sha256 == null ? "live" : "pin")}");
+                    }
+                    bool ok = ManagedAddonInstaller.InstallEntryAsync(addons, product, entry, github, manifest,
+                            pr => { if (pr.Phase != "download") Console.WriteLine("      " + pr.Message); }, force: false)
+                        .GetAwaiter().GetResult();
+                    bool unavailable = ManagedAddons.PackagesFor(entry, product).Any(p => ManagedAddons.KnownUnavailable(manifest, p));
+                    Check(entry.DisplayName + (unavailable ? " found unusable and skipped" : " installed"),
+                          ok && (unavailable || ManagedAddons.EntryInstalled(addons, product, entry)));
+                    foreach (var p in ManagedAddons.PackagesFor(entry, product))
+                        if (!ManagedAddons.KnownUnavailable(manifest, p))
+                            Check($"{p.Key} carries a TOC this client loads",
+                                  p.RequiredRoots.Any(rt => WowLocator.FolderServesClient(addons, rt, product)));
+                }
+                manifest.Save(addons);
+
+                var atlas = ManagedAddons.Entries.Find(e => e.PrefKey == "ManageAtlasLoot");
+                if (ManagedAddons.AvailableFor(atlas, product))
+                    Check("old AtlasLoot folders removed, look-alikes kept",
+                          obsolete.All(n => !Directory.Exists(Path.Combine(addons, n))) &&
+                          keep.All(n => Directory.Exists(Path.Combine(addons, n))));
+
+                Console.WriteLine("=== second pass ===");
+                var again = InstallManifest.Load(addons);
+                foreach (var entry in ManagedAddons.Entries)
+                    Check(entry.DisplayName + " nothing to do", !ManagedAddons.EntryNeedsWork(addons, product, again, entry));
+            }
+        }
+
+        /// <summary>
+        /// The login tool, REAL download, into a throwaway client: program folder
+        /// at the WoW base, recognition textures in Interface and the font
+        /// override only where the client needs them, nothing at all for a client
+        /// the tool does not serve. No launcher lands on the desktop.
+        /// </summary>
+        private static void RunLoginToolTest(string product)
+        {
+            Console.WriteLine($"=== logintool: {WowLocator.ProductLabel(product)} (real download) ===");
+            using (var wow = new FakeWow("WowVisionLoginToolTest"))
+            using (var github = new GitHubClient())
+            {
+                LoginToolInstaller.SkipShortcut = true;
+                try
+                {
+                    string addons = wow.AddOns[product];
+                    if (!LoginToolInstaller.ClientSupported(product))
+                    {
+                        Check("this client gets no login tool", !LoginToolInstaller.ClientSupported(product));
+                        return;
+                    }
+                    LoginToolInstaller.Install(addons, github, m => Console.WriteLine("    " + m), force: false, product: product);
+                    string toolDir = LoginToolInstaller.ResolveToolDir(addons);
+                    Console.WriteLine($"    tool folder: {toolDir}");
+                    Check("tool folder at the WoW base", toolDir == Path.Combine(wow.Base, Config.LoginToolFolderName));
+                    Check("v2\\START.ahk present", LoginToolInstaller.IsInstalled(addons));
+                    Check("version marker written",
+                          File.ReadAllText(Path.Combine(toolDir, "installed-release.txt")).Trim() == Config.LoginToolVersion);
+                    string marker = Path.Combine(wow.FlavorDir[product], "Interface", LoginToolInstaller.FiducialMarkerRelPath);
+                    if (LoginToolInstaller.ClientNeedsTextures(product))
+                        Check("recognition textures in this client's Interface", File.Exists(marker));
+                    else
+                        Check("no textures in this client (it narrates its own login screens)", !File.Exists(marker));
+                    Check("no textures in any other client",
+                          wow.FlavorDir.Where(kv => kv.Key != product).All(kv =>
+                              !File.Exists(Path.Combine(kv.Value, "Interface", LoginToolInstaller.FiducialMarkerRelPath))));
+                }
+                finally { LoginToolInstaller.SkipShortcut = false; }
+            }
+        }
+
+        /// <summary>
+        /// LoginToolInstaller.RemoveStaleFiducialTextures against a throwaway
+        /// payload + Interface tree (from the Sku harness): current files and
+        /// non-.blp files survive, stale .blp files go with their emptied folders,
+        /// and nothing outside the payload's folders — AddOns above all — is touched.
+        /// </summary>
+        private static void RunTextureSweepTest()
+        {
+            Console.WriteLine("=== texturesweep ===");
+            string root = Path.Combine(Path.GetTempPath(), "WowVisionTextureSweepTest");
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+            string payload = Path.Combine(root, "payload");
+            string iface = Path.Combine(root, "Interface");
+            void Put(string baseDir, string rel)
+            {
+                string p = Path.Combine(baseDir, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(p));
+                File.WriteAllText(p, "x");
+            }
+            try
+            {
+                Put(payload, @"BUTTONS\128RedButton.BLP");
+                Put(payload, @"GLUES\COMMON\Current.blp");
+                Put(iface, @"BUTTONS\128RedButton.BLP");
+                Put(iface, @"BUTTONS\LegacyButton.BLP");
+                Put(iface, @"Glues\Common\Current.blp");
+                Put(iface, @"GLUES\OLDGEN\dead.blp");
+                Put(iface, @"GLUES\readme.txt");
+                Put(iface, @"FrameGeneral\gone.blp");
+                Put(iface, @"AddOns\SomeAddon\art.blp");
+                Put(iface, @"CustomFolder\user.blp");
+
+                LoginToolInstaller.RemoveStaleFiducialTextures(payload, iface);
+
+                Check("current marker survives", File.Exists(Path.Combine(iface, @"BUTTONS\128RedButton.BLP")));
+                Check("current file survives casing differences", File.Exists(Path.Combine(iface, @"GLUES\COMMON\Current.blp")));
+                Check("stale .BLP removed", !File.Exists(Path.Combine(iface, @"BUTTONS\LegacyButton.BLP")));
+                Check("stale subfolder and its folder removed", !Directory.Exists(Path.Combine(iface, @"GLUES\OLDGEN")));
+                Check("non-.blp file untouched", File.Exists(Path.Combine(iface, @"GLUES\readme.txt")));
+                Check("dropped payload folder swept", !Directory.Exists(Path.Combine(iface, "FrameGeneral")));
+                Check("Interface\\AddOns untouched", File.Exists(Path.Combine(iface, @"AddOns\SomeAddon\art.blp")));
+                Check("unrelated user folder untouched", File.Exists(Path.Combine(iface, @"CustomFolder\user.blp")));
+            }
+            finally { try { Directory.Delete(root, true); } catch { } }
+        }
+
         private static void RunResolve()
         {
             Console.WriteLine("=== resolve: the newest WowVision release online ===");
@@ -570,7 +786,14 @@ namespace WowVisionInstaller
                 var targets = InstallTarget.BuildAll().FindAll(t =>
                     t.ClientFound && t.AddOnsPath.StartsWith(wow.Base, StringComparison.OrdinalIgnoreCase));
                 Check("five targets", targets.Count == 5);
-                var options = new InstallOptions { SkipMachineWide = true };
+                // WowVision only: the extra addons and the login tool have their
+                // own commands (managedinstall, logintool).
+                var options = new InstallOptions
+                {
+                    SkipMachineWide = true,
+                    InstallLoginTool = false,
+                    ManagedEnabled = ManagedAddons.Entries.ToDictionary(e => e.PrefKey, e => false),
+                };
 
                 List<TargetResult> first;
                 using (var runner = new InstallRunner(targets, options, github, Print))

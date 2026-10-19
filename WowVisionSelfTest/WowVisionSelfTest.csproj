@@ -45,6 +45,8 @@
     <Compile Include="..\WowVisionInstaller\Sapi2SrInstaller.cs"       Link="Sapi2SrInstaller.cs" />
     <Compile Include="..\WowVisionInstaller\WindowsVoicesInstaller.cs" Link="WindowsVoicesInstaller.cs" />
     <Compile Include="..\WowVisionInstaller\LogCollector.cs"           Link="LogCollector.cs" />
+    <Compile Include="..\WowVisionInstaller\ManagedAddons.cs"          Link="ManagedAddons.cs" />
+    <Compile Include="..\WowVisionInstaller\LoginToolInstaller.cs"     Link="LoginToolInstaller.cs" />
   </ItemGroup>
 
 </Project>

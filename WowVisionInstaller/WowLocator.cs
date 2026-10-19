@@ -49,6 +49,26 @@ namespace WowVisionInstaller
         public int InterfaceMin, InterfaceMax;
 
         public bool OwnsInterface(int iface) => iface >= InterfaceMin && iface <= InterfaceMax;
+
+        /// <summary>Whether and how the WoW Login Tool serves this client.</summary>
+        public LoginToolMode LoginTool;
+    }
+
+    /// <summary>
+    /// What the WoW Login Tool does for a client. Taken from the tool's own game
+    /// type table (data\gametypes.ini, GametypeFromVersion in v2\includes\detect.ahk):
+    /// Classic (1.x), BurningCrusade (2.x) and Forever have screen data; Mists
+    /// (5.x) has none and the tool announces it as unsupported; Retail is left
+    /// out by decision.
+    /// </summary>
+    public enum LoginToolMode
+    {
+        /// <summary>Not installed for this client.</summary>
+        None,
+        /// <summary>Tool plus its recognition textures and font override in the client folder.</summary>
+        WithTextures,
+        /// <summary>Tool only: the client narrates its own login screens (WoW Forever).</summary>
+        ToolOnly,
     }
 
     /// <summary>
@@ -81,13 +101,13 @@ namespace WowVisionInstaller
         public static readonly ClientInfo[] Clients =
         {
             new ClientInfo { Product = Config.ForeverFlavor, Folder = "_classic_beta_", Label = "WoW Forever",
-                             Short = "Forever", TocSuffixes = new[] { "Camelot" },
+                             Short = "Forever", TocSuffixes = new[] { "Camelot" }, LoginTool = LoginToolMode.ToolOnly,
                              InterfaceMin = 16000, InterfaceMax = 19999 },
             new ClientInfo { Product = Config.AnniversaryFlavor, Folder = "_anniversary_", Label = "Anniversary (TBC)",
-                             Short = "TBC", TocSuffixes = new[] { "TBC", "BCC", "Classic" },
+                             Short = "TBC", TocSuffixes = new[] { "TBC", "BCC", "Classic" }, LoginTool = LoginToolMode.WithTextures,
                              InterfaceMin = 20000, InterfaceMax = 29999 },
             new ClientInfo { Product = Config.EraFlavor, Folder = "_classic_era_", Label = "Classic Era (Vanilla)",
-                             Short = "Era", TocSuffixes = new[] { "Vanilla", "Classic" },
+                             Short = "Era", TocSuffixes = new[] { "Vanilla", "Classic" }, LoginTool = LoginToolMode.WithTextures,
                              InterfaceMin = 10000, InterfaceMax = 15999 },
             new ClientInfo { Product = Config.MistsFlavor, Folder = "_classic_", Label = "Mists of Pandaria Classic",
                              Short = "Mists", TocSuffixes = new[] { "Mists", "Classic" },
@@ -419,6 +439,43 @@ namespace WowVisionInstaller
         /// machine's known bases are scanned for the same product.
         /// </summary>
         public static int ClientInterface(string addonsFolder, string product)
+            => ClientInterfaceCore(addonsFolder, product);
+
+        /// <summary>
+        /// True when an addon folder under <paramref name="parentDir"/> (an
+        /// AddOns folder, or an extracted zip) is written for this client: it has
+        /// a TOC with this client's suffix, or a plain TOC that lists an interface
+        /// number of this client's family. Used to install only what a client can
+        /// load: the TBC map data ("20506, 16001") goes to Anniversary and WoW
+        /// Forever only, and an extra addon without a Mists TOC is not put into
+        /// Mists.
+        /// </summary>
+        public static bool FolderServesClient(string parentDir, string folderName, string product)
+        {
+            var client = Client(product);
+            if (client == null) return false;
+            string toc = TocFor(parentDir, folderName, product, out bool isSuffixToc);
+            if (toc == null) return false;
+            if (isSuffixToc) return true;
+            try
+            {
+                foreach (var raw in File.ReadAllLines(toc))
+                {
+                    string line = raw.Trim();
+                    if (!line.StartsWith("##")) continue;
+                    int colon = line.IndexOf(':');
+                    if (colon < 0 || !string.Equals(line.Substring(2, colon - 2).Trim(), "Interface",
+                                                    StringComparison.OrdinalIgnoreCase)) continue;
+                    foreach (string part in line.Substring(colon + 1).Split(','))
+                        if (int.TryParse(part.Trim(), out int n) && client.OwnsInterface(n)) return true;
+                    return false;
+                }
+            }
+            catch (Exception ex) { Logger.Warning($"Could not read {toc}: {ex.Message}"); }
+            return false;
+        }
+
+        private static int ClientInterfaceCore(string addonsFolder, string product)
         {
             if (string.IsNullOrEmpty(product)) product = ProductForAddOnsFolder(addonsFolder);
             if (string.IsNullOrEmpty(product)) return 0;

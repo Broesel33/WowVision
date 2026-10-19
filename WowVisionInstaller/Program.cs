@@ -66,6 +66,13 @@ namespace WowVisionInstaller
             // build-time pin stays in effect.
             GitHubClient.ResolveAndAdoptLatestRelease();
 
+            // Resolve the extra addons' newest releases too (Questie, DBM, BugSack,
+            // Pawn — the ones with GitHub releases), in parallel and time-boxed;
+            // anything unresolved stays on its baked-in pin. Runs before the
+            // opening screen so it can report their pending updates.
+            using (var github = new GitHubClient())
+                ManagedAddons.ResolveAll(github, TimeSpan.FromSeconds(10));
+
             var targets = InstallTarget.BuildAll();
             ApplyPathArgument(targets, pathArg);
 
@@ -181,7 +188,7 @@ namespace WowVisionInstaller
 
                     case 2:
                     {
-                        var form = new ComponentsForm(options);
+                        var form = new ComponentsForm(options, selected);
                         Application.Run(form);
                         if (form.Result == WizardResult.Back) { step = 1; break; }
                         if (form.Result != WizardResult.Next) return true;

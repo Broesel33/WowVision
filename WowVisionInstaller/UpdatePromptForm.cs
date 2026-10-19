@@ -221,6 +221,19 @@ namespace WowVisionInstaller
             foreach (var t in Found)
                 sb.AppendLine($"{t.DisplayName}: {t.StatusLine()}");
 
+            // Extra addons: say by name and PER CLIENT what "Update now" would
+            // additionally update or newly install, so the one-click button never
+            // does silent extra work.
+            var prefs = ManagedPrefs.Load();
+            foreach (var t in OneClickTargets)
+            {
+                ManagedAddons.PendingWork(t, prefs, out var managedUpdates, out var managedInstalls);
+                if (managedUpdates.Count > 0)
+                    sb.AppendLine(Loc.Format("update.managedUpdates", t.DisplayName, string.Join(", ", managedUpdates)));
+                if (managedInstalls.Count > 0)
+                    sb.AppendLine(Loc.Format("update.managedInstalls", t.DisplayName, string.Join(", ", managedInstalls)));
+            }
+
             sb.AppendLine();
 
             string names = string.Join(", ", OneClickTargets.ConvertAll(t => t.DisplayName));

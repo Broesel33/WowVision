@@ -76,6 +76,25 @@ namespace WowVisionInstaller
         /// <summary>Manifest filename written into the AddOns folder.</summary>
         public const string ManifestFileName = "WowVisionInstall.json";
 
+        // ── the WoW Login Tool ──────────────────────────────────────────────
+        // A standalone tool (originally by Yennister/Duugu, reworked with an
+        // AutoHotkey v2 + OCR driver) that gives the login, server and character
+        // screens an audio menu. It is NOT a WoW addon: it installs as its own
+        // program folder next to the game, plus login-screen recognition textures
+        // in the client's Interface folder and a readable-font override. Which
+        // clients get it, and how, is WowLocator.Clients' LoginTool column.
+        //
+        // It ships from the Sku repository on a PERMANENT rolling tag: each new
+        // build re-uploads WoW-Login-Tool.zip to the same 'login-tool' tag, so the
+        // URL never changes. LoginToolVersion is the freshness signal instead:
+        // keep it in step with the Sku installer's Config.LoginToolVersion, and
+        // LoginToolInstaller upgrades every install whose marker predates it.
+        public const string LoginToolRepo = "Sku75/Sku-WoW-Addon-TBC";
+        public const string LoginToolTag = "login-tool";
+        public const string LoginToolVersion = "4.0";
+        public const string LoginToolAsset = "WoW-Login-Tool.zip";
+        public const string LoginToolFolderName = "WoW Login Tool";
+
         // ── the game clients (see WowLocator.Clients for the full table) ────
         public const string EraFlavor = "wow_classic_era";
         public const string AnniversaryFlavor = "wow_anniversary";
