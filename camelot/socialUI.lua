@@ -28,6 +28,18 @@ local kinds = graph.kinds
 local plainText = nodes.plainText
 local fontText = nodes.fontText
 
+-- The first of several strings that has text: game strings can exist and be
+-- empty on a client, which a plain "or" takes as a name.
+local function firstText(...)
+    for i = 1, select("#", ...) do
+        local value = select(i, ...)
+        if type(value) == "string" and value ~= "" then
+            return value
+        end
+    end
+    return nil
+end
+
 local function selectedPart(isSelected)
     return {
         text = function()
@@ -514,10 +526,10 @@ local function renderBattleNetBar(builder, frame)
     end
     local menu = container.BattleNetMenuButton
     if menu ~= nil then
-        -- Named by its tooltip, whose string the Forever client may lack.
+        -- Named by its tooltip, whose string is empty on the Forever client.
         local vtable = nodes.proxyDropdown({
             target = menu,
-            label = SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL or CONTACTS_MENU_NAME or L["Battle.net"],
+            label = firstText(SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL, CONTACTS_MENU_NAME) or L["Battle.net"],
         })
         if vtable ~= nil then
             builder:addItem(ControlId.forObject(menu), vtable)
@@ -811,22 +823,24 @@ registerSideWindow("socialRaidInfo", "RaidInfoFrame", renderRaidInfo)
 -- page with Okay comes first.
 -- ---------------------------------------------------------------------------
 
+-- Every visible text under a frame, one line each, walking nested
+-- containers (the dialog's explanations sit two or three levels down).
 local function addTexts(builder, frame, prefix)
     local index = 0
-    local function add(region)
-        if region.GetText ~= nil and region:IsShown() and plainText(region:GetText()) ~= nil then
-            index = index + 1
-            builder:addItem(ControlId.structural(prefix .. index), nodes.text({ label = fontText(region) }))
+    local function walk(current)
+        for _, region in ipairs({ current:GetRegions() }) do
+            if region:GetObjectType() == "FontString" and region:IsVisible() and plainText(region:GetText()) ~= nil then
+                index = index + 1
+                builder:addItem(ControlId.structural(prefix .. index), nodes.text({ label = fontText(region) }))
+            end
+        end
+        for _, child in ipairs({ current:GetChildren() }) do
+            if child:IsVisible() and not child:IsObjectType("Button") and not child:IsObjectType("EditBox") then
+                walk(child)
+            end
         end
     end
-    for _, region in ipairs({ frame:GetRegions() }) do
-        add(region)
-    end
-    for _, child in ipairs({ frame:GetChildren() }) do
-        for _, region in ipairs({ child:GetRegions() }) do
-            add(region)
-        end
-    end
+    walk(frame)
 end
 
 local function renderAddFriend(builder, screen)
@@ -838,19 +852,32 @@ local function renderAddFriend(builder, screen)
     local entry = frame.EntryFrame
     local info = frame.InfoFrame
     if entry ~= nil and entry:IsShown() then
-        builder:beginStop("name")
-        builder:addItem(
-            ControlId.forObject(entry.NameEditBox),
-            nodes.proxyEditBox({ editBox = entry.NameEditBox, label = ENTER_CHARACTER_NAME_OR_BATTLETAG })
-        )
-        for _, text in ipairs({ entry.ErrorMessage, entry.RequestInfoText }) do
-            if text ~= nil and text:IsShown() then
-                builder:beginStop("text:" .. tostring(text:GetParentKey()))
-                builder:addItem(ControlId.forObject(text), nodes.text({ label = fontText(text) }))
-            end
+        -- The name box, Send Request, Cancel and the messages sit in the
+        -- entry page's EditBoxContainer; the page above them explains what
+        -- a BattleTag and a character name each add.
+        local container = entry.EditBoxContainer
+        local editBox = container ~= nil and container.NameEditBox or AddFriendNameEditBox
+        if editBox ~= nil then
+            builder:beginStop("name")
+            builder:addItem(
+                ControlId.forObject(editBox),
+                nodes.proxyEditBox({ editBox = editBox, label = ENTER_CHARACTER_NAME_OR_BATTLETAG })
+            )
         end
-        addProxy(builder, entry.AcceptButton, "accept")
-        addProxy(builder, entry.CancelButton, "cancel")
+        if container ~= nil then
+            for _, text in ipairs({ container.ErrorMessage, container.RequestInfoText }) do
+                if text ~= nil and text:IsShown() then
+                    builder:beginStop("text:" .. tostring(text:GetParentKey()))
+                    builder:addItem(ControlId.forObject(text), nodes.text({ label = fontText(text) }))
+                end
+            end
+            addProxy(builder, container.AcceptButton, "accept")
+            addProxy(builder, container.CancelButton, "cancel")
+        end
+        if entry.OptionsContainer ~= nil and entry.OptionsContainer:IsShown() then
+            builder:beginStop("options")
+            addTexts(builder, entry.OptionsContainer, "options:")
+        end
     elseif info ~= nil and info:IsShown() then
         builder:beginStop("info")
         addTexts(builder, info, "info:")
