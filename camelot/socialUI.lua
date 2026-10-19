@@ -25,23 +25,8 @@ local kinds = graph.kinds
 -- The side windows -- ignore list, broadcast, Battle.net notice, raid info --
 -- are windows of their own.
 
-local function plainText(text)
-    if text == nil then
-        return nil
-    end
-    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|A.-|a", ""):gsub("|T.-|t", "")
-    text = strtrim(text)
-    if text == "" then
-        return nil
-    end
-    return text
-end
-
-local function fontText(fontString)
-    return function()
-        return fontString ~= nil and plainText(fontString:GetText()) or nil
-    end
-end
+local plainText = nodes.plainText
+local fontText = nodes.fontText
 
 local function selectedPart(isSelected)
     return {
@@ -819,3 +804,65 @@ local function renderRaidInfo(builder, screen)
 end
 
 registerSideWindow("socialRaidInfo", "RaidInfoFrame", renderRaidInfo)
+
+-- ---------------------------------------------------------------------------
+-- Add Friend (AddFriendFrame, the Add Friend button on the list pages): the
+-- name or BattleTag box, Send Request and Cancel; the first time, an info
+-- page with Okay comes first.
+-- ---------------------------------------------------------------------------
+
+local function addTexts(builder, frame, prefix)
+    local index = 0
+    local function add(region)
+        if region.GetText ~= nil and region:IsShown() and plainText(region:GetText()) ~= nil then
+            index = index + 1
+            builder:addItem(ControlId.structural(prefix .. index), nodes.text({ label = fontText(region) }))
+        end
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do
+        add(region)
+    end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        for _, region in ipairs({ child:GetRegions() }) do
+            add(region)
+        end
+    end
+end
+
+local function renderAddFriend(builder, screen)
+    local frame = AddFriendFrame
+    if frame == nil or not frame:IsShown() then
+        return
+    end
+    builder:pushContext("addFriend", ADD_FRIEND)
+    local entry = frame.EntryFrame
+    local info = frame.InfoFrame
+    if entry ~= nil and entry:IsShown() then
+        builder:beginStop("name")
+        builder:addItem(
+            ControlId.forObject(entry.NameEditBox),
+            nodes.proxyEditBox({ editBox = entry.NameEditBox, label = ENTER_CHARACTER_NAME_OR_BATTLETAG })
+        )
+        for _, text in ipairs({ entry.ErrorMessage, entry.RequestInfoText }) do
+            if text ~= nil and text:IsShown() then
+                builder:beginStop("text:" .. tostring(text:GetParentKey()))
+                builder:addItem(ControlId.forObject(text), nodes.text({ label = fontText(text) }))
+            end
+        end
+        addProxy(builder, entry.AcceptButton, "accept")
+        addProxy(builder, entry.CancelButton, "cancel")
+    elseif info ~= nil and info:IsShown() then
+        builder:beginStop("info")
+        addTexts(builder, info, "info:")
+        addProxy(builder, info.OkayButton, "okay")
+    end
+    builder:popContext()
+end
+
+module:registerWindow({
+    type = "FrameWindow",
+    name = "addFriend",
+    frameName = "AddFriendFrame",
+    conflictingAddons = { "Sku" },
+    graphScreen = { render = renderAddFriend },
+})

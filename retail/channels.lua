@@ -21,17 +21,7 @@ local kinds = graph.kinds
 -- read by the dropdown watcher. The voice chat parts (the headset button on
 -- a channel, mute and deafen on members) are left out.
 
-local function plainText(text)
-    if text == nil then
-        return nil
-    end
-    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|A.-|a", ""):gsub("|T.-|t", "")
-    text = strtrim(text)
-    if text == "" then
-        return nil
-    end
-    return text
-end
+local plainText = nodes.plainText
 
 -- A header's name where its own text is empty: the Discord header has none
 -- until Discord is linked. The categories are global string keys

@@ -30,14 +30,10 @@
        Blizzard addon; lfg.lua adds what that build changed. -->
   <Script file="..\tbc\lfg.lua" />
   <Script file="lfg.lua" />
-  <!-- The friends window: Forever's own build of the modern FriendsFrame
-       (contacts, raid, quick join), with the ignore list, broadcast,
-       Add Friend and raid info windows. -->
-  <Script file="friends.lua" />
-  <!-- The Social window, which the friends key opens when the server turns
-       it on (it does on Forever): friends, requests, recent allies, quick
-       join, raid, and its side windows. friends.lua above stays for Add
-       Friend and for the old window when the server turns it off. -->
+  <!-- The Social window, which the friends key opens (Forever turns it on
+       and the old character friend list off, so Forever's own FriendsFrame
+       build never shows): friends, requests, recent allies, quick join,
+       raid, its side windows, and Add Friend. -->
   <Script file="socialUI.lua" />
 
 </Ui>
