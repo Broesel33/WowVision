@@ -25,8 +25,29 @@ local function plainText(text)
     if text == nil then
         return nil
     end
-    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    return strtrim(text)
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|A.-|a", ""):gsub("|T.-|t", "")
+    text = strtrim(text)
+    if text == "" then
+        return nil
+    end
+    return text
+end
+
+-- A header's name where its own text is empty: the Discord header has none
+-- until Discord is linked. The categories are global string keys
+-- (CHANNEL_CATEGORY_WORLD).
+local function categoryName(category)
+    if type(category) ~= "string" then
+        return nil
+    end
+    local text = rawget(_G, category)
+    if type(text) == "string" and text ~= "" then
+        return text
+    end
+    if category:find("DISCORD") then
+        return VOICE_CHAT_SERVICE_DISCORD
+    end
+    return nil
 end
 
 -- What a channel button IS, stable while the list rebuilds: the list
@@ -62,7 +83,14 @@ local function renderChannelList(builder, list)
                 {
                     text = function()
                         local current = target()
-                        return current ~= nil and plainText(current:GetText()) or nil
+                        if current == nil then
+                            return nil
+                        end
+                        local text = plainText(current:GetText())
+                        if text == nil and current:IsHeader() then
+                            text = categoryName(current:GetCategory())
+                        end
+                        return text
                     end,
                     kind = kinds.label,
                 },
