@@ -11,8 +11,10 @@ local kinds = graph.kinds
 -- server turns it on (C_SocialUI.IsSystemEnabled), and the friends key
 -- opens it in place of the old friends window. A Battle.net bar on top
 -- (your BattleTag, status, the menu with broadcast and ignore list), the
--- shown tab's page, and the tabs down the right side: Friends, Recent
--- Allies, Quick Join, Friend Requests, Recruit a Friend, Raid.
+-- shown tab's page, and the tabs down the right side (a row here, like every
+-- tab strip): Friends, Recent Allies, Quick Join, Friend Requests, Recruit a
+-- Friend, Raid. Forever has the old character friend list off, so its own
+-- FriendsFrame build never shows.
 --
 -- The list pages share one frame (SocialUIContactsFrameTemplate): a search
 -- box and filter, a list of cards under collapsible headers, and an action
@@ -23,7 +25,8 @@ local kinds = graph.kinds
 -- buttons (invite, summon, accept, decline) are in its context menu.
 --
 -- The side windows -- ignore list, broadcast, Battle.net notice, raid info --
--- are windows of their own.
+-- and Add Friend are windows of their own. Recruit a Friend's page is not
+-- read yet.
 
 local plainText = nodes.plainText
 local fontText = nodes.fontText
@@ -527,9 +530,10 @@ local function renderBattleNetBar(builder, frame)
     local menu = container.BattleNetMenuButton
     if menu ~= nil then
         -- Named by its tooltip, whose string is empty on the Forever client.
+        -- Not "Battle.net": a control named like its bar drops its name.
         local vtable = nodes.proxyDropdown({
             target = menu,
-            label = firstText(SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL, CONTACTS_MENU_NAME) or L["Battle.net"],
+            label = firstText(SOCIAL_UI_BATTLE_NET_BAR_MENU_BUTTON_LABEL, CONTACTS_MENU_NAME) or L["Menu"],
         })
         if vtable ~= nil then
             builder:addItem(ControlId.forObject(menu), vtable)
