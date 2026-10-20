@@ -281,11 +281,25 @@ WowVision.testing.testRunner:addSuite("BufferConstruction", {
         t:assertEqual(#buffer.items, 0)
 
         -- The store appears later (chat tabs open after the buffers restore)
-        local store = WowVision.createMessageStore("chat.test1", { messages = { "old line" } })
-        t:assertEqual(#buffer.items, 1)
-        store:add("new line")
+        local store = WowVision.createMessageStore("chat.test1", { messages = { "older line", "old line" } })
         t:assertEqual(#buffer.items, 2)
-        t:assertEqual(buffer.items[2]:getFocusString(), "new line")
+        -- It opens on the newest line and follows new ones
+        t:assertEqual(buffer:getFocus():getFocusString(), "old line")
+        store:add("new line")
+        t:assertEqual(#buffer.items, 3)
+        t:assertEqual(buffer.items[3]:getFocusString(), "new line")
+        t:assertEqual(buffer:getFocus():getFocusString(), "new line")
+        -- Moved back into history, it stays there while lines arrive
+        buffer:focusDirection(-1)
+        t:assertEqual(buffer:getFocus():getFocusString(), "old line")
+        store:add("newer line")
+        t:assertEqual(buffer:getFocus():getFocusString(), "old line")
+        -- Back at the end, it follows again
+        buffer:focusDirection(1)
+        buffer:focusDirection(1)
+        t:assertEqual(buffer:getFocus():getFocusString(), "newer line")
+        store:add("newest line")
+        t:assertEqual(buffer:getFocus():getFocusString(), "newest line")
 
         -- Choosing another tab swaps the lines
         WowVision.createMessageStore("chat.test2", { messages = { "other tab" } })
@@ -296,10 +310,12 @@ WowVision.testing.testRunner:addSuite("BufferConstruction", {
         store:add("ignored now")
         t:assertEqual(#buffer.items, 1)
 
-        -- Restored from the saved config, it attaches to the existing store
+        -- Restored from the saved config, it attaches to the existing store,
+        -- on its newest line
         local again = WowVision.buffers.RootBufferGroup:new(db)
         again:setDB(db)
         t:assertEqual(#again.items[1].items[1].items, 1)
+        t:assertEqual(again.items[1].items[1]:getFocus():getFocusString(), "other tab")
     end,
 })
 

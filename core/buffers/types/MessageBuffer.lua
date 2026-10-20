@@ -30,6 +30,13 @@ function MessageBuffer:attachKey(key)
     end)
 end
 
+-- Whether the focus sits on the newest line (or on nothing yet): then it
+-- follows new lines as they arrive, the way a chat log reads. Moved back
+-- into history, it stays put until the player returns.
+function MessageBuffer:atNewest()
+    return self.index < 1 or self.index >= #self.items
+end
+
 function MessageBuffer:attach(store)
     self.source = store
 
@@ -38,6 +45,8 @@ function MessageBuffer:attach(store)
         local item = WowVision.buffers.MessageItem:new({ data = data, getDataString = store.getDataString })
         WowVision.ViewList.add(self, item)
     end
+    -- A log opens on its newest line, not on the oldest of a saved history.
+    self.index = #self.items
 
     -- Subscribe to future changes
     store.events.add:subscribe(self, function(subscriber, event, source, data)
@@ -61,8 +70,12 @@ function MessageBuffer:setSourceKey(key)
 end
 
 function MessageBuffer:onSourceAdd(source, data)
+    local follow = self:atNewest()
     local item = WowVision.buffers.MessageItem:new({ data = data, getDataString = self.source.getDataString })
     WowVision.buffers.Buffer.add(self, item)
+    if follow then
+        self.index = #self.items
+    end
 end
 
 function MessageBuffer:onSourceRemove(source, data, index)

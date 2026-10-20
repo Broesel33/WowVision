@@ -47,7 +47,7 @@ There are two main kinds of buffers:
 
 **Tracked buffers** automatically populate based on a rule. For example, a tracked buffer set to follow your auras will automatically add and remove items as buffs and debuffs come and go. You don't manage the contents manually.
 
-**Chat tab buffers** hold the messages of one of your chat tabs, the same lines the chat window (Shift+F3) shows for that tab, so you can read them with the buffer keys without opening it. Choose the tab in the buffer's settings: any open chat tab by name, or Whisper Tabs for the lines of all whisper tabs together. Which messages a tab receives is set in the game's chat settings (see Chat).
+**Chat tab buffers** hold the messages of one of your chat tabs, the same lines the chat window (Shift+F3) shows for that tab, so you can read them with the buffer keys without opening it. Choose the tab in the buffer's settings: any open chat tab by name, or Whisper Tabs for the lines of all whisper tabs together. Which messages a tab receives is set in the game's chat settings (see Chat). The buffer opens on the newest line and follows new lines as they arrive; once you move back into older lines it stays where you are until you return to the end.
 
 ## Configuring Buffers
 
