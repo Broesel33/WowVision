@@ -22,6 +22,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added two Speech toggles for the game's own text-to-speech sounds (/tts playline and /tts playactivity). The sound between chat lines is turned off once per character.
 * Shift-F12 cancels the active route or beacon.
 * The XP line in the general buffer names the level it fills towards.
+* The General buffer gained lines for free bag slots, durability (the most worn item and how many are broken), unread mail with its senders, the hearthstone (ready or its cooldown, and the bind location) and the game clock, and the XP line says how much rested XP you have. Existing characters get the new lines once, before the PvP line; a line you remove stays removed.
 * Windows that open on a search box, like the game options, take typing right away.
 * WowVision's own text fields do the same: a screen that opens on one, like the tracking parameters of a unit object type, starts typing at once instead of after a tab away and back.
 * Fixed key bindings losing Alt when Alt was let go before the key.
