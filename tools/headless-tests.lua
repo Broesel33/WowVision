@@ -119,6 +119,15 @@ do
             t:assertTrue(movement.flags.autorun)
         end,
 
+        ["turning follows the game's turning events"] = function(t)
+            reset()
+            movement.turning = false
+            event("PLAYER_STARTED_TURNING")
+            t:assertTrue(movement.turning)
+            event("PLAYER_STOPPED_TURNING")
+            t:assertFalse(movement.turning)
+        end,
+
         ["follow ends with AUTOFOLLOW_END"] = function(t)
             reset()
             call("FollowUnit")
