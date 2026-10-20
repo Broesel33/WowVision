@@ -18,20 +18,8 @@ local TAB_COMMANDS = {
     [3] = "TOGGLEWHOTAB",
 }
 
-local function plainText(text)
-    if text == nil then
-        return nil
-    end
-    return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
-end
-
--- A live label for a font string (nodes.frameText walks regions, which font
--- strings do not have).
-local function fontText(fontString)
-    return function()
-        return fontString:GetText()
-    end
-end
+local plainText = nodes.plainText
+local fontText = nodes.fontText
 
 -- The side tabs are plain frames that switch on mouse up through a custom
 -- handler, so a secure click cannot reach them, and the hidden bottom tab

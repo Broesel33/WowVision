@@ -16,6 +16,9 @@
   <Script file="talentTree.lua" />
   <Script file="spellSearch.lua" />
   <Script file="pitchLock.lua" />
+  <!-- The chat channels window: the same Blizzard_Channels on Retail and
+       WoW: Forever. -->
+  <Script file="channels.lua" />
   <Include file="containers/modules.xml" />
   <Include file="groupHealth/modules.xml" />
 

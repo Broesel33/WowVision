@@ -173,6 +173,23 @@ testRunner:addSuite("GraphScrollBox", {
 --
 
 testRunner:addSuite("GraphNodes", {
+    ["plainText strips both color forms, icons, and blank text"] = function(t)
+        local plain = graph.nodes.plainText
+        t:assertEqual(plain("|cffffd100Trade|r"), "Trade")
+        t:assertEqual(plain("|cnNORMAL_FONT_COLOR:Friends (3/10)|r"), "Friends (3/10)")
+        t:assertEqual(plain("|A:friends-status-online:16:16|a Online"), "Online")
+        t:assertEqual(plain("|TInterface\\Icons\\X:16|t  Name  "), "Name")
+        t:assertEqual(plain("|cff808080|r  "), nil)
+        t:assertEqual(plain(nil), nil)
+        local fontString = {
+            GetText = function()
+                return "|cnGRAY_FONT_COLOR:Offline|r"
+            end,
+        }
+        t:assertEqual(graph.nodes.fontText(fontString)(), "Offline")
+        t:assertEqual(graph.nodes.fontText(nil)(), nil)
+    end,
+
     ["proxyButton binds secure clicks with both mouse buttons"] = function(t)
         local target = {}
         local vtable = graph.nodes.proxyButton({ target = target })
