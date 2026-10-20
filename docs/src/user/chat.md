@@ -23,7 +23,7 @@ On the selected part:
 
 - **Enter** is a left click. On a player it starts a whisper, on a channel it starts a message to that channel, and on an item, quest, or spell it reads the tooltip.
 - **Backspace** is a right click. On a player or channel this opens the game's own menu (whisper, invite, add friend, ignore, and so on), which WowVision reads like any other dropdown.
-- **Shift+Enter** is a shift click. On a link it puts the link into your chat box, opening it if needed. On a player it puts the name into an open chat box, or runs a who query if none is open.
+- **Shift+Enter** is a shift click. On a link it puts the link into your chat box, opening it if needed. On a player it puts the name into an open chat box, or runs a who query if none is open. On a channel it opens the chat channels window, as it does in the game.
 - **Space** and the **Shift+Arrow** tooltip keys read the tooltip of a selected link line by line.
 
 **Shift+F10** opens the context menu, which lists these clicks and adds **Copy Line**: WowVision says "Copy now" and the message sits selected as plain text in an edit box, where Ctrl+C copies it and Escape closes the box. Use this for web addresses or anything else you want outside the game.

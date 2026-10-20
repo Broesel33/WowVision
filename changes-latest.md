@@ -49,6 +49,8 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Fixed the gossip window staying open after the conversation moved on to a trainer, vendor or quest, or the game closed it.
 * Fixed health and power in buffers going silent when read a second time.
 * Fixed the Speech Queue setting being ignored.
+* Added the chat channels window: the channel list under its headers (Enter selects a channel, Enter on a header folds it, Backspace opens the channel menu), the members of the selected channel with owner, moderator and offline (Backspace opens the player menu), Add, Settings and the new channel box. Shift click on a channel name in the chat reader opens it. The voice buttons are not read yet.
+* Added the Social window, which the friends key opens where the game turns it on (WoW Forever does, replacing the old friends list): the Battle.net bar with your BattleTag, status and menu; the Friends, Friend Requests, Recent Allies and Quick Join pages with search, filter and the list under collapsible headers (Enter selects a card, Backspace opens its menu, invite, summon, accept and decline in its context menu); the Raid page with role counts and groups; the ignore list, broadcast, raid info and Add Friend windows. Built on WoW Forever; Retail loads it too but has not been tested there. Recruit a Friend and moving raid members between groups are not read yet.
 
 #### Forever
 * Updated the addon architecture and toc files to support the WoW Forever beta.
