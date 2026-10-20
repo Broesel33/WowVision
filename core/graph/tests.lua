@@ -870,4 +870,21 @@ testRunner:addSuite("GraphAnnouncer", {
             t:assertEqual(announcer.leafText(kg:currentNode()), "Section, expanded")
         end)
     end,
+
+    ["text inputs open typing on tab arrival and on a screen's landing"] = function(t)
+        local config = {
+            label = "Search",
+            get = function()
+                return ""
+            end,
+            set = function() end,
+        }
+        local vtable = graph.nodes.textInput(config)
+        t:assertNotNil(vtable.onTabFocus)
+        t:assertEqual(vtable.onOpenFocus, vtable.onTabFocus)
+        config.autoInput = false
+        vtable = graph.nodes.textInput(config)
+        t:assertNil(vtable.onTabFocus)
+        t:assertNil(vtable.onOpenFocus)
+    end,
 })
