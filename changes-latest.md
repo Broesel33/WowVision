@@ -34,6 +34,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Added two Merchant settings (Windows > Merchant): "Automatically Sell Poor Items" and "Automatically Repair If Possible", both off by default. When turned on, opening a vendor sells your grey items and repairs your gear on its own, with a chat message confirming what was sold or repaired. Repair is skipped if the vendor doesn't offer it or you can't afford it.
 * Fixed the compass's indoors/outdoors, flying, swimming, and diving announcements never firing inside dungeons and other instances, where the game does not report your facing.
 * Added Sku's Beacon 6 as a beacon sound.
+* Wall detection now also works while autorunning, during walks the game makes for you (the interact key, click to move), and in combat on Retail and WoW Forever, where only a full standstill can be judged because the game hides your speed there. A game walk that ends short of its goal plays the blocked sound once. It stays quiet while you are stunned or rooted, and no longer beeps endlessly after a movement key the game lost track of.
 * Questie's one-time "Welcome to Questie" dialog, which asks you to choose between Questie, pfQuest and Blizzard quest objectives on WoW Forever and the newer classic clients, is now read as a window with its three buttons. It used to sit silently in the middle of the screen, where it also blocked every minimap scan.
 * The minimap scan's "Scan canceled, window" message now names the frame under the cursor, and the scan log records it.
 
