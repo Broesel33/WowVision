@@ -601,8 +601,9 @@ function nodes.proxyCheckButton(config)
     return vtable
 end
 
--- A text value: Enter opens typed entry; arriving by TAB (not arrows)
--- opens it immediately so typing just works, matching real edit boxes.
+-- A text value: Enter opens typed entry; arriving by TAB (not arrows), or
+-- a new screen landing on it, opens it immediately so typing just works,
+-- matching real edit boxes.
 -- config: { label, get, set, valueText = function?, autoInput = false? }
 function nodes.textInput(config)
     if config.label == nil or config.get == nil or config.set == nil then
@@ -637,6 +638,7 @@ function nodes.textInput(config)
     }
     if config.autoInput ~= false then
         vtable.onTabFocus = openEntry
+        vtable.onOpenFocus = openEntry
     end
     return vtable
 end

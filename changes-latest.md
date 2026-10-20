@@ -23,6 +23,7 @@ This is a massive refactor of the codebase thanks to Claude Fable 5. The UI has 
 * Shift-F12 cancels the active route or beacon.
 * The XP line in the general buffer names the level it fills towards.
 * Windows that open on a search box, like the game options, take typing right away.
+* WowVision's own text fields do the same: a screen that opens on one, like the tracking parameters of a unit object type, starts typing at once instead of after a tab away and back.
 * Fixed key bindings losing Alt when Alt was let go before the key.
 * Books and letters no longer read a page number line or stop silently when there is no author.
 * Targeting: new soft targeting settings (Soft Targeting With a Hard Target, Make Soft Target the Hard Target, and an arc and range per soft target). They all default to Game Default, so nothing changes unless you set them. Shift+I, Shift+P and Shift+O changed in combat now apply when combat ends. /wv soft reads every value.
