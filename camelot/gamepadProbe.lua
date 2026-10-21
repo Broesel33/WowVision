@@ -21,10 +21,15 @@
 --                      (alone and with Shift, Ctrl); a press that reaches one
 --                      of these bindings is spoken. When Blizzard binds one of
 --                      these keys over the probe, the probe binds it once more
---                      and logs whether that wins.
+--                      and logs whether that wins. A probe press during a
+--                      targeting shoulder hold marks the hold as used
+--                      (Blizzard's ConsumeModifier), so letting go does not
+--                      target the next unit.
 --
 -- Both watch and claim say "UI focus on" and "UI focus off" when Blizzard's
--- D-pad focus takes or leaves the pad buttons.
+-- D-pad focus takes or leaves the pad buttons, and log and say every blocked
+-- action (ADDON_ACTION_BLOCKED, ADDON_ACTION_FORBIDDEN): calling
+-- ConsumeModifier from addon code may taint Blizzard's targeting.
 --
 -- Watching never blocks a button: it asks IsKeyDown every frame, the way
 -- Blizzard's own class flyout does (OnGamePadButtonDown would swallow the
@@ -651,9 +656,29 @@ local function ensureFrames()
                 .. padStateText()
         )
         WowVision:speak("Probe got " .. spokenKey(tostring(CLAIM_KEYS[which] or which)))
+        -- Without this, letting go of the shoulder targets the next unit
+        -- (TargetLogic EndTargeting): the probe press is not a Blizzard one.
+        local gm, logic = GamepadMode, GamepadTargetLogic
+        if
+            gm ~= nil
+            and logic ~= nil
+            and type(logic.ConsumeModifier) == "function"
+            and call(gm.IsTargetingModifierDown) == true
+        then
+            logic:ConsumeModifier()
+            note("targeting hold marked as used (ConsumeModifier)")
+        end
     end)
     r3Owner = CreateFrame("Frame")
     dpadOwner = CreateFrame("Frame")
+    pcall(pollFrame.RegisterEvent, pollFrame, "ADDON_ACTION_BLOCKED")
+    pcall(pollFrame.RegisterEvent, pollFrame, "ADDON_ACTION_FORBIDDEN")
+    pollFrame:SetScript("OnEvent", function(_, event, addon, func)
+        if watching or claiming then
+            note("BLOCKED: " .. event .. ", addon " .. tostring(addon) .. ", function " .. tostring(func))
+            WowVision:speak("Action blocked, " .. tostring(func))
+        end
+    end)
 end
 
 local function updatePolling()
