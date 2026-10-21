@@ -117,7 +117,10 @@ local function renderBindings(builder)
                 end,
             })
         )
-        for _, input in ipairs(binding.padInputs or {}) do
+        -- Controller inputs only while the game's gamepad interface is on;
+        -- for keyboard players they would only be noise.
+        local showPad = WowVision.pad.controllerUIEnabled()
+        for _, input in ipairs(showPad and binding.padInputs or {}) do
             local capturedInput = input
             builder:addItem(
                 ControlId.structural("p:" .. binding.key .. ":" .. capturedInput),
@@ -131,20 +134,22 @@ local function renderBindings(builder)
                 })
             )
         end
-        builder:addItem(
-            ControlId.structural("p:" .. binding.key .. ":add"),
-            nodes.button({
-                label = L["Add Controller Button"],
-                onActivate = function()
-                    WowVision.graphHost:openPadCapture({
-                        label = label,
-                        onCommit = function(mapping)
-                            completePadMapping(set, binding, mapping)
-                        end,
-                    })
-                end,
-            })
-        )
+        if showPad then
+            builder:addItem(
+                ControlId.structural("p:" .. binding.key .. ":add"),
+                nodes.button({
+                    label = L["Add Controller Button"],
+                    onActivate = function()
+                        WowVision.graphHost:openPadCapture({
+                            label = label,
+                            onCommit = function(mapping)
+                                completePadMapping(set, binding, mapping)
+                            end,
+                        })
+                    end,
+                })
+            )
+        end
         builder:endRow()
         builder:popContext()
     end

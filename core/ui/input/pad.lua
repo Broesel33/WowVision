@@ -307,6 +307,13 @@ function pad.isPadInput(input)
     return padLogic.isPadInput(input)
 end
 
+-- Whether the game's gamepad interface is on (Options, Gamepad, Enable
+-- Gamepad UI). Clients without it: never.
+function pad.controllerUIEnabled()
+    local util = InputUtil
+    return util ~= nil and call(util.IsGamepadUIEnabled) == true
+end
+
 -- Every frame: the window state, the shortcut layer and the game's window
 -- mode change what we own and can take keys from us.
 local frame = CreateFrame("Frame")
