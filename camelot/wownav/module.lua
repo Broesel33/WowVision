@@ -180,11 +180,21 @@ function module:chooseFloor(floor)
     end
 end
 
--- The floors at the player's position: the height bands of the start cells, lowest first.
+-- The floors at the player's position: the height bands of the start cells, lowest first; bands at most 2 yd apart
+-- are one floor (his chapter 4.1, the same rule N.FindCell uses to call a start ambiguous).
+local FLOOR_GAP = 2.0
 local function startFloors(N, x, y)
     local floors = {}
     for _, band in ipairs(N.HeightBands(x, y, { swimming = inWater() })) do
-        floors[#floors + 1] = { z = (band.zMin + band.zMax) / 2, reachable = true }
+        local last = floors[#floors]
+        if last ~= nil and band.zMin - last.zMax <= FLOOR_GAP then
+            last.zMax = math.max(last.zMax, band.zMax)
+        else
+            floors[#floors + 1] = { zMin = band.zMin, zMax = band.zMax, reachable = true }
+        end
+    end
+    for _, floor in ipairs(floors) do
+        floor.z = (floor.zMin + floor.zMax) / 2
     end
     return floors
 end
@@ -229,10 +239,14 @@ local function routeLength(N, path, index, px, py)
     return sum
 end
 
--- The zones a route touches stay decoded, with the player's own; all others are dropped.
-local function keepRouteZones(N, path, px, py, map)
+-- The zones a route touches stay decoded, with the player's own and the target's; all others are dropped.
+local function keepRouteZones(N, path, px, py, map, targetNodeId)
     local keep = {}
+    local ids = { targetNodeId }
     for _, id in ipairs(path) do
+        ids[#ids + 1] = id
+    end
+    for _, id in ipairs(ids) do
         if id < N.VIRT_BASE then
             keep[math.floor(id / N.ZONE_BASE)] = true
         else
@@ -256,7 +270,8 @@ local function startRoute(self, request, outcome)
     route:begin(outcome.plan, request.contract, outcome.result, request.label)
     local px, py, map = route.env.position()
     routeMap = map
-    keepRouteZones(N, route.path, px, py, map)
+    -- the target's zone too: after a transit the route goes on to the same binding
+    keepRouteZones(N, route.path, px, py, map, route.targetBindingId)
     local path = WowVision.WowNavPath:new(self, route, request.label)
     self.path = path
     self.request = request
@@ -279,6 +294,8 @@ end
 local function search(self, request)
     local N = self:network()
     local _, _, map = route.env.position()
+    -- the engine looks for zones on the player's map only (index boxes of other maps overlap)
+    N.activeMapId = map
     job = {
         request = request, startedAt = GetTime(),
         job = N.Job(route.prepare, route, request.contract, { nativeMapId = map }, request.startOverride),
@@ -416,8 +433,9 @@ function module:onRouteEvent(path, event)
         self.path = nil
         local word = TRANSIT_WORDS[event.action.kind] or L["the transit"]
         say(string.format(L["Use %s; the route goes on after it"], word))
+        local targetNodeId, result = route.targetBindingId, route.result
         route:reset()
-        route:startAction(event.action, request)
+        route:startAction(event.action, request, targetNodeId, result)
     elseif kind == "lost" then
         self:stopRoute()
         say(L["Route ended"])
@@ -434,11 +452,15 @@ local function checkAction(self)
     if state == "timeout" then
         say(L["The transit took too long; route ended"])
     elseif state == "arrived" then
-        local request, toNode = route:actionArrival()
+        local request, toNode, targetNodeId, result = route:actionArrival()
         if request ~= nil then
             say(L["The route goes on"])
-            search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive,
-                startOverride = toNode })
+            local N = self:network()
+            N.activeMapId = map
+            job = {
+                request = request, startedAt = GetTime(),
+                job = N.Job(route.continueTo, route, toNode, targetNodeId, result),
+            }
         end
     end
 end

@@ -229,6 +229,27 @@ if haveNetwork then
         t:assertNotNil(arrived, "the route ends at the target")
     end
 
+    suite["Stormwind to an Ironforge innkeeper ends at the tram entrance, walking only"] = function(t)
+        setup()
+        local game = newGame()
+        local route = Route.new(game.env)
+        bindablePosition(STORMWIND, game, route)
+        local rows = catalog.zoneRows(N, C, 87, false)
+        local target = rowsWith(rows, "innkeeper")
+        t:assertNotNil(target, "Ironforge has an innkeeper")
+        local contract = catalog.contract(target, 0)
+        local outcome = runJob(N.Job(route.prepare, route, contract, { nativeMapId = 0 }))
+        if outcome.kind == "choose" then
+            contract.heightBand = 1
+            outcome = runJob(N.Job(route.prepare, route, contract, { nativeMapId = 0 }))
+        end
+        t:assertEqual(outcome.kind, "start", tostring(outcome.reason))
+        local action = outcome.plan.pendingAction
+        t:assertNotNil(action, "the route uses a transit")
+        t:assertEqual(action.kind, "tram")
+        t:assertEqual(action.activation and action.activation.mode, "walk_into_volume", "walked into, never ridden")
+    end
+
     suite["a target over several certified floors asks the floor and marks the reachable ones"] = function(t)
         setup()
         local game = newGame()
@@ -315,16 +336,20 @@ if haveNetwork then
         t:assertNotNil(plan)
         t:assertNotNil(plan.pendingAction, "the route uses the lift")
         t:assertEqual(plan.path[#plan.path], lift.fromNode, "cut at the lift")
-        route:startAction(plan.pendingAction, { contract = {} })
+        route:startAction(plan.pendingAction, { contract = {} }, lift.toNode, nil)
         local tx, ty = N.Position(lift.toNode)
         local fx, fy = N.Position(lift.fromNode)
         t:assertNil(route:observeAction(fx, fy, 0, 3))
         route:observeAction(tx, ty, 0, 3)
-        local request, toNode = route:actionArrival()
+        local request, toNode, targetNodeId = route:actionArrival()
         t:assertNotNil(request)
         t:assertEqual(toNode, lift.toNode)
+        t:assertEqual(targetNodeId, lift.toNode, "the target binding travels with the transit")
         local _, _, tz = N.Position(lift.toNode)
         t:assertEqual(route.anchor.last, tz, "the height of the far end anchors the next start")
+        -- the continuation routes from the far end to the kept binding, without resolving the target again
+        local outcome = runJob(N.Job(route.continueTo, route, toNode, targetNodeId, nil))
+        t:assertEqual(outcome.kind, "start", tostring(outcome.reason))
     end
 end
 

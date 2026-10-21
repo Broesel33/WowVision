@@ -661,10 +661,13 @@ local function inVolume2D(volume, x, y, widen)
 end
 Route.inVolume2D = inVolume2D
 
--- The route reached a transit: the continuation waits for its arrival. target: what to route to afterwards.
-function Route:startAction(action, target)
-    self.action = { action = action, target = target, startedAt = self.env.now(),
-        sourceEntered = false, sourceLeft = false }
+-- The route reached a transit: the continuation waits for its arrival. target: what to route to afterwards (the
+-- request); targetNodeId and result: the target's binding and resolution, which the continuation routes to again
+-- (his pendingAction keeps the targetId: after a transit into another map, such as the tram, the target cannot be
+-- resolved from the new map).
+function Route:startAction(action, target, targetNodeId, result)
+    self.action = { action = action, target = target, targetNodeId = targetNodeId, result = result,
+        startedAt = self.env.now(), sourceEntered = false, sourceLeft = false }
 end
 
 function Route:cancelAction()
@@ -722,7 +725,8 @@ function Route:observeAction(x, y, map, widen)
     return "arrived"
 end
 
--- After the arrival: the route goes on from the transit's far end, at its height (his ActionArrival).
+-- After the arrival: the route goes on from the transit's far end, at its height (his ActionArrival). Returns the
+-- request, the far end's node, the target's binding and its resolution.
 function Route:actionArrival()
     local current = self.action
     self.action = nil
@@ -739,5 +743,18 @@ function Route:actionArrival()
     end
     local _, _, z = self.N.Position(action.toNode)
     self:setHeightAnchor(z)
-    return current.target, action.toNode
+    return current.target, action.toNode, current.targetNodeId, current.result
+end
+
+-- The continuation's route (inside a job): from the far end of the transit to the target's binding (his
+-- StartNavigationToNode with manualStartNode = action.toNode). Returns an outcome like Route:prepare.
+function Route:continueTo(toNode, targetNodeId, result)
+    if targetNodeId == nil or not self.N.Exists(targetNodeId) then
+        return { kind = "fail", reason = "no_route_found" }
+    end
+    local plan, why = self:planToNode(targetNodeId, { id = toNode })
+    if not plan then
+        return { kind = "fail", reason = why, result = result }
+    end
+    return { kind = "start", plan = plan, result = result }
 end
