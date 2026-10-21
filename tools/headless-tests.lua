@@ -204,6 +204,8 @@ loadAddonFile("core/secrets.lua")
 loadAddonFile("core/secretsTests.lua")
 loadAddonFile("core/ui/input/heldKeys.lua")
 loadAddonFile("core/ui/input/heldKeysTests.lua")
+loadAddonFile("core/ui/input/padLogic.lua")
+loadAddonFile("core/ui/input/padLogicTests.lua")
 loadAddonFile("core/ttsCacheBust.lua")
 loadAddonFile("core/ttsCacheBustTests.lua")
 loadAddonFile("core/speechSounds.lua")
@@ -480,6 +482,7 @@ local parseOnly = {
     "core/graph/keyCapture.lua",
     "core/ui/input/actions.lua",
     "core/ui/input/activator.lua",
+    "core/ui/input/pad.lua",
     "core/ui/input/tests.lua",
     "core/ui/Window.lua",
     "core/ui/WindowManager.lua",

@@ -182,4 +182,26 @@ module:registerBindings({
         inputs = { "SHIFT-F10" },
         func = function() end,
     },
+    -- The controller's Escape (B) where Escape stays with the game; no
+    -- keyboard input, the keyboard's Escape is the game's own.
+    {
+        type = "Function",
+        key = "gameClose",
+        dorment = true,
+        label = L["Close (Controller)"],
+        inputs = {},
+        func = function() end,
+    },
+    -- Opens the WowVision menu, which otherwise needs /wv typed: the
+    -- controller's way in (the shortcut layer).
+    {
+        type = "Function",
+        key = "wowvision/menu",
+        label = L["WowVision Menu"],
+        inputs = {},
+        interruptSpeech = true,
+        func = function()
+            WowVision.graph.settings.openMenu()
+        end,
+    },
 })

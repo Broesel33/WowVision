@@ -30,6 +30,8 @@
        Blizzard addon; lfg.lua adds what that build changed. -->
   <Script file="..\tbc\lfg.lua" />
   <Script file="lfg.lua" />
+  <!-- The gamepad action bars in the bars window (controller support). -->
+  <Script file="gamepadBars.lua" />
   <!-- Developer tool: checks what controller support would rest on
        (/wv padprobe). -->
   <Script file="gamepadProbe.lua" />
