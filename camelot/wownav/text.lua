@@ -135,6 +135,28 @@ local CATEGORY = {
     dungeon = L["dungeon"], portal = L["portal"], zeppelin = L["zeppelin"], lift = L["elevator"],
 }
 
+-- Automatic waypoints are named after their code (his AUTO_TYPES, in his order: the first bit that is set names the
+-- point) and their height in whole yards (his auto_prefix_z: "the player finds re-entry points on the right level").
+local AUTO_TYPES = {
+    { 8, L["water exit"] }, { 64, L["zone border"] }, { 32, L["transit point"] }, { 2, L["gate"] },
+    { 16, L["level change"] }, { 4, L["road junction"] }, { 128, L["target access"] }, { 512, L["branch"] },
+    { 1, L["corner"] }, { 256, L["open ground"] },
+}
+
+function text.autoType(bits)
+    bits = bits or 0
+    for _, entry in ipairs(AUTO_TYPES) do
+        if bits % (entry[1] * 2) >= entry[1] then
+            return entry[2]
+        end
+    end
+    return L["waypoint"]
+end
+
+function text.autoName(bits, z)
+    return string.format(L["Automatic: %s, height %d"], text.autoType(bits), math.floor((z or 0) + 0.5))
+end
+
 -- The spoken categories of a target, "trainer, vendor"; nil when it has none worth saying.
 function text.categories(target)
     local list = target.category

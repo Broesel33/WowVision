@@ -511,6 +511,19 @@ function Route:prepare(target, nav, startOverride)
     return { kind = "start", plan = plan, result = result, context = context }
 end
 
+-- A route straight to a waypoint of the network (an automatic waypoint of the list; his list entries with a nodeId
+-- start a route to that node without the resolver). Inside a job; returns an outcome like Route:prepare.
+function Route:prepareNode(nodeId, startOverride)
+    if not self.N.Exists(nodeId) then
+        return { kind = "fail", reason = "no_route_found" }
+    end
+    local plan, why = self:planToNode(nodeId, startOverride and { id = startOverride } or nil)
+    if not plan then
+        return { kind = "fail", reason = why, ambiguousStart = why == "floor_ambiguous" }
+    end
+    return { kind = "start", plan = plan, result = { quality = "exact" } }
+end
+
 -- ---------------------------------------------------------------------------------------------------------------
 -- Manual new route (his PerformRecalculation): the blocked link gets a penalty, the target is resolved anew
 -- ---------------------------------------------------------------------------------------------------------------

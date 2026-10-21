@@ -156,6 +156,12 @@ local suite = {
         t:assertEqual(text.targetName({ nameEn = "Guard", nameDe = "Wache" }, false), "Guard")
         t:assertEqual(text.categories({ category = { "quest_giver", "trainer" } }), "quest giver, trainer")
         t:assertEqual(text.categories({ category = "object_type_5" }), "object type 5")
+        -- automatic waypoints: his order decides the type when several codes are set
+        t:assertEqual(text.autoType(2), "gate")
+        t:assertEqual(text.autoType(1 + 2), "gate")
+        t:assertEqual(text.autoType(1 + 16), "level change")
+        t:assertEqual(text.autoType(0), "waypoint")
+        t:assertEqual(text.autoName(2, 33.6), "Automatic: gate, height 34")
     end,
 }
 
@@ -227,6 +233,45 @@ if haveNetwork then
             end
         end
         t:assertNotNil(arrived, "the route ends at the target")
+    end
+
+    suite["automatic waypoints nearby: nearest first, named by type and height, routed to straight"] = function(t)
+        setup()
+        local game = newGame()
+        local route = Route.new(game.env)
+        local x, y = bindablePosition(STORMWIND, game, route)
+        local points = catalog.autoPoints(N, x, y, nil, 40)
+        t:assertTrue(#points > 0)
+        t:assertTrue(#points <= 40)
+        for i, p in ipairs(points) do
+            t:assertTrue(p.distance <= catalog.NODE_SELECTION_RADIUS)
+            t:assertNotNil(p.nodeId)
+            t:assertTrue(p.n:find("Automatic: ", 1, true) == 1, p.n)
+            if i > 1 then
+                t:assertTrue(p.distance >= points[i - 1].distance)
+            end
+        end
+        local far = points[#points]
+        local outcome = runJob(N.Job(route.prepareNode, route, far.nodeId))
+        t:assertEqual(outcome.kind, "start", tostring(outcome.reason))
+        t:assertEqual(outcome.plan.path[#outcome.plan.path], far.nodeId)
+        -- his start-point mode: a nearby waypoint as the start
+        local fixed = runJob(N.Job(route.prepareNode, route, far.nodeId, points[1].nodeId))
+        t:assertEqual(fixed.kind, "start")
+        t:assertEqual(fixed.plan.path[1], points[1].nodeId)
+    end
+
+    suite["a scanner target (a position without height) is resolved and routed like a list target"] = function(t)
+        setup()
+        local game = newGame()
+        local route = Route.new(game.env)
+        bindablePosition(STORMWIND, game, route)
+        local rows = catalog.zoneRows(N, C, STORMWIND, false)
+        local npc = rowsWith(rows, "innkeeper")
+        local contract = { id = "wowvision:scanner", kind = "live", nameEn = "Scanner target", nativeMapId = 0,
+            coordinateSpace = "world", x = npc.x, y = npc.y, zStatus = "unknown" }
+        local outcome = runJob(N.Job(route.prepare, route, contract, { nativeMapId = 0 }))
+        t:assertTrue(outcome.kind == "start" or outcome.kind == "choose", tostring(outcome.reason))
     end
 
     suite["Stormwind to an Ironforge innkeeper ends at the tram entrance, walking only"] = function(t)

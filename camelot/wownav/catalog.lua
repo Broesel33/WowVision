@@ -9,6 +9,7 @@
 -- changes, so F10 does not wait for it.
 
 local text = WowVision.wownavText
+local L = WowVision:getLocale()
 
 local catalog = {}
 WowVision.wownavCatalog = catalog
@@ -144,6 +145,38 @@ end
 
 function catalog.clear()
     current = nil
+end
+
+-- The automatic waypoints near a position (his NODE_SELECTION_RADIUS list): the network's own waypoints of the zones
+-- there, nearest first, at most limit, as rows that route straight to the waypoint (nodeId). Real waypoints only
+-- (no points on links), like his NodesWithin.
+catalog.NODE_SELECTION_RADIUS = 60.0
+
+function catalog.autoPoints(N, x, y, radius, limit)
+    radius = radius or catalog.NODE_SELECTION_RADIUS
+    local found = {}
+    for _, zoneId in ipairs(N.ZonesForPoint(x, y)) do
+        if N.LoadZone(zoneId) then
+            for _, id in ipairs(N.NodesWithin(zoneId, x, y, radius)) do
+                local nx, ny, nz = N.Position(id)
+                local dx, dy = nx - x, ny - y
+                found[#found + 1] = { id = id, x = nx, y = ny, z = nz, distance = math.sqrt(dx * dx + dy * dy) }
+            end
+        end
+    end
+    table.sort(found, function(a, b)
+        return a.distance < b.distance
+    end)
+    local rows = {}
+    for i = 1, math.min(#found, limit or #found) do
+        local p = found[i]
+        local name = text.autoName(N.Bits(p.id), p.z)
+        rows[i] = {
+            id = "wownav:node:" .. p.id, n = name, search = lower(name .. " " .. L["automatic"]),
+            x = p.x, y = p.y, z = p.z, nodeId = p.id, distance = p.distance,
+        }
+    end
+    return rows
 end
 
 -- The target contract of a row for the resolver (TargetCatalog.Validate).

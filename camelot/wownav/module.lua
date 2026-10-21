@@ -5,7 +5,9 @@
 -- WowVision's beacon (path.lua). His catalogues of the whole continent join the F10 list (catalog.lua).
 --
 -- A floor is asked only when there is a choice: where the start or the target lies over several floors and nothing
--- tells which one (floorsUi.lua). A route that reaches a portal, the tram entrance or an elevator ends there; once
+-- tells which one (floorsUi.lua); for the player's own floor a waypoint nearby can be picked as the start instead
+-- (his start-point mode). The setting "Show Automatic Waypoints" (his showauto, default off) adds the network's own
+-- waypoints near the player to F10, by type and height; Enter routes straight to one. A route that reaches a portal, the tram entrance or an elevator ends there; once
 -- the player has come out at its far end, the route goes on from there by itself.
 --
 -- With the standalone WowVisionNavigation addon loaded as well, this stays off (both use the same globals).
@@ -22,6 +24,8 @@ local settings = module:hasSettings()
 settings:add({ key = "enabled", type = "Bool", label = L["Routes from WowNav"], default = false })
 -- WowNav's comfort level: a road route may be up to this many percent longer than the shortest way.
 settings:add({ key = "comfort", type = "Number", label = L["Road Preference (Percent Longer)"], default = 50, min = 0, max = 300 })
+-- his /vn showauto (default off): the network's own waypoints near the player join the F10 list, by type and height
+settings:add({ key = "showAuto", type = "Bool", label = L["Show Automatic Waypoints"], default = false })
 
 local BUDGET_MS = 8          -- search time per frame (his chapter 7 point 4 allows 30)
 local SLOW_NOTICE = 1.0      -- seconds before "calculating route" is said
@@ -126,7 +130,7 @@ function engine:routeTo(target)
 end
 
 function engine:destinations(px, py, map)
-    return module:destinations(map)
+    return module:destinations(px, py, map)
 end
 
 maps:setRouteEngine(engine)
@@ -150,13 +154,25 @@ local function reasonText(reason)
     return REASONS[reason] or tostring(reason or L["No route found"])
 end
 
--- ---- destinations: the WowNav catalogue of the player's map
-function module:destinations(map)
+-- ---- destinations: the WowNav catalogue of the player's map, with the automatic waypoints nearby when they are shown
+function module:destinations(px, py, map)
     local N = ready(self)
     if N == nil or map == nil then
         return {}
     end
-    return catalog.rows(N, _G.WowVisionNavigationTargetCatalog, map)
+    local rows = catalog.rows(N, _G.WowVisionNavigationTargetCatalog, map)
+    if not self.settings.showAuto or px == nil then
+        return rows
+    end
+    N.activeMapId = map
+    local out = {}
+    for i, r in ipairs(rows) do
+        out[i] = r
+    end
+    for _, r in ipairs(catalog.autoPoints(N, px, py)) do
+        out[#out + 1] = r
+    end
+    return out
 end
 
 -- ---- floors: asked only when there is a choice
@@ -166,8 +182,8 @@ function module:floorChoice()
     return floorChoice
 end
 
-local function askFloor(kind, floors, onChoose)
-    floorChoice = { kind = kind, floors = floors, onChoose = onChoose }
+local function askFloor(kind, floors, onChoose, request)
+    floorChoice = { kind = kind, floors = floors, onChoose = onChoose, request = request }
     WowVision.UIHost:openWindow("wownavFloors")
 end
 
@@ -206,6 +222,47 @@ local function targetFloors(outcome)
         floors[#floors + 1] = { band = i, z = band.zMin, reachable = outcome.reachable[i] == true }
     end
     return floors
+end
+
+-- ---- start points: his start-point mode (/vn hier), a waypoint nearby as "I am standing here"
+local START_POINTS = 40      -- nearest waypoints offered
+local startChoice = nil      -- { request, points }
+local search                 -- forward: starts the search of a request
+
+function module:startChoice()
+    return startChoice
+end
+
+-- Opens the list of the nearest waypoints for a request whose start is unclear.
+function module:openStartPoints(request)
+    local N = self:network()
+    local px, py, map = route.env.position()
+    if N == nil or px == nil then
+        say(L["Position unavailable"])
+        return
+    end
+    N.activeMapId = map
+    floorChoice = nil
+    WowVision.UIHost:closeWindow("wownavFloors")
+    startChoice = { request = request, points = catalog.autoPoints(N, px, py, nil, START_POINTS) }
+    WowVision.UIHost:openWindow("wownavStart")
+end
+
+function module:chooseStartPoint(point)
+    local choice = startChoice
+    startChoice = nil
+    WowVision.UIHost:closeWindow("wownavStart")
+    if choice == nil or choice.request == nil then
+        return
+    end
+    -- the waypoint's height is the route's height from here (his manual start node: exact x, y and z)
+    route.anchor.last = point.z
+    local request = {}
+    for key, value in pairs(choice.request) do
+        request[key] = value
+    end
+    request.startOverride = point.nodeId
+    search(self, request)
 end
 
 -- ---- the route request
@@ -290,16 +347,19 @@ local function startRoute(self, request, outcome)
     say(text)
 end
 
--- Starts the search for a request. request: { contract, label, onArrive, startOverride }.
-local function search(self, request)
+-- Starts the search for a request. request: { contract or nodeId, label, onArrive, startOverride }.
+function search(self, request)
     local N = self:network()
     local _, _, map = route.env.position()
     -- the engine looks for zones on the player's map only (index boxes of other maps overlap)
     N.activeMapId = map
-    job = {
-        request = request, startedAt = GetTime(),
-        job = N.Job(route.prepare, route, request.contract, { nativeMapId = map }, request.startOverride),
-    }
+    local work
+    if request.nodeId ~= nil then
+        work = N.Job(route.prepareNode, route, request.nodeId, request.startOverride)
+    else
+        work = N.Job(route.prepare, route, request.contract, { nativeMapId = map }, request.startOverride)
+    end
+    job = { request = request, startedAt = GetTime(), job = work }
 end
 
 -- A route request from maps: { x, y, z, label, onArrive, data } (data: a row of the WowNav list). True when WowNav
@@ -316,6 +376,12 @@ function module:routeTo(target)
     N.activeMapId = map
     if #N.ZonesForPoint(px, py) == 0 then
         return false
+    end
+    if type(target.data) == "table" and target.data.nodeId ~= nil then
+        -- an automatic waypoint: straight to it, no target to resolve
+        self:stopRoute()
+        search(self, { nodeId = target.data.nodeId, label = target.label, onArrive = target.onArrive })
+        return true
     end
     local contract
     if type(target.data) == "table" and target.data.tid ~= nil then
@@ -366,9 +432,11 @@ local function onOutcome(self, request, outcome)
                 -- his HeightAnchor.last: the band nearest to it is the start's floor
                 route.anchor.last = floor.z
                 search(self, request)
-            end)
+            end, request)
         else
+            -- nothing to choose by floor: a waypoint nearby decides (his /vn hier)
             say(reasonText(outcome.reason))
+            self:openStartPoints(request)
         end
     else
         say(reasonText(outcome.reason))
@@ -504,7 +572,8 @@ local function checkRecalculation(self)
     if request ~= nil then
         say(L["Searching the route again with the new road preference"])
         self:stopRoute()
-        search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive })
+        search(self, { contract = request.contract, nodeId = request.nodeId, label = request.label,
+            onArrive = request.onArrive })
     end
 end
 
@@ -518,7 +587,8 @@ function module:newRoute()
     route:penalizeCurrentLink()
     self:stopRoute(true)
     say(L["Searching a new route"])
-    search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive })
+    search(self, { contract = request.contract, nodeId = request.nodeId, label = request.label,
+        onArrive = request.onArrive })
     return true
 end
 
