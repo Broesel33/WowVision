@@ -180,6 +180,32 @@ function module:currentWaypoints()
     return merged
 end
 
+-- Destinations to pick from by name (F10, /beacon to): the route data's
+-- waypoints, and with an active engine its own targets too. An engine with
+-- its own creature and object catalog hides the route data's spawns
+-- (t = 2 creature, t = 3 object), so nobody is listed twice.
+function module:destinationWaypoints()
+    local waypoints = self:currentWaypoints()
+    local engine = self:activeRouteEngine()
+    if engine == nil then
+        return waypoints, nil
+    end
+    local merged = {}
+    local hideSpawns = engine:hidesRouteDataSpawns()
+    for id, wp in pairs(waypoints) do
+        if not (hideSpawns and (wp.t == 2 or wp.t == 3)) then
+            merged[id] = wp
+        end
+    end
+    local px, py, _, map = UnitPosition("player")
+    if px ~= nil then
+        for _, wp in ipairs(engine:destinations(px, py, map) or {}) do
+            merged[wp.id] = wp
+        end
+    end
+    return merged, engine
+end
+
 -- Route to the nearest waypoint whose name contains the fragment
 -- (case-insensitive): the test path for routed navigation before the
 -- destination picker exists.
@@ -189,11 +215,11 @@ function module:navigateToName(fragment)
         WowVision:speak(L["Position unavailable"])
         return false
     end
-    local waypoints = self:currentWaypoints()
+    local waypoints, engine = self:destinationWaypoints()
     local foldCase = WowVision.utils.foldCase
     local needle = foldCase(fragment)
     local matches = WowVision.Router.nearest(waypoints, px, py, 1, function(wp)
-        return wp.n ~= nil and foldCase(wp.n):find(needle, 1, true) ~= nil
+        return wp.n ~= nil and (wp.search or foldCase(wp.n)):find(needle, 1, true) ~= nil
     end)
     if #matches == 0 then
         WowVision:speak(L["No route found"] .. " " .. fragment)
@@ -201,6 +227,9 @@ function module:navigateToName(fragment)
     end
     local target = matches[1].waypoint
     WowVision:speak(target.n)
+    if engine ~= nil and self:routeTo(target.x, target.y, target.n, nil, target.z, target) then
+        return true
+    end
     return self:navigateTo(target.id, waypoints)
 end
 
@@ -227,13 +256,51 @@ function module:beaconTo(wx, wy, label, onArrive)
     end
 end
 
+-- Another route engine can take over the routing (camelot/wownav registers
+-- WowNav). While its setting is on it gets every route request: the
+-- scanner's Enter, the places list, /beacon to, the F10 window's Enter. The
+-- engine computes the route itself and hands back a Path through pathfind;
+-- everything after that (beacon, arrival cue, Ctrl-W/S, Shift-F12, the turn
+-- key) stays the same. engine: isActive(), routeTo(target) -> true when it
+-- took the request (false: not here, the request goes the old way),
+-- destinations(px, py, map) -> { {id, n, x, y, z, detail, search} } (detail:
+-- said after the distance; search: folded text the search looks in),
+-- hidesRouteDataSpawns().
+function module:setRouteEngine(engine)
+    self.routeEngine = engine
+end
+
+function module:activeRouteEngine()
+    local engine = self.routeEngine
+    if engine ~= nil and engine:isActive() then
+        return engine
+    end
+    return nil
+end
+
+-- The one route request: to a world position (z when the target knows
+-- it). data: the destination row when it came from the engine's own list
+-- (its target data). True when the active engine took it; false leaves it
+-- to the caller.
+function module:routeTo(wx, wy, label, onArrive, z, data)
+    local engine = self:activeRouteEngine()
+    if engine == nil then
+        return false
+    end
+    return engine:routeTo({ x = wx, y = wy, z = z, label = label, onArrive = onArrive, data = data }) == true
+end
+
 -- Open the navigation window aimed at a world position: the scanner's
 -- Enter. The window snapshots the network, adds the position as a
 -- destination of its own (a waypoint without links, so the route ends with
 -- a straight last leg), preselects the closest entry point, and lands on
 -- that destination; Enter there routes. Without map data on this continent
 -- there is nothing to route through, so a straight beacon is set instead.
+-- An active route engine routes at once: it finds the entry point itself.
 function module:openNavigationTo(wx, wy, label, onArrive)
+    if self:routeTo(wx, wy, label, onArrive) then
+        return true
+    end
     if next(self:currentWaypoints()) == nil then
         self:beaconTo(wx, wy, label, onArrive)
         return false

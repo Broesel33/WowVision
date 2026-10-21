@@ -1,0 +1,559 @@
+-- WowNav routes in WowVision (WoW: Forever). With the setting on, every route request of the navigation (the
+-- scanner's Enter, the places list, /beacon to, the F10 window) goes to WowNav: Broesel's engine (engine/, his
+-- NavNetwork, Guidance, TargetCatalog and TargetResolver) on his navigation data (the submodule
+-- mapdata/WoW_NavigationData, packed by tools/wownav-pack.lua), followed with his rules (route.lua) and walked with
+-- WowVision's beacon (path.lua). His catalogues of the whole continent join the F10 list (catalog.lua).
+--
+-- A floor is asked only when there is a choice: where the start or the target lies over several floors and nothing
+-- tells which one (floorsUi.lua). A route that reaches a portal, the tram entrance or an elevator ends there; once
+-- the player has come out at its far end, the route goes on from there by itself.
+--
+-- With the standalone WowVisionNavigation addon loaded as well, this stays off (both use the same globals).
+
+local maps = WowVision.base.navigation.maps
+local catalog = WowVision.wownavCatalog
+local Route = WowVision.wownavRoute
+
+local module = WowVision.base.navigation:createModule("wownav")
+local L = module.L
+module:setLabel(L["WowNav Routes"])
+
+local settings = module:hasSettings()
+settings:add({ key = "enabled", type = "Bool", label = L["Routes from WowNav"], default = false })
+-- WowNav's comfort level: a road route may be up to this many percent longer than the shortest way.
+settings:add({ key = "comfort", type = "Number", label = L["Road Preference (Percent Longer)"], default = 50, min = 0, max = 300 })
+
+local BUDGET_MS = 8          -- search time per frame (his chapter 7 point 4 allows 30)
+local SLOW_NOTICE = 1.0      -- seconds before "calculating route" is said
+local RECALC_DELAY = 1.0     -- seconds after the last change of the road preference before the route is searched again
+
+local job = nil              -- the pending search: { job, request, startedAt, noticed }
+local recalcAt = nil         -- when the running route is searched again with a changed road preference
+local route = nil            -- the wownavRoute of the module
+local routeMap = nil         -- the native map the running route lives on
+
+function module:network()
+    return _G.WowVisionNavigationNavNetwork, _G.WowVisionNavigationGuidance
+end
+
+local function standaloneLoaded()
+    return C_AddOns ~= nil and C_AddOns.IsAddOnLoaded ~= nil and C_AddOns.IsAddOnLoaded("WowVisionNavigation")
+end
+
+-- His ActionAllowed: an action edge without conditions (ActionNavigation CanTraverse).
+local function actionAllowed(action)
+    local conditions = type(action) == "table" and action.conditions or nil
+    return type(conditions) == "table" and conditions.status == "unconditional" and conditions.proof ~= nil
+end
+
+local function inWater()
+    return (IsSwimming ~= nil and IsSwimming() == true) or (IsSubmerged ~= nil and IsSubmerged() == true)
+end
+
+local function playerSpeed()
+    if GetUnitSpeed == nil then
+        return nil
+    end
+    local ok, speed = pcall(GetUnitSpeed, "player")
+    if not ok or (issecretvalue ~= nil and issecretvalue(speed)) or type(speed) ~= "number" then
+        return nil
+    end
+    return speed
+end
+
+local function playerFacing()
+    if GetPlayerFacing == nil then
+        return nil
+    end
+    local facing = GetPlayerFacing()
+    if issecretvalue ~= nil and issecretvalue(facing) then
+        return nil
+    end
+    return facing
+end
+
+local indexed = false
+local function ready(self)
+    local N, G = self:network()
+    if N == nil or G == nil or N.Job == nil or type(_G.WVN7Index) ~= "table" then
+        return nil
+    end
+    if not indexed then
+        N.LoadIndex()
+        N.ActionAllowed = actionAllowed
+        indexed = true
+        route = Route.new({
+            N = N, G = G, R = _G.WowVisionNavigationTargetResolver, C = _G.WowVisionNavigationTargetCatalog,
+            position = function()
+                local x, y, _, map = UnitPosition("player")
+                return x, y, map
+            end,
+            swimming = inWater,
+            now = GetTime,
+            facing = playerFacing,
+            moving = function()
+                return IsPlayerMoving ~= nil and IsPlayerMoving() == true
+            end,
+            speed = playerSpeed,
+        })
+    end
+    N.SetComfort(self.settings.comfort or 50)
+    -- his /vn ankunft: a waypoint's radius is at least WowVision's arrival distance (Alt-P)
+    G.arrivalMin = maps:arrivalDistance()
+    return N
+end
+
+function module:route()
+    return route
+end
+
+-- ---- the engine maps calls (core/navigation/maps/module.lua setRouteEngine)
+local engine = {}
+
+function engine:isActive()
+    return module:getEnabled() and module.settings.enabled == true and not standaloneLoaded() and ready(module) ~= nil
+end
+
+-- WowNav's catalogue replaces the route data's creature and object spawns where it covers the map.
+function engine:hidesRouteDataSpawns()
+    local N = ready(module)
+    local _, _, _, map = UnitPosition("player")
+    return N ~= nil and map ~= nil and catalog.covers(N, map)
+end
+
+function engine:routeTo(target)
+    return module:routeTo(target)
+end
+
+function engine:destinations(px, py, map)
+    return module:destinations(map)
+end
+
+maps:setRouteEngine(engine)
+
+-- ---- speech
+local function say(text)
+    WowVision:speak(text)
+end
+
+local TRANSIT_WORDS = { portal = L["the portal"], tram = L["the tram"], lift = L["the elevator"] }
+
+-- The resolver's and the planner's reasons as WowVision texts.
+local REASONS = {
+    position_unknown = L["Position unavailable"],
+    floor_ambiguous = L["Your floor is not clear here"],
+    no_network_attachment = L["No WowNav network here"],
+    no_route_found = L["No route found"],
+    action_route_invalid = L["No route found"],
+}
+local function reasonText(reason)
+    return REASONS[reason] or tostring(reason or L["No route found"])
+end
+
+-- ---- destinations: the WowNav catalogue of the player's map
+function module:destinations(map)
+    local N = ready(self)
+    if N == nil or map == nil then
+        return {}
+    end
+    return catalog.rows(N, _G.WowVisionNavigationTargetCatalog, map)
+end
+
+-- ---- floors: asked only when there is a choice
+local floorChoice = nil
+
+function module:floorChoice()
+    return floorChoice
+end
+
+local function askFloor(kind, floors, onChoose)
+    floorChoice = { kind = kind, floors = floors, onChoose = onChoose }
+    WowVision.UIHost:openWindow("wownavFloors")
+end
+
+function module:chooseFloor(floor)
+    local choice = floorChoice
+    floorChoice = nil
+    WowVision.UIHost:closeWindow("wownavFloors")
+    if choice ~= nil then
+        choice.onChoose(floor)
+    end
+end
+
+-- The floors at the player's position: the height bands of the start cells, lowest first.
+local function startFloors(N, x, y)
+    local floors = {}
+    for _, band in ipairs(N.HeightBands(x, y, { swimming = inWater() })) do
+        floors[#floors + 1] = { z = (band.zMin + band.zMax) / 2, reachable = true }
+    end
+    return floors
+end
+
+-- The floors of an ambiguous target (his bands or certified levels), with the ones that cannot be reached marked.
+local function targetFloors(outcome)
+    local floors = {}
+    for i, band in ipairs(outcome.result.bands) do
+        floors[#floors + 1] = { band = i, z = band.zMin, reachable = outcome.reachable[i] == true }
+    end
+    return floors
+end
+
+-- ---- the route request
+
+-- How far an approximate target lies from the network (his Describe / desc_inexact).
+local function approximateText(result)
+    if result == nil or result.quality ~= "approximate" then
+        return nil
+    end
+    if result.normalizedWater then
+        return string.format(L["water surface, diving depth %d yards"], math.floor((result.divingDepth or 0) + 0.5))
+    end
+    local yards = result.delta3D or result.deltaXY or 0
+    if yards < 1 then
+        return nil
+    end
+    local text = string.format(L["approximate, %d yards"], math.floor(yards + 0.5))
+    if result.zUnknown then
+        text = text .. ", " .. L["height unknown"]
+    end
+    return text
+end
+
+local function routeLength(N, path, index, px, py)
+    local sum, x, y = 0, px, py
+    for i = index, #path do
+        local wx, wy = N.Position(path[i])
+        sum = sum + Route.distance(x, y, wx, wy)
+        x, y = wx, wy
+    end
+    return sum
+end
+
+-- The zones a route touches stay decoded, with the player's own; all others are dropped.
+local function keepRouteZones(N, path, px, py, map)
+    local keep = {}
+    for _, id in ipairs(path) do
+        if id < N.VIRT_BASE then
+            keep[math.floor(id / N.ZONE_BASE)] = true
+        else
+            local point = N.virt[id]
+            if point and point.zone then
+                keep[point.zone.id] = true
+            end
+        end
+    end
+    if px ~= nil then
+        N.activeMapId = map
+        for _, zoneId in ipairs(N.ZonesForPoint(px, py)) do
+            keep[zoneId] = true
+        end
+    end
+    N.KeepZones(keep)
+end
+
+local function startRoute(self, request, outcome)
+    local N = self:network()
+    route:begin(outcome.plan, request.contract, outcome.result, request.label)
+    local px, py, map = route.env.position()
+    routeMap = map
+    keepRouteZones(N, route.path, px, py, map)
+    local path = WowVision.WowNavPath:new(self, route, request.label)
+    self.path = path
+    self.request = request
+    maps:pathfind(path)
+
+    local count = #route.path
+    local yards = px ~= nil and routeLength(N, route.path, route.pathIndex, px, py) or 0
+    local text = string.format("%d %s, %d %s", count, L["waypoints"], yards, L["yards"])
+    local approx = approximateText(outcome.result)
+    if approx ~= nil then
+        text = text .. ", " .. approx
+    end
+    if route.pendingAction ~= nil then
+        text = text .. ", " .. string.format(L["then %s"], TRANSIT_WORDS[route.pendingAction.kind] or L["the transit"])
+    end
+    say(text)
+end
+
+-- Starts the search for a request. request: { contract, label, onArrive, startOverride }.
+local function search(self, request)
+    local N = self:network()
+    local _, _, map = route.env.position()
+    job = {
+        request = request, startedAt = GetTime(),
+        job = N.Job(route.prepare, route, request.contract, { nativeMapId = map }, request.startOverride),
+    }
+end
+
+-- A route request from maps: { x, y, z, label, onArrive, data } (data: a row of the WowNav list). True when WowNav
+-- took it.
+function module:routeTo(target)
+    local N = ready(self)
+    if N == nil then
+        return false
+    end
+    local px, py, map = route.env.position()
+    if px == nil or not catalog.covers(N, map) then
+        return false
+    end
+    N.activeMapId = map
+    if #N.ZonesForPoint(px, py) == 0 then
+        return false
+    end
+    local contract
+    if type(target.data) == "table" and target.data.tid ~= nil then
+        contract = catalog.contract(target.data, map)
+    else
+        contract = {
+            id = "wowvision:" .. tostring(target.label or "target"), kind = "live", nameEn = target.label or "?",
+            nativeMapId = map, coordinateSpace = "world", x = target.x, y = target.y, z = target.z,
+            zStatus = target.z == nil and "unknown" or "known",
+        }
+    end
+    self:stopRoute()
+    search(self, { contract = contract, label = target.label, onArrive = target.onArrive })
+    return true
+end
+
+-- Ends the running route, the search and a waiting transit.
+function module:stopRoute(keepPenalties)
+    job = nil
+    if route ~= nil then
+        route:cancelAction()
+        route:reset(keepPenalties)
+    end
+    if self.path ~= nil then
+        self.path:finish()
+        if maps.path == self.path then
+            maps:stopPath()
+        end
+        self.path = nil
+    end
+    routeMap = nil
+end
+
+local function onOutcome(self, request, outcome)
+    if outcome.kind == "start" then
+        startRoute(self, request, outcome)
+    elseif outcome.kind == "choose" then
+        askFloor("target", targetFloors(outcome), function(floor)
+            request.contract.heightBand = floor.band
+            search(self, request)
+        end)
+    elseif outcome.ambiguousStart then
+        local N = self:network()
+        local px, py = route.env.position()
+        local floors = px ~= nil and startFloors(N, px, py) or {}
+        if #floors > 1 then
+            askFloor("start", floors, function(floor)
+                -- his HeightAnchor.last: the band nearest to it is the start's floor
+                route.anchor.last = floor.z
+                search(self, request)
+            end)
+        else
+            say(reasonText(outcome.reason))
+        end
+    else
+        say(reasonText(outcome.reason))
+    end
+end
+
+local function stepJob(self)
+    local j = job
+    if j == nil then
+        return
+    end
+    local done, outcome, failure = j.job:Step(BUDGET_MS, debugprofilestop)
+    if not done then
+        if not j.noticed and GetTime() - j.startedAt >= SLOW_NOTICE then
+            j.noticed = true
+            say(L["Calculating route"])
+        end
+        return
+    end
+    job = nil
+    if type(outcome) ~= "table" then
+        say(L["No route found"] .. (failure ~= nil and (" " .. tostring(failure)) or ""))
+        return
+    end
+    onOutcome(self, j.request, outcome)
+end
+
+-- ---- what the route says while it is walked (path.lua)
+function module:onRouteEvent(path, event)
+    if path ~= self.path then
+        return
+    end
+    local kind = event.kind
+    if kind == "advance" then
+        if event.careful then
+            say(L["Last network point; the last stretch is unchecked, move carefully"])
+        end
+    elseif kind == "reentry" then
+        say(L["Back on the route"])
+    elseif kind == "fallback" then
+        say(L["One waypoint back"])
+    elseif kind == "arrived" then
+        local request = self.request
+        path:finish()
+        maps:stopPath()
+        self.path = nil
+        local label = request and request.label
+        local exact = event.result == nil or event.result.quality == "exact"
+        if exact then
+            say(L["Arrived"] .. (label ~= nil and (" " .. label) or ""))
+        else
+            say(L["Target position reached"] .. (label ~= nil and (", " .. label) or ""))
+        end
+        if request ~= nil and request.onArrive ~= nil then
+            request.onArrive()
+        end
+        route:reset()
+    elseif kind == "transit" then
+        local request = self.request
+        path:finish()
+        maps:stopPath()
+        self.path = nil
+        local word = TRANSIT_WORDS[event.action.kind] or L["the transit"]
+        say(string.format(L["Use %s; the route goes on after it"], word))
+        route:reset()
+        route:startAction(event.action, request)
+    elseif kind == "lost" then
+        self:stopRoute()
+        say(L["Route ended"])
+    end
+end
+
+-- The transit continuation: once the player came out at the far end, the route goes on from there.
+local function checkAction(self)
+    if route == nil or route.action == nil or job ~= nil then
+        return
+    end
+    local x, y, map = route.env.position()
+    local state = route:observeAction(x, y, map, maps:arrivalDistance())
+    if state == "timeout" then
+        say(L["The transit took too long; route ended"])
+    elseif state == "arrived" then
+        local request, toNode = route:actionArrival()
+        if request ~= nil then
+            say(L["The route goes on"])
+            search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive,
+                startOverride = toNode })
+        end
+    end
+end
+
+-- A route ends when the player dies, or comes onto another map (his PLAYER_DEAD and continent change), and when
+-- WowVision's navigation was stopped (Shift-F12).
+local function checkRunning(self)
+    if self.path == nil then
+        return
+    end
+    if maps.path ~= self.path then
+        self:stopRoute()
+        return
+    end
+    local x, _, map = route.env.position()
+    if x ~= nil and routeMap ~= nil and map ~= routeMap then
+        self:stopRoute()
+        say(L["Route ended"])
+    end
+end
+
+-- The target of the route being searched or walked, nil without one.
+function module:runningRequest()
+    if job ~= nil then
+        return job.request
+    end
+    if self.path ~= nil and route ~= nil and route.active then
+        return self.request
+    end
+    return nil
+end
+
+-- A changed road preference applies to the running route as well (his /vn komfort does the same): once the slider
+-- has rested for RECALC_DELAY, the same target is searched again from where the player is.
+local function checkRecalculation(self)
+    if recalcAt == nil or GetTime() < recalcAt then
+        return
+    end
+    recalcAt = nil
+    local request = self:runningRequest()
+    if request ~= nil then
+        say(L["Searching the route again with the new road preference"])
+        self:stopRoute()
+        search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive })
+    end
+end
+
+-- His /vn neu: the link the player is stuck on gets a penalty and the target is searched again from here.
+function module:newRoute()
+    if route == nil or not route.active or self.path == nil then
+        say(L["No active route"])
+        return false
+    end
+    local request = self.request
+    route:penalizeCurrentLink()
+    self:stopRoute(true)
+    say(L["Searching a new route"])
+    search(self, { contract = request.contract, label = request.label, onArrive = request.onArrive })
+    return true
+end
+
+-- The catalogue of the player's map is read in the background, one zone per step.
+local function stepCatalog(self)
+    local N = ready(self)
+    if N == nil then
+        return
+    end
+    local _, _, map = route.env.position()
+    if map == nil or not catalog.covers(N, map) then
+        return
+    end
+    catalog.start(N, map)
+    catalog.step(N, _G.WowVisionNavigationTargetCatalog)
+end
+
+function module:onEnable()
+    self:hasUpdate(function(self)
+        if not engine:isActive() then
+            return
+        end
+        stepJob(self)
+        checkRunning(self)
+        checkAction(self)
+        checkRecalculation(self)
+        if job == nil then
+            stepCatalog(self)
+        end
+    end)
+end
+
+module:registerEvent("event", "PLAYER_DEAD")
+
+function module:onEvent(event)
+    if event == "PLAYER_DEAD" and (self.path ~= nil or job ~= nil or (route ~= nil and route.action ~= nil)) then
+        self:stopRoute()
+    end
+end
+
+module:registerBinding({
+    type = "Script",
+    key = "wownav/newRoute",
+    label = L["New WowNav Route Around a Blocked Spot"],
+    inputs = {},
+    script = "/run WowVision.base.navigation.wownav:newRoute()",
+})
+
+module.settings.class:getField("comfort").events.valueChange:subscribe(module, function()
+    if module:runningRequest() ~= nil then
+        recalcAt = GetTime() + RECALC_DELAY
+    end
+end)
+
+-- With the setting turned on while the standalone addon runs, say why nothing changes.
+module.settings.class:getField("enabled").events.valueChange:subscribe(module, function(_, _, _, _, value)
+    if value == true and standaloneLoaded() then
+        say(L["Turn off the WowVisionNavigation addon to use its routes here"])
+    end
+end)

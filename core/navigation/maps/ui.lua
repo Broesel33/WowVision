@@ -48,8 +48,13 @@ local function ensureData(screen)
         return false
     end
     screen._px, screen._py = px, py
-    screen._waypoints = module:currentWaypoints()
-    screen._entries = WowVision.Router.nearest(screen._waypoints, px, py, ENTRY_COUNT, WowVision.Router.hasLinks)
+    -- With a route engine on (WowNav), its targets join the list and it finds the entry point itself: no entry choice.
+    screen._waypoints, screen._engine = module:destinationWaypoints()
+    if screen._engine ~= nil then
+        screen._entries = {}
+    else
+        screen._entries = WowVision.Router.nearest(screen._waypoints, px, py, ENTRY_COUNT, WowVision.Router.hasLinks)
+    end
     if screen._entries[1] ~= nil then
         screen._entryId = screen._entries[1].waypoint.id
     end
@@ -80,7 +85,8 @@ local function destinations(screen)
     local found = {}
     local target = screen._target
     for _, wp in pairs(screen._waypoints) do
-        if wp ~= target and wp.n ~= nil and (needle == nil or foldCase(wp.n):find(needle, 1, true) ~= nil) then
+        -- an engine's row may bring its own search text (names in both languages, categories, zone), already folded
+        if wp ~= target and wp.n ~= nil and (needle == nil or (wp.search or foldCase(wp.n)):find(needle, 1, true) ~= nil) then
             local dx = wp.x - screen._px
             local dy = wp.y - screen._py
             tinsert(found, { waypoint = wp, distance = math.sqrt(dx * dx + dy * dy) })
@@ -114,8 +120,13 @@ local function destinationCursor(screen)
         return list, index, count
     end
 
+    -- an engine's row may add a detail after the distance (WowNav: its categories and zone)
     local function labelOf(entry)
-        return string.format("%s, %d %s", entry.waypoint.n, entry.distance, L["yards"])
+        local text = string.format("%s, %d %s", entry.waypoint.n, entry.distance, L["yards"])
+        if entry.waypoint.detail ~= nil then
+            text = text .. ", " .. entry.waypoint.detail
+        end
+        return text
     end
 
     local function speak()
@@ -176,6 +187,9 @@ local function destinationCursor(screen)
             end
             WowVision.UIHost:closeWindow("atlas")
             local wp = entry.waypoint
+            if screen._engine ~= nil and module:routeTo(wp.x, wp.y, wp.n, wp.onArrive, wp.z, wp) then
+                return
+            end
             local routed = module:navigateTo(wp.id, screen._waypoints, { entryId = screen._entryId, onArrive = wp.onArrive })
             -- A target too far from the network for a last leg still gets a
             -- straight beacon, as the scanner gave before.
@@ -221,12 +235,8 @@ local function destinationCursor(screen)
     }
 end
 
-local function render(builder, screen)
-    if not ensureData(screen) then
-        return
-    end
-    builder:pushContext("navigation", L["Navigation"])
-
+-- The entry point stop: the closest waypoints, Enter selects one (only without a route engine).
+local function renderEntries(builder, screen)
     builder:beginStop("entries")
     builder:pushContext("entries", L["Entry Points"])
     if #screen._entries == 0 then
@@ -259,6 +269,17 @@ local function render(builder, screen)
         })
     end
     builder:popContext()
+end
+
+local function render(builder, screen)
+    if not ensureData(screen) then
+        return
+    end
+    builder:pushContext("navigation", L["Navigation"])
+
+    if screen._engine == nil then
+        renderEntries(builder, screen)
+    end
 
     builder:beginStop("search")
     builder:addItem(
