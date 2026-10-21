@@ -673,7 +673,21 @@ local function ensureFrames()
     dpadOwner = CreateFrame("Frame")
     pcall(pollFrame.RegisterEvent, pollFrame, "ADDON_ACTION_BLOCKED")
     pcall(pollFrame.RegisterEvent, pollFrame, "ADDON_ACTION_FORBIDDEN")
+    pollFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     pollFrame:SetScript("OnEvent", function(_, event, addon, func)
+        -- The last moment before combat lockdown: give the D-pad back, or
+        -- it stays the probe's (and the action bar's D-pad dead) all fight.
+        if event == "PLAYER_REGEN_DISABLED" then
+            if dpadClaimed then
+                ClearOverrideBindings(dpadOwner)
+                dpadClaimed = false
+                for _, entry in ipairs(DPAD_CLAIMS) do
+                    takeBack[entry.key] = nil
+                end
+                note("D-pad given back: combat starts")
+            end
+            return
+        end
         if watching or claiming then
             note("BLOCKED: " .. event .. ", addon " .. tostring(addon) .. ", function " .. tostring(func))
             WowVision:speak("Action blocked, " .. tostring(func))
