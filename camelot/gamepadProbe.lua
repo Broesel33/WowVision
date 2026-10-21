@@ -17,8 +17,14 @@
 -- /wv padprobe claim   toggles, out of combat only: the probe binds the right
 --                      stick press (alone and with Shift, Ctrl, Alt) and,
 --                      while the hostile targeting shoulder or the shortcut
---                      layer is held, the D-pad (alone and with Shift, Ctrl);
---                      a press that reaches one of these bindings is spoken
+--                      layer is held or a window has the UI focus, the D-pad
+--                      (alone and with Shift, Ctrl); a press that reaches one
+--                      of these bindings is spoken. When Blizzard binds one of
+--                      these keys over the probe, the probe binds it once more
+--                      and logs whether that wins.
+--
+-- Both watch and claim say "UI focus on" and "UI focus off" when Blizzard's
+-- D-pad focus takes or leaves the pad buttons.
 --
 -- Watching never blocks a button: it asks IsKeyDown every frame, the way
 -- Blizzard's own class flyout does (OnGamePadButtonDown would swallow the
@@ -472,6 +478,15 @@ local dpadClaimed = false
 local combatNoted = false
 local pollFrame, claimButton, r3Owner, dpadOwner
 local hooked = false
+local lastUiFocus
+-- Per claimed key: "retried" after binding it again, then "won" or "lost".
+local takeBack = {}
+
+-- Blizzard's D-pad focus has the pad buttons (its input stack binds them).
+local function uiFocusOn()
+    local nav = SmartNavigation
+    return nav ~= nil and nav.enabled == true and nav.bindingActive == true
+end
 
 local function note(text)
     if watchRun ~= nil then
@@ -531,7 +546,7 @@ end
 -- layer is held. Override bindings cannot change in combat; that is one of
 -- the things this shows.
 local function updateDpadClaim()
-    local want = claiming and (isHostileHeld() or isLayerOn())
+    local want = claiming and (isHostileHeld() or isLayerOn() or uiFocusOn())
     if want == dpadClaimed then
         combatNoted = false
         return
@@ -548,20 +563,67 @@ local function updateDpadClaim()
         for _, entry in ipairs(DPAD_CLAIMS) do
             SetOverrideBindingClick(dpadOwner, true, entry.key, CLAIM_BUTTON, entry.name)
         end
-        note("D-pad bound to the probe (" .. (isLayerOn() and "shortcut layer" or "hostile targeting") .. ")")
+        local why = "hostile targeting"
+        if isLayerOn() then
+            why = "shortcut layer"
+        elseif uiFocusOn() then
+            why = "UI focus"
+        end
+        note("D-pad bound to the probe (" .. why .. ")")
     else
         ClearOverrideBindings(dpadOwner)
+        for _, entry in ipairs(DPAD_CLAIMS) do
+            takeBack[entry.key] = nil
+        end
         note("D-pad given back")
     end
     dpadClaimed = want
 end
 
+-- Blizzard's input stack binds every pad key when a window takes the UI
+-- focus. Bind a taken key to the probe once more and see on the next frame
+-- whose binding it runs: whether the binding set last wins.
+local function checkTakeBack(owner, entries)
+    for _, entry in ipairs(entries) do
+        local state = takeBack[entry.key]
+        local current = action(entry.key)
+        if current == "CLICK " .. CLAIM_BUTTON .. ":" .. entry.name then
+            if state == "retried" then
+                takeBack[entry.key] = "won"
+                note(entry.key .. " is the probe's again after binding it once more")
+            end
+        elseif state == nil then
+            if not InCombatLockdown() then
+                SetOverrideBindingClick(owner, true, entry.key, CLAIM_BUTTON, entry.name)
+                takeBack[entry.key] = "retried"
+                note(entry.key .. " was taken by " .. (current or "nothing") .. ", bound to the probe once more")
+            end
+        elseif state == "retried" then
+            takeBack[entry.key] = "lost"
+            note(entry.key .. " still runs " .. (current or "nothing") .. " after binding it once more")
+        end
+    end
+end
+
 local function onUpdate()
+    local focus = uiFocusOn()
+    if focus ~= lastUiFocus then
+        lastUiFocus = focus
+        takeBack = {}
+        note(focus and "UI focus on" or "UI focus off")
+        WowVision:speak(focus and "UI focus on" or "UI focus off")
+    end
     if watching then
         pollKeys()
     end
     if claiming or dpadClaimed then
         updateDpadClaim()
+    end
+    if claiming then
+        checkTakeBack(r3Owner, R3_CLAIMS)
+        if dpadClaimed then
+            checkTakeBack(dpadOwner, DPAD_CLAIMS)
+        end
     end
 end
 
@@ -659,6 +721,9 @@ local function startWatch()
     watchRun = newRun("watch")
     downAt = {}
     lastStyle = styleName()
+    if not claiming then
+        lastUiFocus = uiFocusOn()
+    end
     watching = true
     updatePolling()
     addLine(watchRun, "watch started, interface style " .. lastStyle .. "; " .. padStateText())
@@ -683,9 +748,16 @@ local function startClaim()
     for _, entry in ipairs(R3_CLAIMS) do
         SetOverrideBindingClick(r3Owner, true, entry.key, CLAIM_BUTTON, entry.name)
     end
+    if not watching then
+        lastUiFocus = uiFocusOn()
+    end
+    takeBack = {}
     claiming = true
     updatePolling()
-    addLine(claimRun, "claim started: right stick press bound to the probe; D-pad follows the hostile shoulder")
+    addLine(
+        claimRun,
+        "claim started: right stick press bound to the probe; D-pad follows the hostile shoulder, the shortcut layer and UI focus"
+    )
     WowVision:speak("Pad claim started")
 end
 
