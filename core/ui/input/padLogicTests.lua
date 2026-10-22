@@ -93,6 +93,17 @@ testRunner:addSuite("PadLogic", {
         t:assertNil(padLogic.holdBases(routes).PADDUP)
     end,
 
+    ["owned keys: a window's own pick leaves the rest to the game"] = function(t)
+        local routes = padLogic.newRoutes()
+        padLogic.add(routes, "PADRSTICK", {})
+        padLogic.add(routes, "PADDUP", {})
+        padLogic.add(routes, "PAD1", {})
+        local owned = padLogic.ownedBases(routes, { windowOpen = true, layerOn = false, onlyKeys = { PAD1 = true } })
+        t:assertTrue(owned.PAD1)
+        t:assertNil(owned.PADDUP)
+        t:assertNil(owned.PADRSTICK)
+    end,
+
     ["spoken text: modifiers first, then the button"] = function(t)
         local names = {
             buttons = { PADRSTICK = "right stick press", PADDUP = "D-pad up" },

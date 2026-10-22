@@ -148,6 +148,8 @@ local function hookLog()
     end
 end
 
+pad.log = log
+
 function pad.toggleLog()
     hookLog()
     logOn = not logOn
@@ -180,6 +182,14 @@ end
 local function windowOpen()
     local host = WowVision.graphHost
     return host ~= nil and host:isOpen()
+end
+
+-- The pad keys the focused window keeps for itself (its graphScreen
+-- padKeys), or nil for all of them.
+local function windowOnlyKeys()
+    local host = WowVision.graphHost
+    local stack = host ~= nil and host:focusedStack() or nil
+    return stack ~= nil and stack.config ~= nil and stack.config.padKeys or nil
 end
 
 -- The Lua of a Script action's one-line "/run" macro, or nil. Running it
@@ -354,6 +364,9 @@ function pad.sync()
     end
     dirty = false
     local state = { windowOpen = windowOpen(), layerOn = pad.layerOn() }
+    if state.windowOpen then
+        state.onlyKeys = windowOnlyKeys()
+    end
     if combatStarting then
         state = { windowOpen = false, layerOn = false }
     end

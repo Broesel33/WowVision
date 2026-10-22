@@ -194,13 +194,16 @@ end
 padLogic.hasModifier = hasModifier
 
 -- The pad keys WowVision binds now. state: { windowOpen = bool, layerOn =
--- bool }. HOLD entries never own their key here: the hold key's secure
--- handler binds the D-pad while it is held.
+-- bool, onlyKeys = set? }. HOLD entries never own their key here: the hold
+-- key's secure handler binds the D-pad while it is held. onlyKeys is the
+-- focused window's own pick (a window over a Blizzard gamepad screen keeps
+-- just these and leaves every other pad key to the game, world keys too).
 function padLogic.ownedBases(routes, state)
     local owned = {}
+    local only = state.onlyKeys
     for base, byMod in pairs(routes) do
         for modKey in pairs(byMod) do
-            if not hasModifier(modKey, "HOLD") then
+            if not hasModifier(modKey, "HOLD") and (only == nil or only[base]) then
                 if padLogic.WORLD_KEYS[base] then
                     owned[base] = true
                 elseif hasModifier(modKey, "LAYER") then
