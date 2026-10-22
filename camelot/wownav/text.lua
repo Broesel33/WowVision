@@ -57,6 +57,8 @@ local REASONS = {
     activation_proof_invalid = L["The entrance has no valid proof."],
     action_boarding = L["Board only when the vehicle is safely there."],
     stop_outside_zones = L["Route ended outside the network's zones."],
+    no_live_coordinates = L["No position of the group member available"],
+    target_source_gone = L["The target is no longer available; no new route"],
 }
 
 function WowVisionNavigationText(key, ...)

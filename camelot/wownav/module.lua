@@ -43,6 +43,12 @@ settings:add({ key = "targetTolerance", type = "Number", label = L["Height Toler
 settings:add({ key = "chokeFallback", type = "Bool", label = L["Step Back at Gates"], default = true })
 -- his preload: the player's zone and its neighbours are decoded ahead
 settings:add({ key = "preload", type = "Bool", label = L["Prepare Neighbouring Zones"], default = true })
+-- his /vn ankunft: a waypoint counts as reached within at least this many yards; 0 = the data's own radius of each
+-- waypoint (his default). WowVision's arrival distance (Alt-P) is not used by WowNav routes.
+settings:add({
+    key = "arrivalMin", type = "Number", label = L["Minimum Arrival Distance for WowNav Waypoints (0 = Their Own)"],
+    default = 0, min = 0, max = 10,
+})
 
 local BUDGET_MS = 8          -- search time per frame (his chapter 7 point 4 allows 30)
 local SLOW_NOTICE = 1.0      -- seconds before "calculating route" is said
@@ -126,8 +132,8 @@ local function ready(self)
     WowVisionNavigationDB.targetRadius = self.settings.targetRadius
     WowVisionNavigationDB.targetTolerance = self.settings.targetTolerance
     WowVisionNavigationDB.chokeFallback = self.settings.chokeFallback ~= false
-    -- his /vn ankunft: a waypoint's radius is at least WowVision's arrival distance (Alt-P)
-    G.arrivalMin = maps:arrivalDistance()
+    -- his /vn ankunft: the module's own setting (default 0: the data's radius of each waypoint)
+    G.arrivalMin = self.settings.arrivalMin or 0
     return N
 end
 
@@ -528,7 +534,14 @@ function module:routeTo(target)
         activationTarget = value
     end
     local contract
-    if type(target.data) == "table" and target.data.tid ~= nil then
+    if type(target.data) == "table" and target.data.unit ~= nil then
+        -- a group member (his GroupMember): a live target that expires after 30 s, read again on a new route
+        contract = module.unitContract(target.data.unit, map)
+        if contract == nil then
+            say(WowVisionNavigationText("no_live_coordinates"))
+            return true
+        end
+    elseif type(target.data) == "table" and target.data.tid ~= nil then
         contract = catalog.contract(target.data, map)
     else
         contract = {
@@ -541,6 +554,34 @@ function module:routeTo(target)
     search(self, { contract = contract, label = target.label, onArrive = target.onArrive, dockTarget = dockTarget,
         activationTarget = activationTarget, approx = type(target.data) == "table" and target.data.approx == true })
     return true
+end
+
+-- His TargetProviders:GroupMember: the unit's position now as a live target, valid for 30 s; nil without one.
+function module.unitContract(unit, map)
+    if UnitExists ~= nil and not UnitExists(unit) then
+        return nil
+    end
+    local ok, x, y, _, unitMap = pcall(UnitPosition, unit)
+    local finite = _G.WowVisionNavigationTargetCatalog.Finite
+    if not ok or not finite(x) or not finite(y) or (unitMap ~= nil and unitMap ~= map) then
+        return nil
+    end
+    local name = UnitName ~= nil and UnitName(unit) or unit
+    local now = GetTime()
+    return {
+        id = "group:" .. unit, kind = "live", nameEn = name or unit, nativeMapId = map, coordinateSpace = "world",
+        x = x, y = y, zStatus = "unknown", category = { "live" }, source = { provider = "wow_api", record = unit },
+        updatedAt = now, expiresAt = now + 30, unit = unit,
+    }
+end
+
+-- A request's target again: a group member's position is read anew (his WowVisionNavigationLayerTargetNew); nil
+-- when the member is gone.
+local function freshContract(request, map)
+    if request.contract ~= nil and request.contract.unit ~= nil then
+        return module.unitContract(request.contract.unit, map)
+    end
+    return request.contract
 end
 
 -- Ends the running route, the search and a waiting transit; with them the dock guidance (his StopNavigation resets
@@ -782,9 +823,16 @@ local function checkRecalculation(self)
     recalcAt = nil
     local request = self:runningRequest()
     if request ~= nil then
+        local _, _, map = route.env.position()
+        local contract = freshContract(request, map)
+        if contract == nil and request.nodeId == nil then
+            self:stopRoute()
+            say(WowVisionNavigationText("target_source_gone"))
+            return
+        end
         say(L["Searching the route again with the new road preference"])
         self:stopRoute()
-        search(self, { contract = request.contract, nodeId = request.nodeId, label = request.label,
+        search(self, { contract = contract, nodeId = request.nodeId, label = request.label,
             onArrive = request.onArrive })
     end
 end
@@ -798,8 +846,14 @@ function module:newRoute()
     local request = self.request
     route:penalizeCurrentLink()
     self:stopRoute(true)
+    local _, _, map = route.env.position()
+    local contract = freshContract(request, map)
+    if contract == nil and request.nodeId == nil then
+        say(WowVisionNavigationText("target_source_gone"))
+        return false
+    end
     say(L["Searching a new route"])
-    search(self, { contract = request.contract, nodeId = request.nodeId, label = request.label,
+    search(self, { contract = contract, nodeId = request.nodeId, label = request.label,
         onArrive = request.onArrive })
     return true
 end

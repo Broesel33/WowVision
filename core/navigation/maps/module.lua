@@ -292,8 +292,9 @@ end
 -- that destination; Enter there routes. Without map data on this continent
 -- there is nothing to route through, so a straight beacon is set instead.
 -- An active route engine routes at once: it finds the entry point itself.
-function module:openNavigationTo(wx, wy, label, onArrive)
-    if self:routeTo(wx, wy, label, onArrive) then
+-- data: what the target's source knows for a route engine (the scanner's group members: { unit }).
+function module:openNavigationTo(wx, wy, label, onArrive, data)
+    if self:routeTo(wx, wy, label, onArrive, nil, data) then
         return true
     end
     if next(self:currentWaypoints()) == nil then

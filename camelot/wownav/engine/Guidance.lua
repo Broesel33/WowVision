@@ -19,7 +19,7 @@ end
 
 -- Player setting /vn arrival (SavedVariables arrivalMin): minimum arrival radius in yd. Fine points of the data (about
 -- 0.3 yd) can be too small to hit; the effective radius is max(radius of the data, setting). 0 = off, the data decide.
--- WowVision: the setting is WowVision's arrival distance (Alt-P), which the wownav module writes to G.arrivalMin.
+-- WowVision: the setting is the wownav module's own (same range and default), written to G.arrivalMin.
 function G.MinArrivalRadius()
     local value = G.arrivalMin
     if type(value) == "number" and value > 0 then return value end
