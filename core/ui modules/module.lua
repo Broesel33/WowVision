@@ -24,6 +24,21 @@ module:registerCommand({
     end,
 })
 
+-- Chasing controller problems with testers: pad presses, keys taken back
+-- and the speech around them, saved to WowVisionDump.padLog.
+module:registerCommand({
+    name = "padlog",
+    description = "Toggle logging of controller presses and the speech around them",
+    func = function()
+        local on, count = WowVision.pad.toggleLog()
+        if on then
+            print("WowVision pad log on")
+        else
+            print("WowVision pad log off, " .. count .. " lines, saved at the next reload")
+        end
+    end,
+})
+
 module:registerBindings({
     {
         type = "Virtual",

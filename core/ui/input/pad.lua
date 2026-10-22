@@ -58,6 +58,108 @@ local function isDown(key)
     return call(IsKeyDown, key) == true
 end
 
+-- /wv padlog (developer): every pad press, every key taken back from the
+-- game, the window keys and the speech around them, with the time, into
+-- WowVisionDump.padLog (saved at the next /reload). Keyboard presses show
+-- up as window keys and speech without a pad line, for comparison. Nothing
+-- is printed per line: chat output must not mix into the speech it logs.
+local LOG_MAX = 500
+local logOn = false
+local logHooked = false
+
+local function log(fmt, ...)
+    if not logOn then
+        return
+    end
+    local ok, text = pcall(string.format, fmt, ...)
+    if not ok then
+        text = fmt
+    end
+    WowVisionDump = WowVisionDump or {}
+    local lines = WowVisionDump.padLog
+    if lines == nil then
+        lines = {}
+        WowVisionDump.padLog = lines
+    end
+    tinsert(lines, string.format("%.3f %s", GetTime(), text))
+    if #lines > LOG_MAX then
+        tremove(lines, 1)
+    end
+end
+
+-- Spoken text for the log; secret text (Retail-style unit values) is not
+-- touched.
+local function shortText(text)
+    if WowVision.isSecret(text) then
+        return "(secret)"
+    end
+    if type(text) ~= "string" then
+        return tostring(text)
+    end
+    return text:sub(1, 50)
+end
+
+local function facingText()
+    local facing = call(GetPlayerFacing)
+    if type(facing) ~= "number" or WowVision.isSecret(facing) then
+        return "?"
+    end
+    return string.format("%.1f", math.deg(facing))
+end
+
+-- The hooks go in on the first toggle: the speech and maps modules load
+-- after this file.
+local function hookLog()
+    if logHooked then
+        return
+    end
+    logHooked = true
+    local speech = WowVision.base.speech
+    hooksecurefunc(speech, "speak", function(self, text)
+        log("speak [queue %d, speaking %s] %s", #(self.queue or {}), tostring(self.speaking), shortText(text))
+    end)
+    hooksecurefunc(speech, "stop", function()
+        log("speech stop")
+    end)
+    local events = CreateFrame("Frame")
+    events:RegisterEvent("VOICE_CHAT_TTS_PLAYBACK_STARTED")
+    events:RegisterEvent("VOICE_CHAT_TTS_PLAYBACK_FINISHED")
+    events:RegisterEvent("VOICE_CHAT_TTS_PLAYBACK_FAILED")
+    events:SetScript("OnEvent", function(_, event, ...)
+        log("%s %s", event:gsub("VOICE_CHAT_TTS_", ""), table.concat({ tostringall(...) }, " "))
+    end)
+    hooksecurefunc(WowVision.graphHost, "onKey", function(_, key)
+        log("window key %s", tostring(key))
+    end)
+    local maps = WowVision.base.navigation ~= nil and WowVision.base.navigation.maps or nil
+    if maps ~= nil and maps.turnToWaypoint ~= nil then
+        hooksecurefunc(maps, "turnToWaypoint", function(self)
+            local waypoint = self.path ~= nil and self.path.currentWaypoint or nil
+            log(
+                "turn to waypoint: waypoint %s, facing %s, mouselook %s",
+                waypoint ~= nil and "yes" or "no",
+                facingText(),
+                tostring(call(IsMouselooking))
+            )
+            C_Timer.After(0.5, function()
+                log("turn half a second later: facing %s, mouselook %s", facingText(), tostring(call(IsMouselooking)))
+            end)
+        end)
+    end
+end
+
+function pad.toggleLog()
+    hookLog()
+    logOn = not logOn
+    if logOn then
+        WowVisionDump = WowVisionDump or {}
+        WowVisionDump.padLog = {}
+        log("log on, gamepad interface %s", tostring(pad.controllerUIEnabled()))
+    end
+    local count = WowVisionDump ~= nil and WowVisionDump.padLog ~= nil and #WowVisionDump.padLog or 0
+    return logOn, count
+end
+
 -- The game's shortcut layer (both shoulders), Forever's gamepad interface.
 function pad.layerOn()
     local gm = GamepadMode
@@ -98,6 +200,14 @@ end
 function pad.dispatch(button, base, hold)
     local modKey = padLogic.heldModKey(isDown, base, pad.layerOn(), hold)
     local entry = padLogic.pick(routes, base, modKey)
+    log(
+        "pad %s [%s]%s -> %s",
+        base,
+        modKey,
+        hold and " hold" or "",
+        entry == nil and "nothing" or entry.kind == "command" and ("command " .. tostring(entry.command))
+            or (entry.frame.func ~= nil and "function" or tostring(entry.frame:GetAttribute("type")))
+    )
     if entry == nil then
         return
     end
@@ -183,6 +293,7 @@ local function buildHold()
     ]]
     holdHeader:WrapScript(button, "OnClick", snippet)
     button:SetScript("PreClick", function(self, _, down)
+        log("%s %s, D-pad used %s", key, down and "down" or "up", tostring(holdHeader:GetAttribute("used")))
         if down == true then
             return
         end
@@ -259,6 +370,7 @@ function pad.sync()
         -- While the hold key is down the hold handler owns the D-pad.
         local heldAway = holding and holdHeader:GetAttribute("bind" .. base)
         if current ~= action and not heldAway and not isDown(base) then
+            log("bind %s (it ran %s)", base, tostring(current))
             local button = routerButton(base)
             ClearOverrideBindings(button)
             if kind == "command" then
