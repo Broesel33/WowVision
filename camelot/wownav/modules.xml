@@ -11,6 +11,7 @@
   <Script file="engine\TargetCatalog.lua" />
   <Script file="engine\TargetResolver.lua" />
   <Script file="engine\DockNavigation.lua" />
+  <Script file="engine\TransitActivation.lua" />
   <Script file="text.lua" />
   <Script file="catalog.lua" />
   <Script file="route.lua" />

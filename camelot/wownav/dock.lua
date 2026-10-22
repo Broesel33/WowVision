@@ -175,6 +175,21 @@ function dock.rowAt(N, x, y)
     return nil
 end
 
+-- A walk-in target (portal, tram entrance) chosen from the list (his IsActivationTarget in StartNavigationToNode):
+-- "fail", text when an entrance lacks its proof; nil for a target that is no entrance (a normal route); otherwise
+-- the full target.
+function dock.activation(N, row)
+    local target = dock.target(N, row)
+    if target == nil or target.facilityRole ~= "entrance" then
+        return nil
+    end
+    local nav = dock.nav(N, target.zoneId)
+    if not _G.WowVisionNavigationTransitActivation:IsActivationTarget(target, nav) then
+        return "fail", WowVisionNavigationText("activation_proof_invalid")
+    end
+    return "route", target
+end
+
 -- A dock target as a list row.
 function dock.rowOf(target)
     return {

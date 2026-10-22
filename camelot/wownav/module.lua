@@ -32,6 +32,17 @@ settings:add({ key = "enabled", type = "Bool", label = L["Routes from WowNav"], 
 settings:add({ key = "comfort", type = "Number", label = L["Road Preference (Percent Longer)"], default = 50, min = 0, max = 300 })
 -- his /vn showauto (default off): the network's own waypoints near the player join the F10 list, by type and height
 settings:add({ key = "showAuto", type = "Bool", label = L["Show Automatic Waypoints"], default = false })
+-- his /vn radius and /vn toleranz: how far from the network a target may lie, and the height band of a floor
+settings:add({
+    key = "targetRadius", type = "Number", label = L["Target Radius Around the Network (Yards)"],
+    default = 30, min = 1, max = 100,
+})
+settings:add({ key = "targetTolerance", type = "Number", label = L["Height Tolerance of a Floor (Yards)"], default = 3,
+    min = 0, max = 20 })
+-- his /vn rueckfall: one step back at a gate when the player drifted sideways
+settings:add({ key = "chokeFallback", type = "Bool", label = L["Step Back at Gates"], default = true })
+-- his preload: the player's zone and its neighbours are decoded ahead
+settings:add({ key = "preload", type = "Bool", label = L["Prepare Neighbouring Zones"], default = true })
 
 local BUDGET_MS = 8          -- search time per frame (his chapter 7 point 4 allows 30)
 local SLOW_NOTICE = 1.0      -- seconds before "calculating route" is said
@@ -109,6 +120,12 @@ local function ready(self)
         })
     end
     N.SetComfort(self.settings.comfort or 50)
+    -- his settings live in WowVisionNavigationDB, where his resolver and route rules read them (R:Settings,
+    -- Route.chokeFallback); while the standalone addon is loaded this module is off and the table is his
+    WowVisionNavigationDB = type(WowVisionNavigationDB) == "table" and WowVisionNavigationDB or {}
+    WowVisionNavigationDB.targetRadius = self.settings.targetRadius
+    WowVisionNavigationDB.targetTolerance = self.settings.targetTolerance
+    WowVisionNavigationDB.chokeFallback = self.settings.chokeFallback ~= false
     -- his /vn ankunft: a waypoint's radius is at least WowVision's arrival distance (Alt-P)
     G.arrivalMin = maps:arrivalDistance()
     return N
@@ -128,6 +145,35 @@ end
 
 function engine:routeTo(target)
     return module:routeTo(target)
+end
+
+-- F10 opened (his WowVisionNavigationCheckStartAtOpen): says at once when the start is unclear or off the network.
+function engine:listOpened()
+    local N = ready(module)
+    local x, y, map = route.env.position()
+    if N == nil or x == nil or not catalog.covers(N, map) then
+        return
+    end
+    N.activeMapId = map
+    if #N.ZonesForPoint(x, y) == 0 then
+        return
+    end
+    local _, why = route:startBinding(x, y)
+    if why ~= nil then
+        WowVision:speak(why == "ambiguous" and L["Your floor is not clear here"] or L["No WowNav network here"])
+    end
+end
+
+-- Shift-F12 (his /vn stop): ends the search, the route, a transit waiting for its far end and the dock guidance.
+-- True when any of them was running.
+function engine:cancel()
+    local Dock = _G.WowVisionNavigationDockNavigation
+    local running = module:runningRequest() ~= nil or module.path ~= nil or module.dockPath ~= nil
+        or (route ~= nil and route.action ~= nil) or (Dock ~= nil and (Dock.reached ~= nil or Dock.passive ~= nil))
+    if running then
+        module:stopRoute()
+    end
+    return running
 end
 
 function engine:search(text, px, py, map)
@@ -360,6 +406,7 @@ local function startRoute(self, request, outcome)
     if request.dockTarget ~= nil and not trimmed then
         route.waitCheck = dock.waitAreaCheck(N, request.dockTarget)
     end
+    route.activation = request.activationTarget
     do
         local lastX, lastY, lastZ = N.Position(route.path[#route.path])
         logLine(string.format("route %s: %d waypoints, ends %.1f %.1f %.1f%s%s", tostring(request.label), #route.path,
@@ -384,6 +431,10 @@ local function startRoute(self, request, outcome)
     end
     if route.pendingAction ~= nil then
         text = text .. ", " .. string.format(L["then %s"], TRANSIT_WORDS[route.pendingAction.kind] or L["the transit"])
+    end
+    -- his approx_target: a catalogue position that is itself only approximate
+    if request.approx then
+        text = text .. ". " .. WowVisionNavigationText("approx_target")
     end
     say(text)
 end
@@ -466,6 +517,16 @@ function module:routeTo(target)
         end
         dockTarget = value
     end
+    -- a portal or tram entrance as the target (his walk-in activation): checked against its proof, then walked into
+    local activationTarget
+    if dockTarget == nil and type(target.data) == "table" and target.data.activationMode == "walk_into_trigger" then
+        local outcome, value = dock.activation(N, target.data)
+        if outcome == "fail" then
+            say(value)
+            return true
+        end
+        activationTarget = value
+    end
     local contract
     if type(target.data) == "table" and target.data.tid ~= nil then
         contract = catalog.contract(target.data, map)
@@ -477,7 +538,8 @@ function module:routeTo(target)
         }
     end
     self:stopRoute()
-    search(self, { contract = contract, label = target.label, onArrive = target.onArrive, dockTarget = dockTarget })
+    search(self, { contract = contract, label = target.label, onArrive = target.onArrive, dockTarget = dockTarget,
+        activationTarget = activationTarget, approx = type(target.data) == "table" and target.data.approx == true })
     return true
 end
 
@@ -599,23 +661,44 @@ function module:onRouteEvent(path, event)
         maps:stopPath()
         self.path = nil
         local label = request and request.label
-        local exact = event.result == nil or event.result.quality == "exact"
-        if exact then
+        local result = event.result
+        if result == nil or result.quality == "exact" then
             say(L["Arrived"] .. (label ~= nil and (" " .. label) or ""))
+        elseif result.normalizedWater then
+            -- his stop_water_net_ends / stop_net_ends: how far the network ends from the target
+            say(WowVisionNavigationText("stop_water_net_ends", result.delta3D or result.deltaXY or 0,
+                result.divingDepth or 0))
         else
-            say(L["Target position reached"] .. (label ~= nil and (", " .. label) or ""))
+            say(WowVisionNavigationText("stop_net_ends", result.delta3D or result.deltaXY or 0,
+                result.zUnknown and WowVisionNavigationText("suffix_horizontal") or ""))
         end
         if request ~= nil and request.onArrive ~= nil then
             request.onArrive()
         end
         route:reset()
+    elseif kind == "prepoint" then
+        local key = event.unresolved and "prepoint_reached_unresolved" or "prepoint_reached_go_through"
+        say(WowVisionNavigationText(key))
+    elseif kind == "activation" then
+        if event.unresolved then
+            say(WowVisionNavigationText("activation_position_reached",
+                event.heightUnconfirmed and WowVisionNavigationText("height_not_confirmed") or ""))
+        else
+            say(WowVisionNavigationText("activation_area_entered"))
+        end
     elseif kind == "transit" then
         local request = self.request
         path:finish()
         maps:stopPath()
         self.path = nil
         local word = TRANSIT_WORDS[event.action.kind] or L["the transit"]
-        say(string.format(L["Use %s; the route goes on after it"], word))
+        local text = string.format(L["Use %s; the route goes on after it"], word)
+        -- his action_boarding: a vehicle (the elevator) is boarded only when it is safely there
+        local mode = type(event.action.activation) == "table" and event.action.activation.mode or nil
+        if mode == "board" then
+            text = text .. ". " .. WowVisionNavigationText("action_boarding")
+        end
+        say(text)
         local targetNodeId, result = route.targetBindingId, route.result
         route:reset()
         route:startAction(event.action, request, targetNodeId, result)
@@ -658,10 +741,24 @@ local function checkRunning(self)
         self:stopRoute()
         return
     end
-    local x, _, map = route.env.position()
+    local x, y, map = route.env.position()
     if x ~= nil and routeMap ~= nil and map ~= routeMap then
+        -- after a walk-in target's capture circle the map change ends the route (his B5)
+        local activation, inside = route.activation, route.activationInside
         self:stopRoute()
-        say(L["Route ended"])
+        if activation ~= nil then
+            local key = inside and "reason_activation_map_changed" or "reason_map_changed_guidance_done"
+            say(WowVisionNavigationText(key))
+        else
+            say(L["Route ended"])
+        end
+        return
+    end
+    -- his stop_outside_zones: a route that leaves every zone of the network ends
+    local N = self:network()
+    if x ~= nil and N ~= nil and #N.ZonesForPoint(x, y) == 0 then
+        self:stopRoute()
+        say(WowVisionNavigationText("stop_outside_zones"))
     end
 end
 
@@ -766,7 +863,7 @@ local function stepCatalog(self)
     if catalog.step(N, _G.WowVisionNavigationTargetCatalog) then
         return
     end
-    if px ~= nil then
+    if px ~= nil and module.settings.preload ~= false then
         stepPreload(N, px, py, map)
     end
 end
@@ -843,6 +940,34 @@ function module:onEvent(event)
         self:stopRoute()
     end
 end
+
+-- His /vn status: what WowNav guides to now.
+function module:status()
+    local Dock = _G.WowVisionNavigationDockNavigation
+    if job ~= nil then
+        say(string.format(L["Searching the route to %s"], tostring(job.request.label or "")))
+    elseif self.path ~= nil and route ~= nil and route.active then
+        say(string.format(L["En route to %s, waypoint %d of %d"], tostring(self.request and self.request.label or ""),
+            route.pathIndex or 0, #(route.path or {})))
+    elseif route ~= nil and route.action ~= nil then
+        say(string.format(L["Waiting for the far end of %s"],
+            TRANSIT_WORDS[route.action.action.kind] or L["the transit"]))
+    elseif passive ~= nil then
+        say(string.format(L["Riding to the noted dock %s"], tostring(passive.name or "")))
+    elseif Dock ~= nil and Dock.reached ~= nil then
+        say(L["At a dock, waiting"])
+    else
+        say(L["No active route"])
+    end
+end
+
+module:registerBinding({
+    type = "Script",
+    key = "wownav/status",
+    label = L["WowNav Route Status"],
+    inputs = {},
+    script = "/run WowVision.base.navigation.wownav:status()",
+})
 
 module:registerBinding({
     type = "Script",

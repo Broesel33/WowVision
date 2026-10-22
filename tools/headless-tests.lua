@@ -62,6 +62,7 @@ loadAddonFile("camelot/wownav/engine/Guidance.lua")
 loadAddonFile("camelot/wownav/engine/TargetCatalog.lua")
 loadAddonFile("camelot/wownav/engine/TargetResolver.lua")
 loadAddonFile("camelot/wownav/engine/DockNavigation.lua")
+loadAddonFile("camelot/wownav/engine/TransitActivation.lua")
 do
     local base = "mapdata/WowNavPacked/"
     local xml = io.open(base .. "data.xml", "r")

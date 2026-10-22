@@ -51,6 +51,10 @@ local function ensureData(screen)
     screen._px, screen._py, screen._map = px, py, map
     -- With a route engine on (WowNav), its targets join the list and it finds the entry point itself: no entry choice.
     screen._waypoints, screen._engine = module:destinationWaypoints()
+    -- an engine may say at once that no route can start here (WowNav: floor not clear, no network)
+    if screen._engine ~= nil and screen._engine.listOpened ~= nil then
+        screen._engine:listOpened()
+    end
     if screen._engine ~= nil then
         screen._entries = {}
     else

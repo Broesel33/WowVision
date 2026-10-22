@@ -10,6 +10,8 @@
 -- (floorsUi.lua instead of /vn ebene). Left out with the user's decision: the Sku beacon, click/clack and final
 -- approach tones, the blockage beep and its telemetry. The dock guidance (waiting, boarding, the noted counterpart
 -- dock) is in dock.lua; a route to a dock ends at its waiting point (waitCheck), vehicles are never part of a route.
+-- A walk-in target (portal, tram entrance; his TransitActivation) has no arrival: the prepoint and the capture
+-- circle are said and the route stays until the map changes. Routes to docks and walk-in targets are on foot.
 -- Changed because the game gives no height (UnitPosition z is 0 on Forever): the arrival after a transit is proven in
 -- the plane (see ActionObserve).
 --
@@ -39,6 +41,11 @@ Route.ZUNKNOWN_SKIP_RADIUS = 1.5      -- yd: the first node under the player is 
 -- action; WowVision has no confirmation commands, so the three run as one span.
 Route.ACTION_PHASES = 3
 
+-- His chokeFallback setting (WowVisionNavigationDB, written from WowVision's settings by the module): on unless false.
+function Route.chokeFallback()
+    return not (type(WowVisionNavigationDB) == "table" and WowVisionNavigationDB.chokeFallback == false)
+end
+
 local function distance(ax, ay, bx, by)
     local dx, dy = bx - ax, by - ay
     return sqrt(dx * dx + dy * dy)
@@ -52,6 +59,7 @@ function Route.new(env)
     local self = setmetatable({}, Route)
     self.env = env
     self.N, self.G, self.R, self.C = env.N, env.G, env.R, env.C
+    self.A = env.A or _G.WowVisionNavigationTransitActivation
     self.penalties = {}       -- EdgePenalties[a][b] in yd, dropped at the end of the route
     self.anchor = { height = nil, preferred = nil, last = nil }   -- his HeightAnchor
     self:reset()
@@ -208,8 +216,9 @@ function Route:handleBlockage(x, y)
         end
         return "reentry"
     end
-    -- choke fallback (his 10.6bq): one step back at a gate when the player drifted off the run-up segment
-    if self.pathIndex > 1 and fromId and toId and self.G.Choke(toId) then
+    -- choke fallback (his 10.6bq): one step back at a gate when the player drifted off the run-up segment; his
+    -- setting chokeFallback (default on) switches it off
+    if Route.chokeFallback() and self.pathIndex > 1 and fromId and toId and self.G.Choke(toId) then
         local _, lateral = self.G.SegmentProgress(x, y, fromId, toId)
         local limit = self.G.ArrivalRadius(fromId) or Route.ARRIVAL_TARGET_RADIUS
         local now = self.env.now()
@@ -331,6 +340,9 @@ function Route:reset(keepPenalties)
     self.targetName = nil
     self.result = nil         -- the target's resolution (his layerTargetResult)
     self.waitCheck = nil      -- function(x, y) for a route to a dock (his waitTargetId), set after begin
+    self.activation = nil     -- the walk-in target of the route (his activationTarget), set after begin
+    self.activationPrepointSaid = nil
+    self.activationInside = nil
     self.source = nil         -- the target (his layerTargetSource)
     self.anchor.height = nil
     if not keepPenalties then
@@ -350,7 +362,8 @@ end
 -- His StartNavigationToNode, up to the route itself (runs inside a job). start: { id = node } for a fixed start (the
 -- far end of a transit, a start chosen by the resolver), else the player's position is bound. Returns a plan for
 -- Route:begin, or nil, reason key.
-function Route:planToNode(targetNodeId, start)
+-- footOnly: no transit links (his routes to docks and walk-in targets, StartNavigationToNode).
+function Route:planToNode(targetNodeId, start, footOnly)
     local N = self.N
     local startId, startX, startY
     if start and start.id then
@@ -366,7 +379,7 @@ function Route:planToNode(targetNodeId, start)
         end
         startId, startX, startY = id, x, y
     end
-    local path, edges, result = self:routeFromStart(startId, targetNodeId, nil, startX, startY)
+    local path, edges, result = self:routeFromStart(startId, targetNodeId, footOnly, startX, startY)
     if not path then
         return nil, "no_route_found"
     end
@@ -450,7 +463,7 @@ end
 
 -- The routing context of the resolver: every candidate attachment of the target is checked for a route from the
 -- start (and the start attachment that found it stays the start of this selection).
-function Route:targetContext(startOverride)
+function Route:targetContext(startOverride, footOnly)
     local startId = startOverride
     local px, py
     if not startId then
@@ -464,9 +477,9 @@ function Route:targetContext(startOverride)
     if not startId then
         return nil
     end
-    local context = { startNodeId = startId }
+    local context = { startNodeId = startId, footOnly = footOnly }
     context.route = function(endId)
-        local path, _, result, used = self:routeFromStart(context.startNodeId, endId, nil, px, py)
+        local path, _, result, used = self:routeFromStart(context.startNodeId, endId, footOnly, px, py)
         if not path then
             return nil
         end
@@ -482,7 +495,9 @@ end
 --   { kind = "choose", result, reachable = { [band] = bool } }  (floors to choose from; his /vn ebene)
 --   { kind = "fail", reason = key or text }
 function Route:prepare(target, nav, startOverride)
-    local context = self:targetContext(startOverride)
+    -- a dock or a walk-in target is reached on foot (his LayerTargetContext)
+    local footOnly = target.interactionMode == "manual_wait" or target.activationMode == "walk_into_trigger"
+    local context = self:targetContext(startOverride, footOnly)
     if not context then
         local x, y = self.env.position()
         if not x then
@@ -517,7 +532,7 @@ function Route:prepare(target, nav, startOverride)
     if result.endNodeId == nil then
         return { kind = "fail", reason = result.reason, result = result }
     end
-    local plan, why = self:planToNode(result.endNodeId, { id = context.startNodeId })
+    local plan, why = self:planToNode(result.endNodeId, { id = context.startNodeId }, footOnly)
     if not plan then
         return { kind = "fail", reason = why, result = result }
     end
@@ -632,10 +647,34 @@ function Route:update(x, y)
         self.anchor.height = estimated
         self.anchor.last = estimated
     end
+    -- a walk-in target (his TransitActivation): the prepoint is said once; at the last waypoint there is no arrival,
+    -- the capture circle is said once and the route stays until the map changes
+    local activation = self.activation
+    local lastActivation = activation ~= nil and self.pathIndex >= #self.path
+    if activation ~= nil and not self.activationPrepointSaid and self.A:PrepointReached(activation, x, y) then
+        self.activationPrepointSaid = true
+        return { kind = "prepoint", unresolved = activation.actionSemanticStatus == "unresolved" }
+    end
+    if lastActivation then
+        local observation
+        if activation.actionSemanticStatus == "unresolved" then
+            local _, _, map = self.env.position()
+            observation = type(map) == "number" and { nativeMapId = map } or nil
+        end
+        local inside, mode = self.A:CaptureReached(activation, x, y, observation)
+        if inside then
+            if not self.activationInside then
+                self.activationInside = true
+                return { kind = "activation", unresolved = activation.actionSemanticStatus == "unresolved",
+                    heightUnconfirmed = mode == "xy_only" }
+            end
+            return nil
+        end
+    end
     local afterId = self.path[self.pathIndex + 1]
     local beforeLogical = self.logicalTarget ~= nil and afterId == self.logicalTarget
     -- before an unchecked last stretch the last network point counts only within the target radius
-    if (not beforeLogical or dist <= G.EffectiveRadius(Route.ARRIVAL_TARGET_RADIUS))
+    if not lastActivation and (not beforeLogical or dist <= G.EffectiveRadius(Route.ARRIVAL_TARGET_RADIUS))
         and self:waypointIsReached(x, y, waypointId, previousId, not beforeLogical and afterId or nil) then
         local careful = beforeLogical and not self.logicalWarned and self.result and self.result.quality ~= "exact"
         if careful then

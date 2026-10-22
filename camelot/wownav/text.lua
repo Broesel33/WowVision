@@ -35,6 +35,28 @@ local REASONS = {
     boarding_no_direction_proof = L["The boarding point has no valid direction proof on this map"],
     wait_proof_invalid = L["The waiting point proof is invalid; no boarding instruction"],
     stop_boarding_proof_changed = L["The boarding point proof or the map changed; guidance ended"],
+    -- target descriptions (his TargetSelection:Describe), walk-in targets (TransitActivation), route ends
+    desc_inexact = L[" (inexact +%.1f yards%s)"],
+    desc_horizontal_unknown = L[" horizontal, height unknown"],
+    desc_vertical = L[" vertical"],
+    desc_pick_height = L[" (choose the floor)"],
+    desc_level_unknown = L[" (floor unknown)"],
+    desc_no_point = L[" (no network point within the radius)"],
+    desc_water = L[" (water surface, diving depth %.1f yards)"],
+    approx_target = L["Approximate target position."],
+    stop_net_ends = L["The network ends %.1f yards%s from the target; search the surroundings yourself. The last stretch is unchecked."],
+    stop_water_net_ends = L["The network ends %.1f yards from the water surface position; diving depth %.1f yards. The rest of the way and the diving are yours, the last stretch is unchecked."],
+    suffix_horizontal = L[" horizontally"],
+    prepoint_reached_go_through = L["Prepoint reached. Walk straight ahead through the entrance or portal; the beacon stays on until the activation area."],
+    prepoint_reached_unresolved = L["Prepoint reached. The beacon keeps following the checked way to the activation area."],
+    activation_area_entered = L["In the activation area. Keep walking straight ahead; only a map change confirms the transition. The route stays on until then."],
+    activation_position_reached = L["Position of the activation area reached. %sA journey is not confirmed here; the route stays on."],
+    height_not_confirmed = L["The height is not confirmed. "],
+    reason_activation_map_changed = L["Map change after the activation area; route ended. The destination is not confirmed."],
+    reason_map_changed_guidance_done = L["Map change; the activation guidance is finished."],
+    activation_proof_invalid = L["The entrance has no valid proof."],
+    action_boarding = L["Board only when the vehicle is safely there."],
+    stop_outside_zones = L["Route ended outside the network's zones."],
 }
 
 function WowVisionNavigationText(key, ...)
@@ -73,6 +95,8 @@ local DYN = {
     tram_dock = L["Tram dock toward %s"],
     elevator = L["Elevator: %s"],
     zone_transition = L["Crossing to %s"],
+    on_ship = L["On the ship to %s"],
+    in_tram = L["In the tram toward %s"],
     boarding_boat = L["On the ship"],
     boarding_zeppelin = L["On the zeppelin"],
     boarding_vehicle = L["At the vehicle"],
@@ -165,6 +189,9 @@ local CATEGORY = {
     herb_or_ore = L["herb or ore"], object = L["object"], quest_item = L["quest item"],
     interaction_object = L["interaction object"], mailbox = L["mailbox"], anvil = L["anvil"], forge = L["forge"],
     door = L["door"], book = L["book"], chair = L["chair"], sign = L["sign"], fishing_spot = L["fishing spot"],
+    switch = L["switch"], trap = L["trap"], spell_focus = L["spell focus"], capture_point = L["capture point"],
+    destructible_building = L["destructible building"], guild_bank = L["guild bank"], trapdoor = L["trapdoor"],
+    waypoint = L["waypoint"], orientation = L["orientation point"], transport = L["transport"], live = L["live target"],
     zone_transition = L["zone transition"], transit = L["transit"], boat = L["ship"], tram = L["tram"],
     dungeon = L["dungeon"], portal = L["portal"], zeppelin = L["zeppelin"], lift = L["elevator"],
 }
@@ -189,6 +216,29 @@ end
 
 function text.autoName(bits, z)
     return string.format(L["Automatic: %s, height %d"], text.autoType(bits), math.floor((z or 0) + 0.5))
+end
+
+-- What a list row adds to a target's name after its resolution (his TargetSelection:Describe): inexact by how much,
+-- a floor to choose, no network point, water surface; "" when there is nothing to add.
+function text.describe(result)
+    if type(result) ~= "table" then
+        return ""
+    end
+    local out = ""
+    local yards = result.delta3D or result.deltaXY or 0
+    if result.quality == "approximate" and yards >= 1 then
+        out = WowVisionNavigationText("desc_inexact", yards,
+            result.zUnknown and WowVisionNavigationText("desc_horizontal_unknown")
+                or (result.zOutOfTolerance and WowVisionNavigationText("desc_vertical") or ""))
+    elseif result.quality == "ambiguous" then
+        out = WowVisionNavigationText(result.levelUnknown and "desc_level_unknown" or "desc_pick_height")
+    elseif result.quality == "unroutable" then
+        out = WowVisionNavigationText("desc_no_point")
+    end
+    if result.normalizedWater then
+        out = out .. WowVisionNavigationText("desc_water", result.divingDepth or 0)
+    end
+    return out
 end
 
 -- The spoken categories of a target, "trainer, vendor"; nil when it has none worth saying.

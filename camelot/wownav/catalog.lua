@@ -14,8 +14,8 @@
 -- What WowVision does instead of his core: the catalogues of a continent are decoded one zone per step in the
 -- background (his core has them all as tables from the login; here they are packed text until then), the rows are
 -- WowVision's list rows (name, categories and zone as the detail), and the automatic waypoints nearby come from
--- catalog.autoPoints.
--- Left out with the user's decision: the boarding points of his dock guidance (routes are on foot).
+-- catalog.autoPoints and the boarding points of the docks from dock.lua (opts.extra). A row's detail starts with
+-- his Describe of its resolution (inexact by how much, a floor to choose, water surface).
 
 local text = WowVision.wownavText
 local L = WowVision:getLocale()
@@ -201,12 +201,17 @@ local function listRow(N, item, german)
     local zone = zoneName(N, item.zoneId)
     local categories = text.categories(item)
     local detail = categories and (categories .. ", " .. (zone or "")) or zone
+    -- his Describe after the resolution (inexact, floor to choose, water), before the categories
+    local described = text.describe(item.layerResolution):match("^%s*%((.*)%)%s*$")
+    if described ~= nil then
+        detail = detail ~= nil and (described .. ", " .. detail) or described
+    end
     return {
         id = "wownav:" .. tostring(item.catalogKey), n = text.targetName(item, german), detail = detail,
         x = item.x, y = item.y, z = item.z, levels = item.levels, tid = item.id, kind = item.kind,
         nameEn = item.nameEn, zoneId = item.zoneId, surface = item.surface, resolution = item.layerResolution,
         layer = type(item.providerId) == "string" and item.providerId:find("^package_dyn_") and "dyn" or "logical",
-        interactionMode = item.interactionMode, activationMode = item.activationMode,
+        interactionMode = item.interactionMode, activationMode = item.activationMode, approx = item.approx,
     }
 end
 

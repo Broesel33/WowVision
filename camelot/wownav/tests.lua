@@ -162,6 +162,29 @@ local suite = {
         t:assertEqual(route.stagnationTravel, 3, "unknown speed (secret): counted, his fallback")
     end,
 
+    ["a list row says how its target resolved (his Describe)"] = function(t)
+        t:assertEqual(text.describe({ quality = "exact" }), "")
+        t:assertEqual(text.describe({ quality = "approximate", deltaXY = 0.5 }), "", "under a yard says nothing")
+        local inexact = text.describe({ quality = "approximate", deltaXY = 4.2, zUnknown = true })
+        t:assertNotNil(inexact:find("inexact +4.2 yards", 1, true), inexact)
+        t:assertNotNil(inexact:find("height unknown", 1, true), inexact)
+        t:assertNotNil(text.describe({ quality = "ambiguous" }):find("choose the floor", 1, true))
+        t:assertNotNil(text.describe({ quality = "unroutable" }):find("no network point", 1, true))
+        t:assertNotNil(text.describe({ quality = "approximate", deltaXY = 0, normalizedWater = true, divingDepth = 3 })
+            :find("diving depth 3.0", 1, true))
+    end,
+
+    ["his choke fallback switch is read from WowVisionNavigationDB"] = function(t)
+        local saved = _G.WowVisionNavigationDB
+        _G.WowVisionNavigationDB = nil
+        t:assertTrue(Route.chokeFallback(), "on without settings")
+        _G.WowVisionNavigationDB = { chokeFallback = false }
+        t:assertFalse(Route.chokeFallback())
+        _G.WowVisionNavigationDB = { chokeFallback = true }
+        t:assertTrue(Route.chokeFallback())
+        _G.WowVisionNavigationDB = saved
+    end,
+
     ["a dyn target is named from its key and place, with its suffix"] = function(t)
         t:assertEqual(text.targetName({ nameKey = "portal", nameParam = "Darnassus" }), "Portal to Darnassus")
         t:assertEqual(text.targetName({ nameKey = "elevator", nameParam = "Undercity",
@@ -530,7 +553,8 @@ if haveNetwork then
             t:assertNotNil(ride, "a target at the far end is a ride")
             t:assertEqual(dock.choose(N, ride, 10.7, 2488.2), "passive")
             t:assertNil(dock.rideFor(N, from.x, from.y - 300, 15.1, 8.2), "not from outside a station")
-            t:assertNil(dock.rideFor(N, from.x, from.y, from.x + 20, from.y), "not for a target in the player's station")
+            t:assertNil(dock.rideFor(N, from.x, from.y, from.x + 20, from.y),
+                "not for a target in the player's station")
         end)
     end
 
@@ -630,6 +654,67 @@ if haveNetwork then
             t:assertEqual(#hits, 4)
             t:assertTrue(hits[1].distance <= hits[2].distance)
         end)
+    end
+
+    suite["a walk-in target: on foot, the prepoint said, no arrival before the capture circle"] = function(t)
+        setup()
+        local game = newGame()
+        local route = Route.new(game.env)
+        bindablePosition(STORMWIND, game, route)
+        local rows = zoneRows(STORMWIND)
+        local entrance
+        for _, r in ipairs(rows) do
+            if r.activationMode == "walk_into_trigger" then
+                local outcome, target = dock.activation(N, r)
+                if outcome == "route" then
+                    entrance = { row = r, target = target }
+                    break
+                end
+            end
+        end
+        t:assertNotNil(entrance, "Stormwind has a proven walk-in entrance (portal or tram entrance)")
+        local target = entrance.target
+        local contract = catalog.contract(entrance.row, 0)
+        t:assertEqual(contract.activationMode, "walk_into_trigger")
+        local outcome = runJob(N.Job(route.prepare, route, contract, { nativeMapId = 0 }))
+        t:assertEqual(outcome.kind, "start", tostring(outcome.reason))
+        t:assertNil(outcome.plan.pendingAction, "on foot: no transit on the way")
+        route:begin(outcome.plan, contract, outcome.result, entrance.row.n)
+        route.activation = target
+        t:assertNil(route.logicalTarget, "no logical end point behind a walk-in target")
+        local seen = {}
+        for _ = 1, 3000 do
+            game.t = game.t + 0.3
+            local x, y
+            if route.pathIndex >= #route.path then
+                if not seen.prepoint then
+                    x, y = target.activationPreX, target.activationPreY
+                elseif not seen.waited then
+                    -- at the last waypoint but outside the capture circle: no arrival
+                    x, y = N.Position(route.path[#route.path])
+                    if (x - target.x) ^ 2 + (y - target.y) ^ 2 <= target.activationCaptureRadius ^ 2 then
+                        x = x + target.activationCaptureRadius + 1
+                    end
+                    seen.waited = true
+                else
+                    x, y = target.x, target.y
+                end
+            else
+                x, y = N.Position(route.path[route.pathIndex])
+            end
+            game.x, game.y, game.moving = x, y, true
+            local event = route:update(x, y)
+            if event then
+                seen[event.kind] = true
+                if event.kind == "activation" then
+                    break
+                end
+            end
+        end
+        t:assertTrue(seen.prepoint == true, "the prepoint is said")
+        t:assertNil(seen.arrived, "no arrival at a walk-in target")
+        t:assertTrue(seen.activation == true, "the capture circle is said")
+        t:assertTrue(route.activationInside == true)
     end
 end
 

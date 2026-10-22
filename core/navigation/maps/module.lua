@@ -259,7 +259,8 @@ end
 -- search(text, px, py, map) -> rows, info: its targets matching the text
 -- ("" = all), nearest first, { {id, n, x, y, z, detail, distance} }
 -- (detail: said after the distance), info { capped, shown, total } when the
--- engine cut the list. While it is active, F10 lists its targets only.
+-- engine cut the list; cancel() -> true when it ended guidance of its own
+-- (Shift-F12). While it is active, F10 lists its targets only.
 function module:setRouteEngine(engine)
     self.routeEngine = engine
 end
@@ -421,7 +422,14 @@ end
 -- Shift-F12 and "/beacon stop" end whatever leads the way, a route or a
 -- straight beacon (the beacon alert falls silent with it).
 function module:cancelNavigation()
+    -- a route engine may hold guidance without a beacon (a search, a transit waiting for its far end)
+    local engine = self.routeEngine
+    local engineStopped = engine ~= nil and engine.cancel ~= nil and engine:cancel() == true
     if not self:isGuiding() then
+        if engineStopped then
+            WowVision:speak(L["Beacon stopped"])
+            return true
+        end
         WowVision:speak(L["No active waypoint"])
         return false
     end
