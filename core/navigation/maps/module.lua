@@ -181,20 +181,14 @@ function module:currentWaypoints()
 end
 
 -- Destinations to pick from by name (F10, /beacon to): the route data's
--- waypoints. With an active engine its own targets come from its search
--- (engine:search, see setRouteEngine); where the engine's catalogue covers
--- the map it replaces the route data there (its points would route by the
--- engine's network to places its own targets already name).
+-- waypoints, or with an active engine its own targets only (engine:search,
+-- see setRouteEngine). The engine's setting chooses between the two.
 function module:destinationWaypoints()
-    local waypoints = self:currentWaypoints()
     local engine = self:activeRouteEngine()
-    if engine == nil then
-        return waypoints, nil
-    end
-    if engine:replacesRouteData() then
+    if engine ~= nil then
         return {}, engine
     end
-    return waypoints, engine
+    return self:currentWaypoints(), nil
 end
 
 -- Route to the nearest waypoint whose name contains the fragment
@@ -265,8 +259,7 @@ end
 -- search(text, px, py, map) -> rows, info: its targets matching the text
 -- ("" = all), nearest first, { {id, n, x, y, z, detail, distance} }
 -- (detail: said after the distance), info { capped, shown, total } when the
--- engine cut the list; replacesRouteData() (true where its catalogue covers
--- the map: the route data's points are left out of F10 there).
+-- engine cut the list. While it is active, F10 lists its targets only.
 function module:setRouteEngine(engine)
     self.routeEngine = engine
 end

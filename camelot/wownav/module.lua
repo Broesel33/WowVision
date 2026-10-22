@@ -125,12 +125,6 @@ function engine:isActive()
     return module:getEnabled() and module.settings.enabled == true and not standaloneLoaded() and ready(module) ~= nil
 end
 
--- WowNav's catalogue replaces the route data in F10 where it covers the map, as his own list holds his targets only.
-function engine:replacesRouteData()
-    local N = ready(module)
-    local _, _, _, map = UnitPosition("player")
-    return N ~= nil and map ~= nil and catalog.covers(N, map)
-end
 
 function engine:routeTo(target)
     return module:routeTo(target)
