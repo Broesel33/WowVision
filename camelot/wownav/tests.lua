@@ -524,6 +524,13 @@ if haveNetwork then
             t:assertNotNil(byPosition, "the dock by its position")
             t:assertEqual(byPosition.tid, to.tid)
             t:assertNil(dock.rowAt(N, to.x + 50, to.y))
+            -- the route data's own tram point at the Ironforge end (walk test 2026-10-22), chosen in Stormwind: a ride
+            Dock:Reset(false)
+            local ride = dock.rideFor(N, 10.7, 2488.2, 15.1, 8.2)
+            t:assertNotNil(ride, "a target at the far end is a ride")
+            t:assertEqual(dock.choose(N, ride, 10.7, 2488.2), "passive")
+            t:assertNil(dock.rideFor(N, from.x, from.y - 300, 15.1, 8.2), "not from outside a station")
+            t:assertNil(dock.rideFor(N, from.x, from.y, from.x + 20, from.y), "not for a target in the player's station")
         end)
     end
 

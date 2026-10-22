@@ -445,10 +445,13 @@ function module:routeTo(target)
     end
     local dockTarget
     local dockRow = dock.isDockRow(target.data) and target.data or nil
-    if dockRow == nil and type(target.data) ~= "table" then
-        -- a position (scanner, places list, /beacon to) that is a dock is that dock
-        dockRow = dock.rowAt(N, target.x, target.y)
+    if dockRow == nil then
+        -- a position (scanner, places list, /beacon to, the route data's own points) that is a dock is that dock; a
+        -- target at the far end of a line while the player is in its station is a ride to that end's dock
+        local wownavRow = type(target.data) == "table" and target.data.tid ~= nil
+        dockRow = (not wownavRow and dock.rowAt(N, target.x, target.y)) or dock.rideFor(N, px, py, target.x, target.y)
         if dockRow ~= nil then
+            logLine("taken as the dock " .. tostring(dockRow.n))
             target.data = dockRow
         end
     end

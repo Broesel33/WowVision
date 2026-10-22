@@ -169,14 +169,47 @@ function dock.rowAt(N, x, y)
     end
     for _, target in ipairs(facilities(nav)) do
         if target.interactionMode == "manual_wait" and (x - target.x) ^ 2 + (y - target.y) ^ 2 <= 9 then
-            return {
-                tid = target.id, x = target.x, y = target.y, z = target.z, zoneId = target.zoneId,
-                kind = target.kind, nameEn = target.nameEn, interactionMode = target.interactionMode,
-                n = WowVisionNavigationTargetName(target),
-            }
+            return dock.rowOf(target)
         end
     end
     return nil
+end
+
+-- A dock target as a list row.
+function dock.rowOf(target)
+    return {
+        tid = target.id, x = target.x, y = target.y, z = target.z, zoneId = target.zoneId,
+        kind = target.kind, nameEn = target.nameEn, interactionMode = target.interactionMode,
+        n = WowVisionNavigationTargetName(target),
+    }
+end
+
+-- WowVision: a target at the far end of a line while the player is in a station of it (the route data's own tram
+-- points, an NPC on the other platform) is a ride: the row of the line's dock nearest the target, when the target lies
+-- within STATION_REACH of it and nearer to it than to the player's dock; otherwise nil.
+function dock.rideFor(N, px, py, tx, ty)
+    if px == nil or tx == nil then
+        return nil
+    end
+    local source = adoptStanding(N, px, py)
+    if source == nil then
+        return nil
+    end
+    local nav = dock.nav(N, nil)
+    local best, bestD2
+    for _, target in ipairs(facilities(nav)) do
+        if target.interactionMode == "manual_wait" and target.id ~= source.id
+            and target.transportRouteId == source.transportRouteId then
+            local d2 = (tx - target.x) ^ 2 + (ty - target.y) ^ 2
+            if d2 <= STATION_REACH * STATION_REACH and (best == nil or d2 < bestD2) then
+                best, bestD2 = target, d2
+            end
+        end
+    end
+    if best == nil or bestD2 >= (tx - source.x) ^ 2 + (ty - source.y) ^ 2 then
+        return nil
+    end
+    return dock.rowOf(best)
 end
 
 -- WowVision: the dock of the line the player stands at that serves the same far stop as the chosen one.
