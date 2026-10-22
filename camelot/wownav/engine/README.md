@@ -7,11 +7,13 @@ in his repository (the submodule `mapdata/WoW_NavigationData`).
 
 - `NavNetwork.lua`: decoder, continent graph, seams, attachment cells, A* search.
 - `Guidance.lua`: arrival at a waypoint, gate line, angle bisector, height along a link, re-entry.
-- `TargetCatalog.lua`: target contract (`Validate`) and the compact logical catalogue (`ExpandCatalog`).
+- `TargetCatalog.lua`: target contract (`Validate`), the continent's catalogues (`ActivateZones`) with the compact
+  logical catalogue kept as it is (`ValidateCatalog`), and the list search over it (`Scan`, `Nearest`, `Materialize`).
 - `TargetResolver.lua`: binding a target to the network (exact, approximate, ambiguous, levels).
 
 What uses them: `../route.lua` (his route rules from `WowVisionNavigation.lua` and `ActionNavigation.lua`),
-`../catalog.lua` (the destination list) and `../module.lua`.
+`../catalog.lua` (the destination list: his `Navigation.SearchTargets` and `WowVisionNavigationResolveListed`) and
+`../module.lua` (with his zone loader's `PreloadNeighbours`).
 
 ## Changes for WowVision
 
@@ -40,5 +42,5 @@ files, `tools/wownav-pack.lua` is no longer needed.
    (`git -C mapdata/WoW_NavigationData diff <old> <new> -- DemoAddon/WowVisionNavigation/<file>`); carry his changes
    over, keep the changes listed above, and update the header lines.
 3. Check his `WowVisionNavigation.lua` and `ActionNavigation.lua` the same way for changes to the rules that
-   `../route.lua` ports, and his `ReadMe.txt` for format changes.
+   `../route.lua` and `../catalog.lua` port, and his `ReadMe.txt` for format changes.
 4. Run `luajit tools/headless-tests.lua`.

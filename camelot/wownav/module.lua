@@ -2,7 +2,9 @@
 -- scanner's Enter, the places list, /beacon to, the F10 window) goes to WowNav: Broesel's engine (engine/, his
 -- NavNetwork, Guidance, TargetCatalog and TargetResolver) on his navigation data (the submodule
 -- mapdata/WoW_NavigationData, packed by tools/wownav-pack.lua), followed with his rules (route.lua) and walked with
--- WowVision's beacon (path.lua). His catalogues of the whole continent join the F10 list (catalog.lua).
+-- WowVision's beacon (path.lua). His catalogues of the whole continent are searched from the F10 list the way his list
+-- searches them: the nearest 1000 hits (catalog.lua). Like his zone loader, the player's zone and the zones that share
+-- a seam with it are decoded in the background, one per frame, so the first route there does not wait for them.
 --
 -- A floor is asked only when there is a choice: where the start or the target lies over several floors and nothing
 -- tells which one (floorsUi.lua); for the player's own floor a waypoint nearby can be picked as the start instead
@@ -129,8 +131,8 @@ function engine:routeTo(target)
     return module:routeTo(target)
 end
 
-function engine:destinations(px, py, map)
-    return module:destinations(px, py, map)
+function engine:search(text, px, py, map)
+    return module:search(text, px, py, map)
 end
 
 maps:setRouteEngine(engine)
@@ -154,25 +156,19 @@ local function reasonText(reason)
     return REASONS[reason] or tostring(reason or L["No route found"])
 end
 
--- ---- destinations: the WowNav catalogue of the player's map, with the automatic waypoints nearby when they are shown
-function module:destinations(px, py, map)
+-- ---- destinations: his search of the WowNav catalogue of the player's map (the nearest 1000 hits), with the
+-- automatic waypoints nearby when they are shown. Returns the rows, nearest first, and the search info (capped).
+function module:search(text, px, py, map)
     local N = ready(self)
-    if N == nil or map == nil then
-        return {}
+    if N == nil or map == nil or not catalog.covers(N, map) then
+        return {}, nil
     end
-    local rows = catalog.rows(N, _G.WowVisionNavigationTargetCatalog, map)
-    if not self.settings.showAuto or px == nil then
-        return rows
+    local rows, info = catalog.search(N, _G.WowVisionNavigationTargetCatalog, map, text, px, py,
+        { showAuto = self.settings.showAuto == true })
+    if info.reason ~= nil then
+        say(string.format(L["WowNav catalogue not usable: %s"], tostring(info.reason)))
     end
-    N.activeMapId = map
-    local out = {}
-    for i, r in ipairs(rows) do
-        out[i] = r
-    end
-    for _, r in ipairs(catalog.autoPoints(N, px, py)) do
-        out[#out + 1] = r
-    end
-    return out
+    return rows, info
 end
 
 -- ---- floors: asked only when there is a choice
@@ -296,9 +292,16 @@ local function routeLength(N, path, index, px, py)
     return sum
 end
 
--- The zones a route touches stay decoded, with the player's own and the target's; all others are dropped.
+-- The player's zones and their seam neighbours, decoded ahead (his PreloadNeighbours): { key, pending, index, keep }.
+local preload = nil
+
+-- The zones a route touches stay decoded, with the player's own and the target's, and the zones prepared around the
+-- player; all others are dropped.
 local function keepRouteZones(N, path, px, py, map, targetNodeId)
     local keep = {}
+    for zoneId in pairs(preload and preload.keep or {}) do
+        keep[zoneId] = true
+    end
     local ids = { targetNodeId }
     for _, id in ipairs(path) do
         ids[#ids + 1] = id
@@ -592,18 +595,68 @@ function module:newRoute()
     return true
 end
 
--- The catalogue of the player's map is read in the background, one zone per step.
+-- The catalogue of the player's map is read in the background, one zone per step; then, like his zone loader
+-- (ActivatePackage and PreloadNeighbours), the player's zones and the zones that share a seam with them are decoded,
+-- one per step. Zones the player walks into later get their neighbours prepared the same way.
+local PRELOAD_CHECK = 1.0      -- seconds between two looks at the player's zones
+local preloadCheckAt = 0
+
+local function stepPreload(N, px, py, map)
+    local now = GetTime()
+    if preload == nil or now >= preloadCheckAt then
+        preloadCheckAt = now + PRELOAD_CHECK
+        N.activeMapId = map
+        local own = N.ZonesForPoint(px, py)
+        table.sort(own)
+        local key = map .. ":" .. table.concat(own, ",")
+        if preload == nil or preload.key ~= key then
+            local keep, pending = {}, {}
+            local function add(zoneId)
+                if not keep[zoneId] then
+                    keep[zoneId] = true
+                    if not N.decoded[zoneId] and N.ZoneAvailable(zoneId) then
+                        pending[#pending + 1] = zoneId
+                    end
+                end
+            end
+            for _, zoneId in ipairs(own) do
+                add(zoneId)
+            end
+            for _, zoneId in ipairs(own) do
+                for _, neighbour in ipairs(N.NeighbourZones(zoneId)) do
+                    if (N.index[neighbour] and (N.index[neighbour].nativeMapId or N.index[neighbour].mapId)) == map then
+                        add(neighbour)
+                    end
+                end
+            end
+            preload = { key = key, pending = pending, index = 0, keep = keep }
+        end
+    end
+    local zoneId = preload.pending[preload.index + 1]
+    if zoneId ~= nil then
+        preload.index = preload.index + 1
+        if not N.decoded[zoneId] then
+            N.LoadZone(zoneId)
+        end
+    end
+end
+
 local function stepCatalog(self)
     local N = ready(self)
     if N == nil then
         return
     end
-    local _, _, map = route.env.position()
+    local px, py, map = route.env.position()
     if map == nil or not catalog.covers(N, map) then
         return
     end
     catalog.start(N, map)
-    catalog.step(N, _G.WowVisionNavigationTargetCatalog)
+    if catalog.step(N, _G.WowVisionNavigationTargetCatalog) then
+        return
+    end
+    if px ~= nil then
+        stepPreload(N, px, py, map)
+    end
 end
 
 function module:onEnable()

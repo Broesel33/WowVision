@@ -84,6 +84,20 @@ local function bindablePosition(zoneId, game, route)
     end
 end
 
+-- The list rows of one zone: his search with an empty text from a waypoint of that zone (the nearest 1000 targets).
+local function zoneRows(zoneId)
+    N.LoadZone(zoneId)
+    local x, y = N.Position(zoneId * N.ZONE_BASE + 1)
+    local rows = catalog.search(N, C, 0, "", x, y, { german = false })
+    local out = {}
+    for _, r in ipairs(rows) do
+        if r.zoneId == zoneId then
+            out[#out + 1] = r
+        end
+    end
+    return out
+end
+
 local function rowsWith(rows, category)
     for _, r in ipairs(rows) do
         if r.detail ~= nil and r.detail:find(category, 1, true) then
@@ -181,13 +195,12 @@ if haveNetwork then
         t:assertTrue(slices > 1, "the search yielded at least once")
     end
 
-    suite["the continent catalogue lists both layers with categories and zone, searchable"] = function(t)
+    suite["the continent catalogue lists both layers with categories and zone"] = function(t)
         setup()
-        local rows = catalog.zoneRows(N, C, STORMWIND, false)
+        local rows = zoneRows(STORMWIND)
         t:assertTrue(#rows > 100)
         local innkeeper = rowsWith(rows, "innkeeper")
         t:assertNotNil(innkeeper, "Stormwind has an innkeeper")
-        t:assertTrue(innkeeper.search:find("innkeeper", 1, true) ~= nil, "the category is searchable")
         local dyn = 0
         for _, r in ipairs(rows) do
             if r.layer == "dyn" then
@@ -199,12 +212,44 @@ if haveNetwork then
         t:assertTrue(C.Validate(contract), "a row makes a valid target")
     end
 
+    suite["the search reads the compact catalogue in place: nearest 1000, cut list said, text per class"] = function(t)
+        setup()
+        local x, y = N.Position(STORMWIND * N.ZONE_BASE + 1)
+        local all, info = catalog.search(N, C, 0, "", x, y, { german = false })
+        t:assertEqual(#all, C.SEARCH_LIMIT, "an empty search lists the nearest targets, at most the limit")
+        t:assertTrue(info.capped, "the continent has more targets than the limit")
+        t:assertTrue(info.total > C.SEARCH_LIMIT)
+        for i = 2, #all do
+            -- his C.Nearest sorts by the squared distance in steps of 1/16 yd2: entries of one step keep catalogue order
+            t:assertTrue(all[i].distance >= all[i - 1].distance - 0.01, "nearest first")
+        end
+        local provider = C.providers["package_logical_" .. STORMWIND]
+        t:assertNotNil(provider and provider.compact, "the logical catalogue is kept compact")
+        t:assertNil(provider.compact.expanded, "no table per target was built")
+        -- the category, a name and the zone are searched
+        local inns, innInfo = catalog.search(N, C, 0, "innkeeper", x, y, { german = false })
+        t:assertTrue(#inns > 0)
+        t:assertFalse(innInfo.capped)
+        t:assertNotNil(inns[1].detail:find("innkeeper", 1, true), inns[1].detail)
+        local zoneName = N.index[STORMWIND].name
+        local inZone = catalog.search(N, C, 0, zoneName, x, y, { german = false })
+        t:assertTrue(#inZone > 0, "the zone name finds the zone's targets")
+        local again = catalog.search(N, C, 0, "  INNKEEPER ", x, y, { german = false })
+        t:assertEqual(#again, #inns, "case and spaces around the text do not matter")
+        -- automatic waypoints only with showauto, and only near the player
+        local plain = catalog.search(N, C, 0, "automatic", x, y, { german = false })
+        t:assertEqual(#plain, 0)
+        local auto = catalog.search(N, C, 0, "automatic", x, y, { german = false, showAuto = true })
+        t:assertTrue(#auto > 0)
+        t:assertNotNil(auto[1].nodeId)
+    end
+
     suite["a target is resolved, routed and walked to with his arrival rules"] = function(t)
         setup()
         local game = newGame()
         local route = Route.new(game.env)
         local x, y = bindablePosition(STORMWIND, game, route)
-        local rows = catalog.zoneRows(N, C, STORMWIND, false)
+        local rows = zoneRows(STORMWIND)
         local target = rowsWith(rows, "innkeeper")
         local outcome = runJob(N.Job(route.prepare, route, catalog.contract(target, 0), { nativeMapId = 0 }))
         if outcome.kind == "choose" then
@@ -266,7 +311,7 @@ if haveNetwork then
         local game = newGame()
         local route = Route.new(game.env)
         bindablePosition(STORMWIND, game, route)
-        local rows = catalog.zoneRows(N, C, STORMWIND, false)
+        local rows = zoneRows(STORMWIND)
         local npc = rowsWith(rows, "innkeeper")
         local contract = { id = "wowvision:scanner", kind = "live", nameEn = "Scanner target", nativeMapId = 0,
             coordinateSpace = "world", x = npc.x, y = npc.y, zStatus = "unknown" }
@@ -279,7 +324,7 @@ if haveNetwork then
         local game = newGame()
         local route = Route.new(game.env)
         bindablePosition(STORMWIND, game, route)
-        local rows = catalog.zoneRows(N, C, 87, false)
+        local rows = zoneRows(87)
         local target = rowsWith(rows, "innkeeper")
         t:assertNotNil(target, "Ironforge has an innkeeper")
         local contract = catalog.contract(target, 0)
@@ -300,7 +345,7 @@ if haveNetwork then
         local game = newGame()
         local route = Route.new(game.env)
         bindablePosition(STORMWIND, game, route)
-        local rows = catalog.zoneRows(N, C, STORMWIND, false)
+        local rows = zoneRows(STORMWIND)
         local stacked
         for _, r in ipairs(rows) do
             if r.levels ~= nil and #r.levels > 1 then

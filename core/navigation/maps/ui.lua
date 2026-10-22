@@ -47,7 +47,8 @@ local function ensureData(screen)
     if px == nil then
         return false
     end
-    screen._px, screen._py = px, py
+    local _, _, _, map = UnitPosition("player")
+    screen._px, screen._py, screen._map = px, py, map
     -- With a route engine on (WowNav), its targets join the list and it finds the entry point itself: no entry choice.
     screen._waypoints, screen._engine = module:destinationWaypoints()
     if screen._engine ~= nil then
@@ -74,8 +75,10 @@ local function ensureData(screen)
 end
 
 -- The destination list: every continent waypoint matching the search,
--- sorted by distance from where the window opened. Cached until the search
--- changes -- the full-continent sort runs once, not per tick.
+-- sorted by distance from where the window opened, with the route engine's
+-- hits (its own search, nearest first). Cached until the search changes --
+-- the full-continent sort runs once, not per tick. An engine that cut its
+-- hits leaves a notice that the next spoken entry starts with.
 local function destinations(screen)
     if screen._destinations ~= nil then
         return screen._destinations
@@ -90,6 +93,17 @@ local function destinations(screen)
             local dx = wp.x - screen._px
             local dy = wp.y - screen._py
             tinsert(found, { waypoint = wp, distance = math.sqrt(dx * dx + dy * dy) })
+        end
+    end
+    if screen._engine ~= nil then
+        local hits, info = screen._engine:search(screen._search, screen._px, screen._py, screen._map)
+        for _, wp in ipairs(hits or {}) do
+            local dx = wp.x - screen._px
+            local dy = wp.y - screen._py
+            tinsert(found, { waypoint = wp, distance = math.sqrt(dx * dx + dy * dy) })
+        end
+        if info ~= nil and info.capped then
+            screen._notice = string.format(L["The nearest %d of %d results"], info.shown, info.total)
         end
     end
     table.sort(found, function(a, b)
@@ -129,11 +143,18 @@ local function destinationCursor(screen)
         return text
     end
 
+    -- the engine's notice of a cut list goes before the first entry said after the search
+    local function withNotice(text)
+        local notice = screen._notice
+        screen._notice = nil
+        return notice ~= nil and (notice .. ", " .. text) or text
+    end
+
     local function speak()
         local list, index = clampedIndex()
         local entry = list[index]
         if entry ~= nil then
-            WowVision:speak(labelOf(entry))
+            WowVision:speak(withNotice(labelOf(entry)))
         end
     end
 
@@ -162,7 +183,7 @@ local function destinationCursor(screen)
                 text = function()
                     local list, index = clampedIndex()
                     local entry = list[index]
-                    return entry ~= nil and labelOf(entry) or L["Empty"]
+                    return entry ~= nil and withNotice(labelOf(entry)) or L["Empty"]
                 end,
                 kind = kinds.label,
                 live = false,

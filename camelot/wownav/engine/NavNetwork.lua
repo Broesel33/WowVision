@@ -1,5 +1,5 @@
 -- WowNav engine by Broesel33 (github.com/Broesel33/WoW_NavigationData, DemoAddon/WowVisionNavigation/NavNetwork.lua at
--- 5c27479), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
+-- 9423773), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
 
 -- NavNetwork (schema 7, concept chapters 7, 7a and 8): loader/decoder, continent graph, attachment cells and the
 -- A* search. Replaces the graph, funnel, guidance and zone-by-zone world travel of the old core.
@@ -890,14 +890,17 @@ function N.FindCell(x, y, z, opts)
     return nil, "no_attachment"
 end
 
--- True when a zone that can contain the point is decoded already (lists must not decode every zone of a continent).
+-- True when every zone that can contain the point is decoded already. Lists must not decode zones: resolving a target decodes all
+-- candidate zones of its point (CellsWithin), and the boxes of neighbouring zones overlap, so one decoded zone would pull in the next
+-- one, whose targets pull in the following, until the first opening of the list has decoded the whole continent (4.54: 15 zones,
+-- +350 MB, seconds of stall). A target with an unloaded candidate is offered without a check and resolved when it is selected.
 function N.PointZoneLoaded(x, y)
     local candidates = N.ZonesForPoint(x, y)
     if #candidates == 0 then return next(N.zones) ~= nil end
     for _, id in ipairs(candidates) do
-        if N.zones[id] then return true end
+        if not N.zones[id] then return false end
     end
-    return false
+    return true
 end
 
 -- All attachment cells with a distance of at most radius to (x, y): { {zone, cell, kind, distance, zMin, zMax} }

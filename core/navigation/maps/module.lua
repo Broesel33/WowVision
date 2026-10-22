@@ -181,9 +181,10 @@ function module:currentWaypoints()
 end
 
 -- Destinations to pick from by name (F10, /beacon to): the route data's
--- waypoints, and with an active engine its own targets too. An engine with
--- its own creature and object catalog hides the route data's spawns
--- (t = 2 creature, t = 3 object), so nobody is listed twice.
+-- waypoints. With an active engine its own targets come from its search
+-- (engine:search, see setRouteEngine); an engine with its own creature and
+-- object catalog hides the route data's spawns (t = 2 creature, t = 3
+-- object), so nobody is listed twice.
 function module:destinationWaypoints()
     local waypoints = self:currentWaypoints()
     local engine = self:activeRouteEngine()
@@ -195,12 +196,6 @@ function module:destinationWaypoints()
     for id, wp in pairs(waypoints) do
         if not (hideSpawns and (wp.t == 2 or wp.t == 3)) then
             merged[id] = wp
-        end
-    end
-    local px, py, _, map = UnitPosition("player")
-    if px ~= nil then
-        for _, wp in ipairs(engine:destinations(px, py, map) or {}) do
-            merged[wp.id] = wp
         end
     end
     return merged, engine
@@ -221,11 +216,19 @@ function module:navigateToName(fragment)
     local matches = WowVision.Router.nearest(waypoints, px, py, 1, function(wp)
         return wp.n ~= nil and (wp.search or foldCase(wp.n)):find(needle, 1, true) ~= nil
     end)
-    if #matches == 0 then
+    local target = matches[1] and matches[1].waypoint
+    if engine ~= nil then
+        -- the engine's nearest hit wins when it is nearer than the route data's
+        local _, _, _, map = UnitPosition("player")
+        local hit = (engine:search(fragment, px, py, map) or {})[1]
+        if hit ~= nil and (target == nil or hit.distance <= matches[1].distance) then
+            target = hit
+        end
+    end
+    if target == nil then
         WowVision:speak(L["No route found"] .. " " .. fragment)
         return false
     end
-    local target = matches[1].waypoint
     WowVision:speak(target.n)
     if engine ~= nil and self:routeTo(target.x, target.y, target.n, nil, target.z, target) then
         return true
@@ -263,9 +266,10 @@ end
 -- everything after that (beacon, arrival cue, Ctrl-W/S, Shift-F12, the turn
 -- key) stays the same. engine: isActive(), routeTo(target) -> true when it
 -- took the request (false: not here, the request goes the old way),
--- destinations(px, py, map) -> { {id, n, x, y, z, detail, search} } (detail:
--- said after the distance; search: folded text the search looks in),
--- hidesRouteDataSpawns().
+-- search(text, px, py, map) -> rows, info: its targets matching the text
+-- ("" = all), nearest first, { {id, n, x, y, z, detail, distance} }
+-- (detail: said after the distance), info { capped, shown, total } when the
+-- engine cut the list; hidesRouteDataSpawns().
 function module:setRouteEngine(engine)
     self.routeEngine = engine
 end
