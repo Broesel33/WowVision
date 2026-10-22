@@ -27,11 +27,23 @@ settings:add({
     global = false,
     showInUI = false,
 })
+-- The gamepad's Turn With Camera, set once per character (camera.lua).
+settings:add({
+    type = "Bool",
+    key = "gamepadTurnSet",
+    default = false,
+    global = false,
+    showInUI = false,
+})
 
 function module:onFullEnable()
+    local camera = WowVision.navigationCamera
     local getCVar = C_CVar ~= nil and C_CVar.GetCVar or GetCVar
     local setCVar = C_CVar ~= nil and C_CVar.SetCVar or SetCVar
-    if WowVision.navigationCamera.applyOnce(self.settings, getCVar, setCVar) then
+    if camera.applyOnce(self.settings, getCVar, setCVar) then
         print(L["WowVision set the camera to always follow behind your character, which turning to waypoints needs. You can change the camera following style in the game options under Controls."])
+    end
+    if camera.applyGamepadOnce(self.settings, getCVar, setCVar, camera.gamepadOn) then
+        print(L["WowVision set Turn With Camera to Always, so your character turns with the camera, which turning to waypoints needs. You can change it in the game options under Gamepad."])
     end
 end

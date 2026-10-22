@@ -68,9 +68,13 @@ end
 -- Options, Gamepad, Turn With Camera says; its default (3) is "moving, in
 -- combat or casting", so standing still the sweep turned the camera alone
 -- and the turn key did nothing (user test 2026-10-22, keyboard I and the
--- right stick press alike). For the length of one turn the setting is
--- "always" (2), then the player's own value comes back.
+-- right stick press alike). The first login with the gamepad interface on
+-- sets it to "always" (2), like the camera settings above; a player who
+-- changes it back keeps their choice. In case it is not "always" anyway
+-- (changed back, or reset), each turn sets it for its own length and then
+-- gives the player's value back.
 camera.TURN_WITH_CAMERA = "GamePadTurnWithCamera"
+camera.TURN_WITH_CAMERA_ALWAYS = "2"
 local savedTurnWithCamera = nil
 
 local function gamepadOn()
@@ -81,16 +85,41 @@ local function gamepadOn()
     local ok, enabled = pcall(gamePad.IsEnabled)
     return ok and enabled == true
 end
+camera.gamepadOn = gamepadOn
+
+-- state.gamepadTurnSet records that this character was handled. Only a
+-- login with the gamepad interface on counts. Returns true when the setting
+-- was changed.
+function camera.applyGamepadOnce(state, getCVar, setCVar, isGamepadOn)
+    if state.gamepadTurnSet or getCVar == nil or setCVar == nil or not isGamepadOn() then
+        return false
+    end
+    local okRead, value = pcall(getCVar, camera.TURN_WITH_CAMERA)
+    if not okRead or value == nil then
+        -- No such setting in this client.
+        return false
+    end
+    if tostring(value) == camera.TURN_WITH_CAMERA_ALWAYS then
+        state.gamepadTurnSet = true
+        return false
+    end
+    if not pcall(setCVar, camera.TURN_WITH_CAMERA, camera.TURN_WITH_CAMERA_ALWAYS) then
+        -- Refused: try again next login.
+        return false
+    end
+    state.gamepadTurnSet = true
+    return true
+end
 
 function camera.beginTurn()
     if savedTurnWithCamera ~= nil or not gamepadOn() then
         return
     end
     local ok, value = pcall(GetCVar, camera.TURN_WITH_CAMERA)
-    if not ok or value == nil or tostring(value) == "2" then
+    if not ok or value == nil or tostring(value) == camera.TURN_WITH_CAMERA_ALWAYS then
         return
     end
-    if pcall(SetCVar, camera.TURN_WITH_CAMERA, "2") then
+    if pcall(SetCVar, camera.TURN_WITH_CAMERA, camera.TURN_WITH_CAMERA_ALWAYS) then
         savedTurnWithCamera = tostring(value)
     end
 end
