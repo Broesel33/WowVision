@@ -25,17 +25,14 @@ module:registerCommand({
 })
 
 -- Chasing controller problems with testers: pad presses, keys taken back
--- and the speech around them, saved to WowVisionDump.padLog.
+-- and the speech around them, always logged to WowVisionDump.padLog. This
+-- only starts it afresh.
 module:registerCommand({
     name = "padlog",
-    description = "Toggle logging of controller presses and the speech around them",
+    description = "Start the controller log afresh",
     func = function()
-        local on, count = WowVision.pad.toggleLog()
-        if on then
-            print("WowVision pad log on")
-        else
-            print("WowVision pad log off, " .. count .. " lines, saved at the next reload")
-        end
+        WowVision.pad.restartLog()
+        print("WowVision pad log started afresh")
     end,
 })
 

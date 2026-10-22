@@ -58,13 +58,14 @@ local function isDown(key)
     return call(IsKeyDown, key) == true
 end
 
--- /wv padlog (developer): every pad press, every key taken back from the
+-- The pad log, always on: every pad press, every key taken back from the
 -- game, the window keys and the speech around them, with the time, into
--- WowVisionDump.padLog (saved at the next /reload). Keyboard presses show
--- up as window keys and speech without a pad line, for comparison. Nothing
--- is printed per line: chat output must not mix into the speech it logs.
+-- WowVisionDump.padLog (the last LOG_MAX lines, saved at logout or
+-- /reload). Keyboard presses show up as window keys and speech without a
+-- pad line, for comparison. Nothing is printed per line: chat output must
+-- not mix into the speech it logs. /wv padlog starts it afresh.
 local LOG_MAX = 500
-local logOn = false
+local logOn = true
 local logHooked = false
 
 local function log(fmt, ...)
@@ -107,8 +108,8 @@ local function facingText()
     return string.format("%.1f", math.deg(facing))
 end
 
--- The hooks go in on the first toggle: the speech and maps modules load
--- after this file.
+-- The hooks go in at login: the speech and maps modules load after this
+-- file.
 local function hookLog()
     if logHooked then
         return
@@ -150,16 +151,16 @@ end
 
 pad.log = log
 
-function pad.toggleLog()
+-- A fresh log: at login and on /wv padlog. The one before stays as
+-- padLogBefore, so a test is still there after the next login.
+function pad.restartLog()
     hookLog()
-    logOn = not logOn
-    if logOn then
-        WowVisionDump = WowVisionDump or {}
-        WowVisionDump.padLog = {}
-        log("log on, gamepad interface %s", tostring(pad.controllerUIEnabled()))
+    WowVisionDump = WowVisionDump or {}
+    if WowVisionDump.padLog ~= nil and #WowVisionDump.padLog > 1 then
+        WowVisionDump.padLogBefore = WowVisionDump.padLog
     end
-    local count = WowVisionDump ~= nil and WowVisionDump.padLog ~= nil and #WowVisionDump.padLog or 0
-    return logOn, count
+    WowVisionDump.padLog = {}
+    log("log started, gamepad interface %s", tostring(pad.controllerUIEnabled()))
 end
 
 -- The game's shortcut layer (both shoulders), Forever's gamepad interface.
@@ -442,10 +443,13 @@ end
 -- Every frame: the window state, the shortcut layer and the game's window
 -- mode change what we own and can take keys from us.
 local frame = CreateFrame("Frame")
+frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_REGEN_DISABLED")
 frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_REGEN_DISABLED" then
+    if event == "PLAYER_LOGIN" then
+        pad.restartLog()
+    elseif event == "PLAYER_REGEN_DISABLED" then
         -- The last moment bindings can change: keep only the world keys.
         combatStarting = true
         pad.sync()
