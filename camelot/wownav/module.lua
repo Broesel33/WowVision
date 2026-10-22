@@ -407,9 +407,20 @@ function module:routeTo(target)
         return true
     end
     local dockTarget
-    if dock.isDockRow(target.data) then
+    local dockRow = dock.isDockRow(target.data) and target.data or nil
+    if dockRow == nil and type(target.data) ~= "table" then
+        -- a position (scanner, places list, /beacon to) that is a dock is that dock
+        dockRow = dock.rowAt(N, target.x, target.y)
+        if dockRow ~= nil then
+            target.data = dockRow
+        end
+    end
+    if dockRow ~= nil then
         -- a dock: the other dock of the line is noted (nothing to walk), any other dock is walked to
-        local outcome, value = dock.choose(N, target.data, px, py)
+        local outcome, value, why = dock.choose(N, dockRow, px, py)
+        if why ~= nil and DEFAULT_CHAT_FRAME ~= nil then
+            DEFAULT_CHAT_FRAME:AddMessage(why)
+        end
         if outcome == "fail" then
             say(value)
             return true

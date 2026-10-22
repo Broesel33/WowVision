@@ -506,6 +506,16 @@ if haveNetwork then
             local outcome2, target2 = dock.choose(N, other, from.x, from.y)
             t:assertEqual(outcome2, "passive")
             t:assertEqual(target2.id, to.tid, "the dock of the line the player stands at")
+            -- anywhere on the platform (within 30 yd) counts as standing at the dock; far away it does not
+            Dock:Reset(false)
+            t:assertEqual(dock.choose(N, to, from.x + 20, from.y), "passive")
+            Dock:Reset(false)
+            t:assertEqual(dock.choose(N, to, from.x, from.y - 200), "route")
+            -- a dock chosen by its position (scanner, places list) is that dock
+            local byPosition = dock.rowAt(N, to.x + 1, to.y)
+            t:assertNotNil(byPosition)
+            t:assertEqual(byPosition.tid, to.tid)
+            t:assertNil(dock.rowAt(N, to.x + 50, to.y))
         end)
     end
 

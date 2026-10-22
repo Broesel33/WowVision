@@ -10,7 +10,9 @@
 --   beacon. Near that dock the turn key (I) faces it.
 -- - The boarding points are list entries ("At the vehicle"); choosing one leads straight to it.
 --
--- What WowVision adds: standing at a dock counts as having reached it (his core needs the route there first); a dock
+-- What WowVision adds: standing on the platform of a dock (within 30 yd, his range for the noted dock) counts as
+-- having reached it (his core needs the route there first); a dock chosen by its position (scanner, places list) is
+-- that dock; a dock
 -- of the other line at the same far stop is taken as that line's own dock (the Deeprun Tram has two lines with a
 -- dock each at both ends); and near the noted dock it is said once that the turn key faces it.
 -- Where the dock's waiting node lies outside its waiting circle (the Deeprun Tram in data 9423773: the waiting point
@@ -68,8 +70,9 @@ local function loadAround(N, x, y)
     end
 end
 
--- How near the waiting node a player counts as standing at the dock (the arrival radius of a waypoint).
-local NODE_REACH = 3.0
+-- How near its waiting point or waiting node a player counts as standing at a dock: the platform (his 30 yd within
+-- which the turn key faces the noted dock).
+local STATION_REACH = 30.0
 
 -- The dock's waiting node: x, y and whether it lies inside the waiting circle; nil without a node.
 local function waitingNode(N, target)
@@ -107,34 +110,70 @@ function dock.target(N, row)
     return nil, nav
 end
 
--- WowVision: a player standing at a proven dock has reached it, also without a route there (his Arrival, silent).
+-- WowVision: a player on the platform of a proven dock has reached it, also without a route there (his Arrival,
+-- silent): the nearest dock within STATION_REACH of its waiting point or waiting node. Away from every dock a reached
+-- dock is forgotten. Returns the dock and its distance, or nil.
 local function adoptStanding(N, x, y)
     local Dock = D()
-    if Dock.reached ~= nil or x == nil then
-        return
+    if x == nil then
+        return nil
     end
     loadAround(N, x, y)
     local nav = dock.nav(N, nil)
     if nav == nil then
-        return
+        return nil
     end
+    local best, bestD2
     for _, target in ipairs(facilities(nav)) do
-        local zoneNav = dock.nav(N, target.zoneId)
-        if Dock:IsDock(target, zoneNav) then
-            local reach = target.waitingRadius + (target.boardingPreviewDistance or 0)
+        if Dock:IsDock(target, dock.nav(N, target.zoneId)) then
+            local d2 = (x - target.x) ^ 2 + (y - target.y) ^ 2
             local nx, ny = waitingNode(N, target)
-            local reach2 = math.max(NODE_REACH, _G.WowVisionNavigationGuidance.arrivalMin or 0)
-            if (x - target.x) ^ 2 + (y - target.y) ^ 2 <= reach * reach
-                or (nx ~= nil and (x - nx) ^ 2 + (y - ny) ^ 2 <= reach2 * reach2) then
-                Dock:Reset(false)
-                Dock.reached = {
-                    id = target.id, zoneId = zoneNav.zoneId, navFingerprint = zoneNav.exportFingerprint,
-                    waitpointFingerprint = zoneNav.waitpointFingerprint, lastX = x, lastY = y,
-                }
-                return
+            if nx ~= nil then
+                d2 = math.min(d2, (x - nx) ^ 2 + (y - ny) ^ 2)
+            end
+            if d2 <= STATION_REACH * STATION_REACH and (best == nil or d2 < bestD2) then
+                best, bestD2 = target, d2
             end
         end
     end
+    if best == nil then
+        if Dock.reached ~= nil then
+            Dock:Reset(false)
+        end
+        return nil
+    end
+    if Dock.reached == nil or Dock.reached.id ~= best.id then
+        local zoneNav = dock.nav(N, best.zoneId)
+        Dock:Reset(false)
+        Dock.reached = {
+            id = best.id, zoneId = zoneNav.zoneId, navFingerprint = zoneNav.exportFingerprint,
+            waitpointFingerprint = zoneNav.waitpointFingerprint, lastX = x, lastY = y,
+        }
+    end
+    return best, math.sqrt(bestD2)
+end
+
+-- A dock chosen by its position (the scanner, the places list, /beacon to): the proven dock within 3 yd of it, as a
+-- list row, or nil.
+function dock.rowAt(N, x, y)
+    if x == nil then
+        return nil
+    end
+    loadAround(N, x, y)
+    local nav = dock.nav(N, nil)
+    if nav == nil then
+        return nil
+    end
+    for _, target in ipairs(facilities(nav)) do
+        if target.interactionMode == "manual_wait" and (x - target.x) ^ 2 + (y - target.y) ^ 2 <= 9 then
+            return {
+                tid = target.id, x = target.x, y = target.y, z = target.z, zoneId = target.zoneId,
+                kind = target.kind, nameEn = target.nameEn, interactionMode = target.interactionMode,
+                n = WowVisionNavigationTargetName(target),
+            }
+        end
+    end
+    return nil
 end
 
 -- WowVision: the dock of the line the player stands at that serves the same far stop as the chosen one.
@@ -166,27 +205,32 @@ end
 --   "passive", target              the other dock of the line is noted; nothing to walk
 --   "route", target                walk to the dock's waiting point (the route ends inside the waiting circle)
 --   "fail", reason text
+-- and as the third value a line for the chat that says what decided it.
 function dock.choose(N, row, x, y)
     local Dock = D()
     local target, nav = dock.target(N, row)
     if target == nil then
-        return "fail", WowVisionNavigationText("dock_no_wait_proof")
+        return "fail", WowVisionNavigationText("dock_no_wait_proof"),
+            "WowNav dock: no proven dock " .. tostring(row.tid)
     end
-    adoptStanding(N, x, y)
+    local standing, yards = adoptStanding(N, x, y)
+    local why = standing ~= nil
+            and string.format("WowNav dock: standing at %s (%.0f yd)", WowVisionNavigationTargetName(standing), yards)
+        or "WowNav dock: not on a dock's platform"
     target = sameLine(N, nav, target)
     -- his ChoosePassive reads the nav of the player's zone (the reached dock's) and the fingerprint of the
     -- target's zone
     if Dock.reached ~= nil then
         local targetEntry = N.index[target.zoneId]
         if Dock:ChoosePassive(target, dock.nav(N, Dock.reached.zoneId), targetEntry and targetEntry.fingerprint) then
-            return "passive", target
+            return "passive", target, why .. "; the other dock is noted"
         end
     end
     local zoneNav = dock.nav(N, target.zoneId)
     if not Dock:IsDock(target, zoneNav) then
-        return "fail", WowVisionNavigationText("dock_no_wait_proof")
+        return "fail", WowVisionNavigationText("dock_no_wait_proof"), why .. "; the chosen dock has no proof"
     end
-    return "route", target
+    return "route", target, why .. "; walking to " .. WowVisionNavigationTargetName(target)
 end
 
 -- His WaypointIsReached for a waiting target: the last waypoint counts only inside the proven waiting circle. nil
