@@ -64,7 +64,7 @@ end
 -- /reload). Keyboard presses show up as window keys and speech without a
 -- pad line, for comparison. Nothing is printed per line: chat output must
 -- not mix into the speech it logs. /wv padlog starts it afresh.
-local LOG_MAX = 500
+local LOG_MAX = 2000
 local logOn = true
 local logHooked = false
 
