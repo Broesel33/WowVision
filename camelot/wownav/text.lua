@@ -84,7 +84,13 @@ local SUFFIX = {
     number = L[" (%d)"],
 }
 
-local function placeName(target)
+local placeName
+-- the place a target names (a dock: where its line goes), in the client's language
+function text.placeName(target)
+    return placeName(target)
+end
+
+function placeName(target)
     if type(target.nameAreaId) == "number" and C_Map ~= nil and C_Map.GetAreaInfo ~= nil then
         local ok, name = pcall(C_Map.GetAreaInfo, target.nameAreaId)
         if ok and type(name) == "string" and name ~= "" then

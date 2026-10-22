@@ -149,6 +149,22 @@ end
 -- what his dock module says (WowVisionNavigationPrint)
 WowVision.wownavText.say = say
 
+-- The saved trail of route requests and dock decisions (WowVisionDump.wownav, on disk after /reload or logout; the
+-- newest last), so a walk test can be read without typing anything in the game.
+local LOG_SIZE = 60
+local function logLine(line)
+    WowVisionDump = WowVisionDump or {}
+    local trail = WowVisionDump.wownav
+    if type(trail) ~= "table" then
+        trail = {}
+        WowVisionDump.wownav = trail
+    end
+    trail[#trail + 1] = date("%Y-%m-%d %H:%M:%S") .. " " .. line
+    while #trail > LOG_SIZE do
+        table.remove(trail, 1)
+    end
+end
+
 local TRANSIT_WORDS = { portal = L["the portal"], tram = L["the tram"], lift = L["the elevator"] }
 
 -- The resolver's and the planner's reasons as WowVision texts.
@@ -337,9 +353,24 @@ end
 
 local function startRoute(self, request, outcome)
     local N = self:network()
-    route:begin(outcome.plan, request.contract, outcome.result, request.label)
+    local trimmed = false
     if request.dockTarget ~= nil then
+        -- a dock's route ends before a last drop (the tram's waiting nodes lie in the track bed)
+        local cut = dock.trimDrop(N, outcome.plan.path)
+        if cut ~= nil then
+            outcome.plan.path = cut
+            trimmed = true
+        end
+    end
+    route:begin(outcome.plan, request.contract, outcome.result, request.label)
+    if request.dockTarget ~= nil and not trimmed then
         route.waitCheck = dock.waitAreaCheck(N, request.dockTarget)
+    end
+    do
+        local lastX, lastY, lastZ = N.Position(route.path[#route.path])
+        logLine(string.format("route %s: %d waypoints, ends %.1f %.1f %.1f%s%s", tostring(request.label), #route.path,
+            lastX or 0, lastY or 0, lastZ or 0, request.dockTarget and ", to a dock" or "",
+            trimmed and ", cut before the drop" or ""))
     end
     local px, py, map = route.env.position()
     routeMap = map
@@ -386,7 +417,13 @@ function module:routeTo(target)
         return false
     end
     local px, py, map = route.env.position()
+    local data = type(target.data) == "table" and target.data or nil
+    logLine(string.format("request %s at %.1f %.1f from %s %s map %s: %s", tostring(target.label), target.x or 0,
+        target.y or 0, px and string.format("%.1f", px) or "?", py and string.format("%.1f", py) or "?", tostring(map),
+        data == nil and "a position" or (data.boardingTargetId and "a boarding point") or (data.nodeId and "a waypoint")
+            or string.format("%s %s", tostring(data.tid), tostring(data.interactionMode or data.kind))))
     if px == nil or not catalog.covers(N, map) then
+        logLine("not taken: no WowNav data here")
         return false
     end
     N.activeMapId = map
@@ -417,9 +454,12 @@ function module:routeTo(target)
     end
     if dockRow ~= nil then
         -- a dock: the other dock of the line is noted (nothing to walk), any other dock is walked to
-        local outcome, value, why = dock.choose(N, dockRow, px, py)
-        if why ~= nil and DEFAULT_CHAT_FRAME ~= nil then
-            DEFAULT_CHAT_FRAME:AddMessage(why)
+        local outcome, value, why, source = dock.choose(N, dockRow, px, py)
+        if why ~= nil then
+            logLine(why)
+            if DEFAULT_CHAT_FRAME ~= nil then
+                DEFAULT_CHAT_FRAME:AddMessage(why)
+            end
         end
         if outcome == "fail" then
             say(value)
@@ -427,6 +467,7 @@ function module:routeTo(target)
         elseif outcome == "passive" then
             self:stopRoute(nil, true)
             passive = { name = WowVisionNavigationTargetName(value), near = false }
+            say(dock.passiveText(source, value))
             return true
         end
         dockTarget = value
@@ -549,6 +590,7 @@ function module:onRouteEvent(path, event)
         self.path = nil
         route:reset()
         local x, y = route.env.position()
+        logLine(string.format("arrived at the dock %s at %.1f %.1f", tostring(request.label), x or 0, y or 0))
         local boarding = dock.arrived(self:network(), request.dockTarget, x, y)
         if boarding ~= nil then
             self.dockPath = boarding
@@ -745,6 +787,7 @@ local function checkPassive(self)
     local px, _, id = dock.alignment(N, x, y)
     if px ~= nil and type(id) == "string" and id:find("^dock%-passive:") then
         passive.near = true
+        logLine("near the noted dock " .. tostring(passive.name))
         say(string.format(L["%s is near; I turns you toward it"], passive.name or ""))
     end
 end

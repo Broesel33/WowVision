@@ -10,15 +10,17 @@
 --   beacon. Near that dock the turn key (I) faces it.
 -- - The boarding points are list entries ("At the vehicle"); choosing one leads straight to it.
 --
--- What WowVision adds: standing on the platform of a dock (within 30 yd, his range for the noted dock) counts as
--- having reached it (his core needs the route there first); a dock chosen by its position (scanner, places list) is
--- that dock; a dock
+-- What WowVision adds: being in the station of a dock (within 100 yd of it) counts as having reached the nearest
+-- dock (his core needs the route there first), and choosing that dock itself means riding from it: the other dock of
+-- its line is noted (the data names a dock after where its line goes, "Tram dock toward Ironforge" stands in
+-- Stormwind); a dock chosen by its position (scanner, places list) is that dock; a dock
 -- of the other line at the same far stop is taken as that line's own dock (the Deeprun Tram has two lines with a
 -- dock each at both ends); and near the noted dock it is said once that the turn key faces it.
 -- Where the dock's waiting node lies outside its waiting circle (the Deeprun Tram in data 9423773: the waiting point
 -- is at track level, the route ends on the platform about 7 yd away), his circle rule could never end the route: there
 -- the route ends at the waiting node as any route does, standing at that node counts as standing at the dock, and the
--- boarding beacon starts only where his rule gives it a point.
+-- boarding beacon starts only where his rule gives it a point. A route to a dock also ends before a last drop of more
+-- than 3 yd: the tram's waiting nodes lie down in the track bed, the platform is the place to wait.
 
 -- (the headless tests load this file without WowVision's navigation: no beacon paths there)
 local maps = WowVision.base ~= nil and WowVision.base.navigation ~= nil and WowVision.base.navigation.maps or nil
@@ -70,9 +72,10 @@ local function loadAround(N, x, y)
     end
 end
 
--- How near its waiting point or waiting node a player counts as standing at a dock: the platform (his 30 yd within
--- which the turn key faces the noted dock).
-local STATION_REACH = 30.0
+-- How near its waiting point or waiting node a player counts as standing at a dock: the station around it.
+local STATION_REACH = 100.0
+-- A route to a dock ends before a last drop of more than this (yd).
+local LAST_DROP = 3.0
 
 -- The dock's waiting node: x, y and whether it lies inside the waiting circle; nil without a node.
 local function waitingNode(N, target)
@@ -217,13 +220,29 @@ function dock.choose(N, row, x, y)
     local why = standing ~= nil
             and string.format("WowNav dock: standing at %s (%.0f yd)", WowVisionNavigationTargetName(standing), yards)
         or "WowNav dock: not on a dock's platform"
+    local source = standing
+    if source ~= nil and source.id == target.id then
+        -- the dock the player is at: ride from it, to the other dock of its line
+        for _, candidate in ipairs(facilities(nav)) do
+            if candidate.transportRouteId == source.transportRouteId and candidate.id ~= source.id
+                and candidate.interactionMode == "manual_wait" then
+                target = candidate
+            end
+        end
+    end
     target = sameLine(N, nav, target)
     -- his ChoosePassive reads the nav of the player's zone (the reached dock's) and the fingerprint of the
-    -- target's zone
+    -- target's zone; its own text is replaced by one that names where the ride goes (dock.passiveText)
     if Dock.reached ~= nil then
         local targetEntry = N.index[target.zoneId]
-        if Dock:ChoosePassive(target, dock.nav(N, Dock.reached.zoneId), targetEntry and targetEntry.fingerprint) then
-            return "passive", target, why .. "; the other dock is noted"
+        local text = WowVision.wownavText
+        local say = text.say
+        text.say = nil
+        local noted =
+            Dock:ChoosePassive(target, dock.nav(N, Dock.reached.zoneId), targetEntry and targetEntry.fingerprint)
+        text.say = say
+        if noted then
+            return "passive", target, why .. "; noted " .. WowVisionNavigationTargetName(target), source
         end
     end
     local zoneNav = dock.nav(N, target.zoneId)
@@ -231,6 +250,43 @@ function dock.choose(N, row, x, y)
         return "fail", WowVisionNavigationText("dock_no_wait_proof"), why .. "; the chosen dock has no proof"
     end
     return "route", target, why .. "; walking to " .. WowVisionNavigationTargetName(target)
+end
+
+-- What is said when the other dock is noted: where the ride goes (the place the source dock names) and with what.
+function dock.passiveText(source, target)
+    local place = source ~= nil and WowVision.wownavText.placeName(source) or nil
+    local vehicle = WowVisionNavigationText(({
+        tram = "vehicle_tram", boat = "vehicle_boat", zeppelin = "vehicle_zeppelin", lift = "vehicle_lift",
+    })[target.facilityKind] or "vehicle_other")
+    return string.format(L["Ride to %s with %s: wait here, board by ear and get off at the last stop. Near it, I turns you toward the dock."],
+        place or WowVisionNavigationTargetName(target), vehicle)
+end
+
+-- A route to a dock ends before a last drop of more than LAST_DROP: walking back from the end over the waypoints at
+-- the end's height, the path is cut after the first one that stands that much higher. nil when there is no drop.
+function dock.trimDrop(N, path)
+    local n = #path
+    local _, _, zEnd = N.Position(path[n])
+    if zEnd == nil then
+        return nil
+    end
+    for i = n - 1, 1, -1 do
+        local _, _, z = N.Position(path[i])
+        if z == nil then
+            return nil
+        end
+        if z > zEnd + LAST_DROP then
+            local cut = {}
+            for j = 1, i do
+                cut[j] = path[j]
+            end
+            return cut
+        end
+        if z > zEnd + 1 then
+            return nil       -- a slope, not a drop
+        end
+    end
+    return nil
 end
 
 -- His WaypointIsReached for a waiting target: the last waypoint counts only inside the proven waiting circle. nil

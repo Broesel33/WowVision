@@ -492,13 +492,13 @@ if haveNetwork then
             local outcome, target = dock.choose(N, to, from.x, from.y)
             t:assertEqual(outcome, "passive")
             t:assertEqual(target.id, to.tid)
-            t:assertNotNil(said[1] and said[1]:find("Destination dock", 1, true), tostring(said[1]))
+            t:assertNil(said[1], "his text is replaced by the module's (dock.passiveText)")
             local Dock = _G.WowVisionNavigationDockNavigation
             t:assertEqual(Dock.passive.id, to.tid)
             -- near the noted dock the turn key faces it; far from it there is nothing to face
             t:assertNil(dock.alignment(N, from.x, from.y))
             local px, py, id = dock.alignment(N, to.x + 10, to.y)
-            t:assertNotNil(px)
+            t:assertNotNil(px, "the turn key has a point")
             t:assertTrue(math.abs(px - to.x) < 0.01 and math.abs(py - to.y) < 0.01)
             t:assertTrue(id:find("^dock%-passive:") ~= nil)
             -- the Ironforge dock of the other line is taken as this line's own
@@ -506,14 +506,22 @@ if haveNetwork then
             local outcome2, target2 = dock.choose(N, other, from.x, from.y)
             t:assertEqual(outcome2, "passive")
             t:assertEqual(target2.id, to.tid, "the dock of the line the player stands at")
+            -- choosing the dock the player is at ("toward Ironforge", in Stormwind) means riding from it
+            Dock:Reset(false)
+            local outcome3, target3, _, source3 = dock.choose(N, from, from.x, from.y)
+            t:assertEqual(outcome3, "passive")
+            t:assertEqual(target3.id, to.tid)
+            t:assertEqual(source3.id, from.tid)
+            local ride = dock.passiveText(source3, target3)
+            t:assertNotNil(ride:find("the Deeprun Tram", 1, true), ride)
             -- anywhere on the platform (within 30 yd) counts as standing at the dock; far away it does not
             Dock:Reset(false)
             t:assertEqual(dock.choose(N, to, from.x + 20, from.y), "passive")
             Dock:Reset(false)
-            t:assertEqual(dock.choose(N, to, from.x, from.y - 200), "route")
+            t:assertEqual(dock.choose(N, to, from.x, from.y - 300), "route")
             -- a dock chosen by its position (scanner, places list) is that dock
             local byPosition = dock.rowAt(N, to.x + 1, to.y)
-            t:assertNotNil(byPosition)
+            t:assertNotNil(byPosition, "the dock by its position")
             t:assertEqual(byPosition.tid, to.tid)
             t:assertNil(dock.rowAt(N, to.x + 50, to.y))
         end)
@@ -542,14 +550,22 @@ if haveNetwork then
             end
             t:assertNotNil(x, "a platform waypoint away from the dock")
             game.x, game.y = x, y
-            local outcome, target = dock.choose(N, to, x, y)
-            t:assertEqual(outcome, "route")
+            -- (inside the station a dock choice rides; the route to the dock is what the scanner or a far start gets)
+            local target = dock.target(N, to)
+            t:assertNotNil(target, "the dock's full target")
             local contract = catalog.contract(to, TRAM_MAP)
             local result = runJob(N.Job(route.prepare, route, contract, { nativeMapId = TRAM_MAP }))
             t:assertEqual(result.kind, "start", tostring(result.reason))
+            t:assertEqual(result.plan.path[#result.plan.path], target.nodeId,
+                "the route ends at the dock's waiting node")
+            -- data 9423773: that node lies down in the track bed; the route is cut before the drop
+            local _, _, nodeZ = N.Position(target.nodeId)
+            local cut = dock.trimDrop(N, result.plan.path)
+            t:assertNotNil(cut, "the route to the tram dock ends with a drop")
+            local _, _, cutZ = N.Position(cut[#cut])
+            t:assertTrue(cutZ > nodeZ + 3, "the cut route ends on the platform")
             route:begin(result.plan, contract, result.result, to.n)
             t:assertNil(route.logicalTarget, "no logical end point behind a dock's waiting node")
-            t:assertEqual(route.path[#route.path], target.nodeId, "the route ends at the dock's waiting node")
             local nx, ny = N.Position(target.nodeId)
             local inside = (nx - target.x) ^ 2 + (ny - target.y) ^ 2 <= target.waitingRadius ^ 2
             route.waitCheck = dock.waitAreaCheck(N, target)
@@ -577,7 +593,7 @@ if haveNetwork then
             t:assertNotNil(Dock.reached, "the dock stays reached")
             -- at the waiting point itself the turn key faces the boarding point a few yards ahead
             local px, py, id = dock.alignment(N, target.x, target.y)
-            t:assertNotNil(px)
+            t:assertNotNil(px, "the turn key has a point")
             t:assertTrue(id:find("^dock%-boarding:") ~= nil)
             local ahead = math.sqrt((px - target.x) ^ 2 + (py - target.y) ^ 2)
             t:assertTrue(math.abs(ahead - target.boardingPreviewDistance) < 0.01)
