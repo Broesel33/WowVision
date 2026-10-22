@@ -125,8 +125,8 @@ function engine:isActive()
     return module:getEnabled() and module.settings.enabled == true and not standaloneLoaded() and ready(module) ~= nil
 end
 
--- WowNav's catalogue replaces the route data's creature and object spawns where it covers the map.
-function engine:hidesRouteDataSpawns()
+-- WowNav's catalogue replaces the route data in F10 where it covers the map, as his own list holds his targets only.
+function engine:replacesRouteData()
     local N = ready(module)
     local _, _, _, map = UnitPosition("player")
     return N ~= nil and map ~= nil and catalog.covers(N, map)
@@ -460,9 +460,6 @@ function module:routeTo(target)
         local outcome, value, why, source = dock.choose(N, dockRow, px, py)
         if why ~= nil then
             logLine(why)
-            if DEFAULT_CHAT_FRAME ~= nil then
-                DEFAULT_CHAT_FRAME:AddMessage(why)
-            end
         end
         if outcome == "fail" then
             say(value)

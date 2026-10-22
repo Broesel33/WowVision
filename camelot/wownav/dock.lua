@@ -241,7 +241,8 @@ end
 --   "passive", target              the other dock of the line is noted; nothing to walk
 --   "route", target                walk to the dock's waiting point (the route ends inside the waiting circle)
 --   "fail", reason text
--- and as the third value a line for the chat that says what decided it.
+-- and as the third value a line for the saved trail (WowVisionDump.wownav) that says what decided it, and as the
+-- fourth the dock the player stands at.
 function dock.choose(N, row, x, y)
     local Dock = D()
     local target, nav = dock.target(N, row)

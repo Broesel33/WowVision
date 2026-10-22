@@ -182,23 +182,19 @@ end
 
 -- Destinations to pick from by name (F10, /beacon to): the route data's
 -- waypoints. With an active engine its own targets come from its search
--- (engine:search, see setRouteEngine); an engine with its own creature and
--- object catalog hides the route data's spawns (t = 2 creature, t = 3
--- object), so nobody is listed twice.
+-- (engine:search, see setRouteEngine); where the engine's catalogue covers
+-- the map it replaces the route data there (its points would route by the
+-- engine's network to places its own targets already name).
 function module:destinationWaypoints()
     local waypoints = self:currentWaypoints()
     local engine = self:activeRouteEngine()
     if engine == nil then
         return waypoints, nil
     end
-    local merged = {}
-    local hideSpawns = engine:hidesRouteDataSpawns()
-    for id, wp in pairs(waypoints) do
-        if not (hideSpawns and (wp.t == 2 or wp.t == 3)) then
-            merged[id] = wp
-        end
+    if engine:replacesRouteData() then
+        return {}, engine
     end
-    return merged, engine
+    return waypoints, engine
 end
 
 -- Route to the nearest waypoint whose name contains the fragment
@@ -269,7 +265,8 @@ end
 -- search(text, px, py, map) -> rows, info: its targets matching the text
 -- ("" = all), nearest first, { {id, n, x, y, z, detail, distance} }
 -- (detail: said after the distance), info { capped, shown, total } when the
--- engine cut the list; hidesRouteDataSpawns().
+-- engine cut the list; replacesRouteData() (true where its catalogue covers
+-- the map: the route data's points are left out of F10 there).
 function module:setRouteEngine(engine)
     self.routeEngine = engine
 end
