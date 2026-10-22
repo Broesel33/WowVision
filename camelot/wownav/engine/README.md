@@ -1,6 +1,6 @@
 # WowNav engine in WowVision
 
-These four files are Broesel33's WowNav engine, taken from the demo addon of his public data repository
+These five files are Broesel33's WowNav engine, taken from the demo addon of his public data repository
 (github.com/Broesel33/WoW_NavigationData, `DemoAddon/WowVisionNavigation/`). The commit they come from is named in
 each file's first line. Broesel allowed WowVision to take whatever it needs from WowNav into WowVision; the data stays
 in his repository (the submodule `mapdata/WoW_NavigationData`).
@@ -10,10 +10,12 @@ in his repository (the submodule `mapdata/WoW_NavigationData`).
 - `TargetCatalog.lua`: target contract (`Validate`), the continent's catalogues (`ActivateZones`) with the compact
   logical catalogue kept as it is (`ValidateCatalog`), and the list search over it (`Scan`, `Nearest`, `Materialize`).
 - `TargetResolver.lua`: binding a target to the network (exact, approximate, ambiguous, levels).
+- `DockNavigation.lua`: docks of the tram, ships and zeppelins: the waiting circle, the arrival text, the boarding
+  orientation point, the noted counterpart dock (passive mode) and the turn key's target there.
 
 What uses them: `../route.lua` (his route rules from `WowVisionNavigation.lua` and `ActionNavigation.lua`),
 `../catalog.lua` (the destination list: his `Navigation.SearchTargets` and `WowVisionNavigationResolveListed`) and
-`../module.lua` (with his zone loader's `PreloadNeighbours`).
+`../module.lua` (with his zone loader's `PreloadNeighbours`), `../dock.lua` (what his core does around `DockNavigation`).
 
 ## Changes for WowVision
 
@@ -30,7 +32,7 @@ Keep this list current; everything else is his text, line for line (line endings
   `pcall` may stand between a job and the search (Lua 5.1 cannot yield across it).
 - `Guidance.lua`: `G.MinArrivalRadius` reads `G.arrivalMin` (WowVision's arrival distance, set by the module)
   instead of his saved variable `arrivalMin`.
-- The four files: a header line naming the source commit.
+- The five files: a header line naming the source commit.
 
 The same packing and reading are offered to Broesel's own pipeline (WowNav PR #1); if his repository ships packed
 files, `tools/wownav-pack.lua` is no longer needed.
@@ -38,7 +40,7 @@ files, `tools/wownav-pack.lua` is no longer needed.
 ## Updating
 
 1. Update the submodule `mapdata/WoW_NavigationData` and run `luajit tools/wownav-pack.lua`.
-2. Compare his four files in `DemoAddon/WowVisionNavigation/` with the commit named in our headers
+2. Compare his five files in `DemoAddon/WowVisionNavigation/` with the commit named in our headers
    (`git -C mapdata/WoW_NavigationData diff <old> <new> -- DemoAddon/WowVisionNavigation/<file>`); carry his changes
    over, keep the changes listed above, and update the header lines.
 3. Check his `WowVisionNavigation.lua` and `ActionNavigation.lua` the same way for changes to the rules that

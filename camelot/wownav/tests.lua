@@ -2,6 +2,7 @@ local testRunner = WowVision.testing.testRunner
 local Route = WowVision.wownavRoute
 local catalog = WowVision.wownavCatalog
 local text = WowVision.wownavText
+local dock = WowVision.wownavDock
 
 -- WowNav routes on Broesel's real data: tools/headless-tests.lua loads the engine (camelot/wownav/engine) and the
 -- packed data of mapdata/WowNavPacked (run tools/wownav-pack.lua first). Without the data only the parts that need
@@ -220,7 +221,8 @@ if haveNetwork then
         t:assertTrue(info.capped, "the continent has more targets than the limit")
         t:assertTrue(info.total > C.SEARCH_LIMIT)
         for i = 2, #all do
-            -- his C.Nearest sorts by the squared distance in steps of 1/16 yd2: entries of one step keep catalogue order
+            -- his C.Nearest sorts by the squared distance in steps of 1/16 yd2: entries of one step keep
+            -- catalogue order
             t:assertTrue(all[i].distance >= all[i - 1].distance - 0.01, "nearest first")
         end
         local provider = C.providers["package_logical_" .. STORMWIND]
@@ -440,6 +442,161 @@ if haveNetwork then
         -- the continuation routes from the far end to the kept binding, without resolving the target again
         local outcome = runJob(N.Job(route.continueTo, route, toNode, targetNodeId, nil))
         t:assertEqual(outcome.kind, "start", tostring(outcome.reason))
+    end
+
+    -- The Deeprun Tram (map 369): two lines, each with a dock in Stormwind (y about 2490) and in Ironforge (y about 9).
+    local TRAM_MAP = 369
+    local function tramDocks()
+        N.LoadZone(499)      -- in the game the player's zone is decoded ahead (module.lua, his PreloadNeighbours)
+        local found = {}
+        local rows = catalog.search(N, C, TRAM_MAP, "", 0, 1250, { german = false })
+        for _, r in ipairs(rows) do
+            if dock.isDockRow(r) then
+                local line = r.tid:match("animation%%3A(%d+)")
+                local side = r.y > 1000 and "stormwind" or "ironforge"
+                found[side .. line] = r
+            end
+        end
+        return found
+    end
+
+    -- his dock module asks the client for the player's map (UnitPosition); the test stands on the tram map
+    local function onTramMap(fn)
+        local saved = _G.UnitPosition
+        _G.UnitPosition = function()
+            return 0, 0, 0, TRAM_MAP
+        end
+        local ok, err = pcall(fn)
+        _G.UnitPosition = saved
+        _G.WowVisionNavigationDockNavigation:Reset(false)
+        text.say = nil
+        if not ok then
+            error(err, 0)
+        end
+    end
+
+    suite["at a tram dock the other dock of the line is noted, not walked to (his passive mode)"] = function(t)
+        setup()
+        N.activeMapId = TRAM_MAP
+        onTramMap(function()
+            local docks = tramDocks()
+            local from, to, other = docks.stormwind176080, docks.ironforge176080, docks.ironforge176082
+            t:assertNotNil(from, "the Stormwind dock of line 176080")
+            t:assertNotNil(to, "the Ironforge dock of line 176080")
+            t:assertNotNil(other, "the Ironforge dock of line 176082")
+            local said = {}
+            text.say = function(message)
+                said[#said + 1] = message
+            end
+            -- standing at the Stormwind dock counts as having reached it
+            local outcome, target = dock.choose(N, to, from.x, from.y)
+            t:assertEqual(outcome, "passive")
+            t:assertEqual(target.id, to.tid)
+            t:assertNotNil(said[1] and said[1]:find("Destination dock", 1, true), tostring(said[1]))
+            local Dock = _G.WowVisionNavigationDockNavigation
+            t:assertEqual(Dock.passive.id, to.tid)
+            -- near the noted dock the turn key faces it; far from it there is nothing to face
+            t:assertNil(dock.alignment(N, from.x, from.y))
+            local px, py, id = dock.alignment(N, to.x + 10, to.y)
+            t:assertNotNil(px)
+            t:assertTrue(math.abs(px - to.x) < 0.01 and math.abs(py - to.y) < 0.01)
+            t:assertTrue(id:find("^dock%-passive:") ~= nil)
+            -- the Ironforge dock of the other line is taken as this line's own
+            Dock:Reset(false)
+            local outcome2, target2 = dock.choose(N, other, from.x, from.y)
+            t:assertEqual(outcome2, "passive")
+            t:assertEqual(target2.id, to.tid, "the dock of the line the player stands at")
+        end)
+    end
+
+    suite["a dock is walked to; at its waiting node the dock is reached, then the other dock is noted"] = function(t)
+        setup()
+        N.activeMapId = TRAM_MAP
+        onTramMap(function()
+            local docks = tramDocks()
+            local to, far = docks.stormwind176080, docks.ironforge176080
+            local game = newGame()
+            game.map = TRAM_MAP
+            local route = Route.new(game.env)
+            -- from a platform waypoint of the Stormwind station, away from the dock
+            local x, y
+            for i = 0, 2000 do
+                local nx, ny, nz = N.Position(499 * N.ZONE_BASE + i)
+                if nx and ny > 2400 and nz > -6 then
+                    route.anchor.last = nz
+                    if route:startBinding(nx, ny) and (nx - to.x) ^ 2 + (ny - to.y) ^ 2 > 400 then
+                        x, y = nx, ny
+                        break
+                    end
+                end
+            end
+            t:assertNotNil(x, "a platform waypoint away from the dock")
+            game.x, game.y = x, y
+            local outcome, target = dock.choose(N, to, x, y)
+            t:assertEqual(outcome, "route")
+            local contract = catalog.contract(to, TRAM_MAP)
+            local result = runJob(N.Job(route.prepare, route, contract, { nativeMapId = TRAM_MAP }))
+            t:assertEqual(result.kind, "start", tostring(result.reason))
+            route:begin(result.plan, contract, result.result, to.n)
+            t:assertNil(route.logicalTarget, "no logical end point behind a dock's waiting node")
+            t:assertEqual(route.path[#route.path], target.nodeId, "the route ends at the dock's waiting node")
+            local nx, ny = N.Position(target.nodeId)
+            local inside = (nx - target.x) ^ 2 + (ny - target.y) ^ 2 <= target.waitingRadius ^ 2
+            route.waitCheck = dock.waitAreaCheck(N, target)
+            -- data 9423773: the tram's waiting point is at track level, the waiting node on the platform 7 yd away
+            t:assertFalse(inside, "the Stormwind tram dock's waiting node lies outside its waiting circle")
+            t:assertNil(route.waitCheck, "no circle rule that could never be met")
+            local arrived
+            route.pathIndex = #route.path
+            for _ = 1, 20 do
+                game.t = game.t + 0.3
+                local event = route:update(nx, ny)
+                if event and event.kind == "arrived" then
+                    arrived = event
+                    break
+                end
+            end
+            t:assertNotNil(arrived, "the route ends at the waiting node")
+            local said = {}
+            text.say = function(message)
+                said[#said + 1] = message
+            end
+            t:assertNil(dock.arrived(N, target, nx, ny), "no boarding beacon 7 yd from the waiting point")
+            t:assertNotNil(said[1] and said[1]:find("the Deeprun Tram", 1, true), tostring(said[1]))
+            local Dock = _G.WowVisionNavigationDockNavigation
+            t:assertNotNil(Dock.reached, "the dock stays reached")
+            -- at the waiting point itself the turn key faces the boarding point a few yards ahead
+            local px, py, id = dock.alignment(N, target.x, target.y)
+            t:assertNotNil(px)
+            t:assertTrue(id:find("^dock%-boarding:") ~= nil)
+            local ahead = math.sqrt((px - target.x) ^ 2 + (py - target.y) ^ 2)
+            t:assertTrue(math.abs(ahead - target.boardingPreviewDistance) < 0.01)
+            -- from the waiting node the Ironforge dock is noted, not walked to
+            local next = dock.choose(N, far, nx, ny)
+            t:assertEqual(next, "passive")
+            -- and standing at the waiting node without the route counts as well
+            Dock:Reset(false)
+            t:assertEqual(dock.choose(N, far, nx, ny), "passive")
+        end)
+    end
+
+    suite["the boarding points of the docks are list entries"] = function(t)
+        setup()
+        N.activeMapId = TRAM_MAP
+        onTramMap(function()
+            local docks = tramDocks()
+            local from = docks.stormwind176080
+            local rows = dock.boardingRows(N, from.x, from.y)
+            t:assertEqual(#rows, 4, "one per tram dock")
+            for _, r in ipairs(rows) do
+                t:assertEqual(r.n, "At the vehicle")
+                t:assertNotNil(r.boardingTargetId)
+            end
+            local hits = catalog.search(N, C, TRAM_MAP, "at the vehicle", from.x, from.y,
+                { german = false, extra = rows })
+            t:assertEqual(#hits, 4)
+            t:assertTrue(hits[1].distance <= hits[2].distance)
+        end)
     end
 end
 

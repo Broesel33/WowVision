@@ -8,7 +8,8 @@
 -- What WowVision does instead of his core: the sounds and the beacon (path.lua hands the current waypoint to
 -- WowVision's Path), the speech (WowVision's texts, module.lua), the target list (catalog.lua) and the floor choice
 -- (floorsUi.lua instead of /vn ebene). Left out with the user's decision: the Sku beacon, click/clack and final
--- approach tones, the blockage beep and its telemetry, the dock, boarding and waiting guidance (routes are on foot).
+-- approach tones, the blockage beep and its telemetry. The dock guidance (waiting, boarding, the noted counterpart
+-- dock) is in dock.lua; a route to a dock ends at its waiting point (waitCheck), vehicles are never part of a route.
 -- Changed because the game gives no height (UnitPosition z is 0 on Forever): the arrival after a transit is proven in
 -- the plane (see ActionObserve).
 --
@@ -130,6 +131,11 @@ end
 -- ---------------------------------------------------------------------------------------------------------------
 
 function Route:waypointIsReached(x, y, waypointId, previousId, afterId)
+    -- a route to a dock: the last waypoint counts only inside the proven waiting circle (his WaypointIsReached with
+    -- Navigation.waitTargetId; the normal arrival radius can be larger than that circle)
+    if self.waitCheck and not afterId and not self.waitCheck(x, y) then
+        return false
+    end
     local reached, rule = self.G.Reached({
         x = x, y = y, px = self.previousX, py = self.previousY,
         z = self:estimatedHeight(), swimming = self.env.swimming(),
@@ -324,6 +330,7 @@ function Route:reset(keepPenalties)
     self.targetBindingId = nil
     self.targetName = nil
     self.result = nil         -- the target's resolution (his layerTargetResult)
+    self.waitCheck = nil      -- function(x, y) for a route to a dock (his waitTargetId), set after begin
     self.source = nil         -- the target (his layerTargetSource)
     self.anchor.height = nil
     if not keepPenalties then
@@ -390,6 +397,12 @@ end
 -- An unchecked finish stays outside of graph and height proofs: the exact target position is the last point.
 function Route:appendLogicalTarget(source, result)
     if not source or not result or self.pendingAction or self.logicalTarget or not self.path then
+        return
+    end
+    -- a certified interaction (dock waiting point, activation area) ends at its own waypoint: the transit modules take
+    -- over there; a logical end point behind it would end the route as "target reached" before they act
+    if result.quality == "exact"
+        and (source.interactionMode == "manual_wait" or source.activationMode == "walk_into_trigger") then
         return
     end
     if type(source.x) ~= "number" or type(source.y) ~= "number" then

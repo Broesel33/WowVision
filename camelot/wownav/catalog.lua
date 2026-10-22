@@ -127,6 +127,14 @@ function catalog.clear()
     current = nil
 end
 
+-- The nav of the activated catalogue (his NavData of the continent), or nil while it is not ready.
+function catalog.activeNav()
+    if current == nil or not current.ok then
+        return nil
+    end
+    return current.nav
+end
+
 -- ---- the search (his Navigation.SearchTargets, mode "target")
 
 -- his AutomaticListEntry: the generated points of the network are list entries only with showauto
@@ -198,10 +206,13 @@ local function listRow(N, item, german)
         x = item.x, y = item.y, z = item.z, levels = item.levels, tid = item.id, kind = item.kind,
         nameEn = item.nameEn, zoneId = item.zoneId, surface = item.surface, resolution = item.layerResolution,
         layer = type(item.providerId) == "string" and item.providerId:find("^package_dyn_") and "dyn" or "logical",
+        interactionMode = item.interactionMode, activationMode = item.activationMode,
     }
 end
 
--- The search of the destination list. filterText "" lists the nearest targets. opts: { showAuto, german, R }.
+-- The search of the destination list. filterText "" lists the nearest targets. opts: { showAuto, german, R, extra }
+-- (extra: rows that already are rows, each with .entry, the target its text is searched in, and .distance: the
+-- boarding points of the docks, his Dock:BoardingTargets).
 -- Returns the rows (nearest first, at most C.SEARCH_LIMIT, each with .distance) and info { total, limit, shown,
 -- capped } (total = matches before the reachability check). Without the catalogue: {}, info with .reason.
 function catalog.search(N, C, map, filterText, x, y, opts)
@@ -232,6 +243,12 @@ function catalog.search(N, C, map, filterText, x, y, opts)
                 n = n + 1
                 rows[n], owners[n], d2[n] = point, false, point.distance * point.distance
             end
+        end
+    end
+    for _, row in ipairs(opts.extra or {}) do
+        if matches(N, row.entry, filter, row.zoneId, german) then
+            n = n + 1
+            rows[n], owners[n], d2[n] = row, false, (row.distance or 0) ^ 2
         end
     end
     info.total = n
@@ -314,6 +331,6 @@ function catalog.contract(r, map)
     return {
         id = r.tid, kind = r.kind, nameEn = r.nameEn or r.n, nativeMapId = map, coordinateSpace = "world",
         x = r.x, y = r.y, z = r.z, zStatus = r.z == nil and "unknown" or "known", levels = r.levels,
-        surface = r.surface,
+        surface = r.surface, interactionMode = r.interactionMode, activationMode = r.activationMode,
     }
 end

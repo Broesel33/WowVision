@@ -21,6 +21,20 @@ local REASONS = {
     res_no_point = L["No network point near the target"],
     res_no_path = L["No network path to the target"],
     res_no_route_from_start = L["No network path from here to the target"],
+    -- the dock guidance (DockNavigation.lua)
+    dock_reached = L["Dock %s reached. Wait here for %s. Board when you hear it arrive."],
+    dock_boarding_hint = L[" The beacon shows the boarding direction; I turns you toward it."],
+    dock_passive_set = L["Destination dock %s noted. Wait for the vehicle, board by ear and get off at the destination stop. Then choose the dock again for the way on foot."],
+    vehicle_tram = L["the Deeprun Tram"],
+    vehicle_boat = L["the ship"],
+    vehicle_zeppelin = L["the zeppelin"],
+    vehicle_lift = L["the elevator"],
+    vehicle_other = L["the vehicle"],
+    stop_boarding_point_reached = L["Boarding point %s reached"],
+    dock_no_wait_proof = L["The dock has no valid waiting point proof"],
+    boarding_no_direction_proof = L["The boarding point has no valid direction proof on this map"],
+    wait_proof_invalid = L["The waiting point proof is invalid; no boarding instruction"],
+    stop_boarding_proof_changed = L["The boarding point proof or the map changed; guidance ended"],
 }
 
 function WowVisionNavigationText(key, ...)
@@ -32,6 +46,17 @@ function WowVisionNavigationText(key, ...)
         return string.format(template, ...)
     end
     return template
+end
+
+-- his WowVisionNavigationPrint: what DockNavigation.lua says goes to WowVision's speech (text.say, set by the module)
+function WowVisionNavigationPrint(message)
+    if text.say ~= nil then
+        text.say(message)
+    end
+end
+
+function WowVisionNavigationTargetName(target)
+    return text.targetName(target)
 end
 
 function text.german()
@@ -48,6 +73,9 @@ local DYN = {
     tram_dock = L["Tram dock toward %s"],
     elevator = L["Elevator: %s"],
     zone_transition = L["Crossing to %s"],
+    boarding_boat = L["On the ship"],
+    boarding_zeppelin = L["On the zeppelin"],
+    boarding_vehicle = L["At the vehicle"],
 }
 local SUFFIX = {
     lower = L[" (lower)"],

@@ -12,11 +12,15 @@
 -- waypoints near the player to F10, by type and height; Enter routes straight to one. A route that reaches a portal, the tram entrance or an elevator ends there; once
 -- the player has come out at its far end, the route goes on from there by itself.
 --
+-- Docks of the tram, ships and zeppelins follow his dock guidance (dock.lua): a dock is walked to and waited at; at a
+-- dock, the other dock of the line is noted instead of walked to, and near it the turn key faces it.
+--
 -- With the standalone WowVisionNavigation addon loaded as well, this stays off (both use the same globals).
 
 local maps = WowVision.base.navigation.maps
 local catalog = WowVision.wownavCatalog
 local Route = WowVision.wownavRoute
+local dock = WowVision.wownavDock
 
 local module = WowVision.base.navigation:createModule("wownav")
 local L = module.L
@@ -34,6 +38,7 @@ local SLOW_NOTICE = 1.0      -- seconds before "calculating route" is said
 local RECALC_DELAY = 1.0     -- seconds after the last change of the road preference before the route is searched again
 
 local job = nil              -- the pending search: { job, request, startedAt, noticed }
+local passive = nil          -- the noted dock (his passive mode): { name, near }
 local recalcAt = nil         -- when the running route is searched again with a changed road preference
 local route = nil            -- the wownavRoute of the module
 local routeMap = nil         -- the native map the running route lives on
@@ -141,6 +146,8 @@ maps:setRouteEngine(engine)
 local function say(text)
     WowVision:speak(text)
 end
+-- what his dock module says (WowVisionNavigationPrint)
+WowVision.wownavText.say = say
 
 local TRANSIT_WORDS = { portal = L["the portal"], tram = L["the tram"], lift = L["the elevator"] }
 
@@ -163,8 +170,11 @@ function module:search(text, px, py, map)
     if N == nil or map == nil or not catalog.covers(N, map) then
         return {}, nil
     end
-    local rows, info = catalog.search(N, _G.WowVisionNavigationTargetCatalog, map, text, px, py,
-        { showAuto = self.settings.showAuto == true })
+    local C = _G.WowVisionNavigationTargetCatalog
+    -- the boarding points of the docks join the hits (his list with Dock:BoardingTargets)
+    local extra = catalog.ensure(N, C, map) ~= nil and px ~= nil and dock.boardingRows(N, px, py) or nil
+    local rows, info = catalog.search(N, C, map, text, px, py,
+        { showAuto = self.settings.showAuto == true, extra = extra })
     if info.reason ~= nil then
         say(string.format(L["WowNav catalogue not usable: %s"], tostring(info.reason)))
     end
@@ -328,6 +338,9 @@ end
 local function startRoute(self, request, outcome)
     local N = self:network()
     route:begin(outcome.plan, request.contract, outcome.result, request.label)
+    if request.dockTarget ~= nil then
+        route.waitCheck = dock.waitAreaCheck(N, request.dockTarget)
+    end
     local px, py, map = route.env.position()
     routeMap = map
     -- the target's zone too: after a transit the route goes on to the same binding
@@ -386,6 +399,27 @@ function module:routeTo(target)
         search(self, { nodeId = target.data.nodeId, label = target.label, onArrive = target.onArrive })
         return true
     end
+    if type(target.data) == "table" and target.data.boardingTargetId ~= nil then
+        -- a boarding point: straight to it (his WowVisionNavigationStartDirect), no route
+        self:stopRoute(nil, true)
+        self.dockPath = dock.directPath(N, target.data)
+        maps:pathfind(self.dockPath)
+        return true
+    end
+    local dockTarget
+    if dock.isDockRow(target.data) then
+        -- a dock: the other dock of the line is noted (nothing to walk), any other dock is walked to
+        local outcome, value = dock.choose(N, target.data, px, py)
+        if outcome == "fail" then
+            say(value)
+            return true
+        elseif outcome == "passive" then
+            self:stopRoute(nil, true)
+            passive = { name = WowVisionNavigationTargetName(value), near = false }
+            return true
+        end
+        dockTarget = value
+    end
     local contract
     if type(target.data) == "table" and target.data.tid ~= nil then
         contract = catalog.contract(target.data, map)
@@ -397,13 +431,28 @@ function module:routeTo(target)
         }
     end
     self:stopRoute()
-    search(self, { contract = contract, label = target.label, onArrive = target.onArrive })
+    search(self, { contract = contract, label = target.label, onArrive = target.onArrive, dockTarget = dockTarget })
     return true
 end
 
--- Ends the running route, the search and a waiting transit.
-function module:stopRoute(keepPenalties)
+-- Ends the running route, the search and a waiting transit; with them the dock guidance (his StopNavigation resets
+-- the dock module unless the wait context is kept: keepDock, for the noted dock and a boarding point).
+function module:stopRoute(keepPenalties, keepDock)
     job = nil
+    if not keepDock then
+        local Dock = _G.WowVisionNavigationDockNavigation
+        if Dock ~= nil then
+            Dock:Reset(false)
+        end
+        passive = nil
+    end
+    if self.dockPath ~= nil then
+        self.dockPath:finish()
+        if maps.path == self.dockPath then
+            maps:stopPath()
+        end
+        self.dockPath = nil
+    end
     if route ~= nil then
         route:cancelAction()
         route:reset(keepPenalties)
@@ -481,6 +530,22 @@ function module:onRouteEvent(path, event)
         say(L["Back on the route"])
     elseif kind == "fallback" then
         say(L["One waypoint back"])
+    elseif kind == "arrived" and self.request ~= nil and self.request.dockTarget ~= nil then
+        -- at the dock: his Arrival says what to wait for; the beacon leads to the boarding point
+        local request = self.request
+        path:finish()
+        maps:stopPath()
+        self.path = nil
+        route:reset()
+        local x, y = route.env.position()
+        local boarding = dock.arrived(self:network(), request.dockTarget, x, y)
+        if boarding ~= nil then
+            self.dockPath = boarding
+            maps:pathfind(boarding)
+        end
+        if request.onArrive ~= nil then
+            request.onArrive()
+        end
     elseif kind == "arrived" then
         local request = self.request
         path:finish()
@@ -659,7 +724,47 @@ local function stepCatalog(self)
     end
 end
 
+-- The noted dock (his passive mode): WowVision says once when it is near, so the turn key can face it.
+local function checkPassive(self)
+    if passive == nil or passive.near then
+        return
+    end
+    local N = self:network()
+    local x, y = route.env.position()
+    local px, _, id = dock.alignment(N, x, y)
+    if px ~= nil and type(id) == "string" and id:find("^dock%-passive:") then
+        passive.near = true
+        say(string.format(L["%s is near; I turns you toward it"], passive.name or ""))
+    end
+end
+
+-- The turn key without a route (his I at a dock): at a reached dock the boarding point, near the noted dock that dock.
+-- Other users of maps.facingWithoutWaypoint (the surroundings) answer when the dock has nothing to face.
+local turnHooked = false
+local function hookTurn(self)
+    if turnHooked then
+        return
+    end
+    turnHooked = true
+    local previous = maps.facingWithoutWaypoint
+    maps.facingWithoutWaypoint = function()
+        if engine:isActive() then
+            local x, y = route.env.position()
+            local px, py = dock.alignment(self:network(), x, y)
+            if px ~= nil then
+                return math.atan2(py - y, px - x)
+            end
+        end
+        if previous ~= nil then
+            return previous()
+        end
+        return nil
+    end
+end
+
+local dockMap = nil
 function module:onEnable()
+    hookTurn(self)
     self:hasUpdate(function(self)
         if not engine:isActive() then
             return
@@ -668,6 +773,15 @@ function module:onEnable()
         checkRunning(self)
         checkAction(self)
         checkRecalculation(self)
+        checkPassive(self)
+        local _, _, map = route.env.position()
+        if map ~= nil and map ~= dockMap then
+            -- his ZoneLoaded at a continent change: a reached dock is forgotten, a noted one is kept
+            if dockMap ~= nil and _G.WowVisionNavigationDockNavigation ~= nil then
+                _G.WowVisionNavigationDockNavigation:ZoneLoaded(nil)
+            end
+            dockMap = map
+        end
         if job == nil then
             stepCatalog(self)
         end
