@@ -81,6 +81,7 @@ local function release(turn)
     if current == turn then
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
+        camera.endTurn()
     end
 end
 
@@ -106,8 +107,8 @@ local function measure(turn)
         aimError = turnMath.relativeBearing(turn.landX, turn.landY, endFacing, turn.x, turn.y)
         landDistance = math.sqrt((turn.x - turn.landX) ^ 2 + (turn.y - turn.landY) ^ 2)
     end
-    addLog(string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f",
+    local line = string.format(
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -120,8 +121,14 @@ local function measure(turn)
         turn.lead,
         aimError,
         landDistance,
-        turn.moving
-    ))
+        turn.moving,
+        turn.turnWithCamera or "-"
+    )
+    addLog(line)
+    -- (the always-on pad log, saved: what a turn did with the gamepad on)
+    if WowVision.pad ~= nil and WowVision.pad.log ~= nil then
+        WowVision.pad.log("turn: %s", line)
+    end
 end
 
 local function onUpdate()
@@ -227,6 +234,9 @@ function module:turnToWaypoint()
     current = turn
 
     pitchLock.noteTurn()
+    local before = camera.turnWithCameraText()
+    camera.beginTurn()
+    turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
     stopCamera()
     camera.align()
     if savedYawSpeed == nil then

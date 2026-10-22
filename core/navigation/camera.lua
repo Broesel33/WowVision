@@ -64,4 +64,52 @@ function camera.transfer()
     MouselookStop()
 end
 
+-- With the gamepad interface on, the character follows the camera only as
+-- Options, Gamepad, Turn With Camera says; its default (3) is "moving, in
+-- combat or casting", so standing still the sweep turned the camera alone
+-- and the turn key did nothing (user test 2026-10-22, keyboard I and the
+-- right stick press alike). For the length of one turn the setting is
+-- "always" (2), then the player's own value comes back.
+camera.TURN_WITH_CAMERA = "GamePadTurnWithCamera"
+local savedTurnWithCamera = nil
+
+local function gamepadOn()
+    local gamePad = C_GamePad
+    if gamePad == nil or type(gamePad.IsEnabled) ~= "function" then
+        return false
+    end
+    local ok, enabled = pcall(gamePad.IsEnabled)
+    return ok and enabled == true
+end
+
+function camera.beginTurn()
+    if savedTurnWithCamera ~= nil or not gamepadOn() then
+        return
+    end
+    local ok, value = pcall(GetCVar, camera.TURN_WITH_CAMERA)
+    if not ok or value == nil or tostring(value) == "2" then
+        return
+    end
+    if pcall(SetCVar, camera.TURN_WITH_CAMERA, "2") then
+        savedTurnWithCamera = tostring(value)
+    end
+end
+
+function camera.endTurn()
+    if savedTurnWithCamera == nil then
+        return
+    end
+    pcall(SetCVar, camera.TURN_WITH_CAMERA, savedTurnWithCamera)
+    savedTurnWithCamera = nil
+end
+
+-- For the turn log: the setting now ("-" without a gamepad).
+function camera.turnWithCameraText()
+    if not gamepadOn() then
+        return "-"
+    end
+    local ok, value = pcall(GetCVar, camera.TURN_WITH_CAMERA)
+    return ok and tostring(value) or "?"
+end
+
 WowVision.navigationCamera = camera
