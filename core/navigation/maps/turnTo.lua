@@ -82,6 +82,7 @@ local function release(turn)
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
         camera.endTurn()
+        camera.endCursorTurn()
     end
 end
 
@@ -121,7 +122,7 @@ local function measure(turn)
         end
     end
     local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s",
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, with the cursor on %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -136,7 +137,8 @@ local function measure(turn)
         landDistance,
         turn.moving,
         turn.turnWithCamera or "-",
-        tostring(turn.mouselookBefore)
+        tostring(turn.mouselookBefore),
+        tostring(turn.mouselookAfter)
     )
     if turn.facingTrace ~= nil then
         line = line .. " | turned by frame " .. table.concat(turn.facingTrace, "/")
@@ -192,6 +194,36 @@ local function onUpdate()
     elseif action == "trim" then
         SetCVar("cameraYawMoveSpeed", turn.cvar * fraction)
     end
+end
+
+-- Start the camera sweep of a planned turn.
+local function startSweep(turn)
+    stopCamera()
+    camera.align()
+    if savedYawSpeed == nil then
+        savedYawSpeed = GetCVar("cameraYawMoveSpeed")
+    end
+    SetCVar("cameraYawMoveSpeed", turn.cvar)
+    if turn.direction > 0 then
+        CAMERA_RIGHT_START(turn.speed / turn.cvar)
+    else
+        CAMERA_LEFT_START(turn.speed / turn.cvar)
+    end
+    turnFrame:SetScript("OnUpdate", onUpdate)
+
+    -- Watchdog: if the frame counter never runs (an error in it), the
+    -- camera must not keep spinning nor the speed stay changed.
+    C_Timer.After((turn.steps + 1 + turn.settleFrames) * turn.frameTime * 4 + 1, function()
+        if current ~= turn then
+            return
+        end
+        if turn.stopFrame == nil then
+            stopCamera()
+        end
+        restoreYawSpeed()
+        release(turn)
+        addLog("watchdog stopped a turn")
+    end)
 end
 
 -- Turn to the active route's current waypoint.
@@ -271,32 +303,21 @@ function module:turnToWaypoint()
     local before = camera.turnWithCameraText()
     camera.beginTurn()
     turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
-    stopCamera()
-    camera.align()
-    if savedYawSpeed == nil then
-        savedYawSpeed = GetCVar("cameraYawMoveSpeed")
+    -- Gamepad: the game keeps mouse look on (free look) and MouselookStop
+    -- cannot end it; the cursor mode can, as Blizzard's menus switch it.
+    -- For the turn the cursor is on, the sweep starts a frame later, and
+    -- free look comes back when the turn ends (release).
+    if turn.mouselookBefore and camera.gamepadOn() and camera.beginCursorTurn() then
+        C_Timer.After(0, function()
+            if current == turn then
+                turn.mouselookAfter = IsMouselooking()
+                turn.lastTime = GetTime()
+                startSweep(turn)
+            end
+        end)
+        return true
     end
-    SetCVar("cameraYawMoveSpeed", cvar)
-    if turn.direction > 0 then
-        CAMERA_RIGHT_START(sweepSpeed / cvar)
-    else
-        CAMERA_LEFT_START(sweepSpeed / cvar)
-    end
-    turnFrame:SetScript("OnUpdate", onUpdate)
-
-    -- Watchdog: if the frame counter never runs (an error in it), the
-    -- camera must not keep spinning nor the speed stay changed.
-    C_Timer.After((steps + 1 + turn.settleFrames) * frameTime * 4 + 1, function()
-        if current ~= turn then
-            return
-        end
-        if turn.stopFrame == nil then
-            stopCamera()
-        end
-        restoreYawSpeed()
-        release(turn)
-        addLog("watchdog stopped a turn")
-    end)
+    startSweep(turn)
     return true
 end
 
