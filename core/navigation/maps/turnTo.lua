@@ -122,7 +122,7 @@ local function measure(turn)
         end
     end
     local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, free look before %s, during %s, mouse look during %s, target before %s, after %s",
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, free look before %s, during %s, mouse look during %s, sweep from %s, target before %s, after %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -141,6 +141,7 @@ local function measure(turn)
         turn.freeLookBefore or "-",
         turn.freeLookDuring or "-",
         tostring(turn.mouselookDuring),
+        turn.startedAt or "the press",
         tostring(turn.targetBefore),
         tostring(UnitExists("target"))
     )
@@ -156,6 +157,9 @@ local function measure(turn)
     end
 end
 
+-- (defined below: the update starts a sweep the press could not)
+local startSweep
+
 local function onUpdate()
     local turn = current
     if turn == nil then
@@ -169,6 +173,13 @@ local function onUpdate()
     end
     local delta = now - turn.lastTime
     turn.lastTime = now
+    if turn.pendingStart then
+        -- (gamepad: free look took a frame to go off)
+        turn.pendingStart = nil
+        turn.mouselookDuring = IsMouselooking()
+        startSweep(turn)
+        return
+    end
     -- (gamepad mode: how far the character has turned, frame by frame)
     if turn.facingTrace ~= nil and #turn.facingTrace < 40 then
         local facing = GetPlayerFacing()
@@ -205,7 +216,7 @@ local function onUpdate()
 end
 
 -- Start the camera sweep of a planned turn.
-local function startSweep(turn)
+function startSweep(turn)
     stopCamera()
     camera.align()
     if savedYawSpeed == nil then
@@ -306,15 +317,22 @@ function module:turnToWaypoint()
     camera.beginTurn()
     turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
     if camera.gamepadOn() and camera.beginFreeLookTurn() then
-        -- (free look off; the sweep a frame later, when it has taken)
-        C_Timer.After(0, function()
-            if current == turn then
-                turn.freeLookDuring = camera.freeLookText()
-                turn.mouselookDuring = IsMouselooking()
-                turn.lastTime = GetTime()
-                startSweep(turn)
-            end
-        end)
+        turn.freeLookDuring = camera.freeLookText()
+        turn.mouselookDuring = IsMouselooking()
+        -- The sweep's frame count rests on starting at the press. A start
+        -- from a timer a frame later landed one frame too far about every
+        -- second turn (pad log 2026-10-23, 11:39: 0 or about 21 degrees),
+        -- as timers run before or after the camera's update. So: at the
+        -- press when free look is off at once, else in the turn frame's
+        -- own next update.
+        if not turn.mouselookDuring then
+            turn.startedAt = "the press"
+            startSweep(turn)
+        else
+            turn.startedAt = "the next update"
+            turn.pendingStart = true
+            turnFrame:SetScript("OnUpdate", onUpdate)
+        end
         return true
     end
     startSweep(turn)
