@@ -194,6 +194,120 @@ local function onUpdate()
     end
 end
 
+-- With the gamepad interface on, the sweep above does not work: once the
+-- right stick has been used, the gamepad's camera handling keeps mouse
+-- look on and overrides the swept camera, so the character followed for a
+-- few frames or not at all (pad log 2026-10-23, frame by frame). There the
+-- camera turns by the whole angle at once with FlipCameraYaw, the call
+-- Blizzard's own gamepad code turns the camera with, and the pulse hands it
+-- to the character. Its direction is not documented: the first step is
+-- measured, and if it went the wrong way the sign is flipped for the rest
+-- of the session. One correcting step takes what is left.
+local FLIP_SETTLE_FRAMES = 3
+local flipSign = -1
+
+local function signedTurned(from, to)
+    -- degrees turned to the right (facing grows to the left)
+    local turned = math.deg(from - to) % 360
+    if turned > 180 then
+        turned = turned - 360
+    end
+    return turned
+end
+
+local function gamepadUpdate()
+    local turn = current
+    if turn == nil or not turn.gamepad then
+        turnFrame:SetScript("OnUpdate", nil)
+        return
+    end
+    local now = GetTime()
+    if now <= turn.lastTime then
+        return
+    end
+    turn.lastTime = now
+    turn.frames = turn.frames + 1
+    if turn.frames == 1 then
+        camera.transfer()
+    end
+    if turn.frames < FLIP_SETTLE_FRAMES then
+        return
+    end
+    local facing = GetPlayerFacing()
+    local px, py = UnitPosition("player")
+    if facing == nil or px == nil then
+        release(turn)
+        return
+    end
+    local turned = signedTurned(turn.stepStart, facing)
+    local remaining = turnMath.relativeBearing(px, py, facing, turn.x, turn.y)
+    tinsert(turn.steps, string.format("step %d asked %.1f turned %.1f left %.1f", turn.step, turn.asked, turned, remaining))
+    if turn.step == 1 and math.abs(remaining) > TOLERANCE then
+        if math.abs(turned) > 1 and (turned > 0) ~= (turn.asked > 0) then
+            flipSign = -flipSign
+            tinsert(turn.steps, "direction flipped")
+        end
+        turn.step = 2
+        turn.frames = 0
+        turn.stepStart = facing
+        turn.asked = remaining
+        pcall(FlipCameraYaw, flipSign * remaining)
+        return
+    end
+    release(turn)
+    pitchLock.afterTurn()
+    local line = string.format(
+        "gamepad turn: target %.1f, error %.1f | %s | mouse look before %s, turn with camera %s",
+        turn.target,
+        -remaining * turn.direction,
+        table.concat(turn.steps, ", "),
+        tostring(turn.mouselookBefore),
+        turn.turnWithCamera or "-"
+    )
+    addLog(line)
+    if WowVision.pad ~= nil and WowVision.pad.log ~= nil then
+        WowVision.pad.log("%s", line)
+    end
+end
+
+local function gamepadTurn(x, y, relative, facing)
+    local turn = {
+        gamepad = true,
+        x = x,
+        y = y,
+        target = math.abs(relative),
+        direction = relative > 0 and 1 or -1,
+        startFacing = facing,
+        stepStart = facing,
+        asked = relative,
+        step = 1,
+        frames = 0,
+        steps = {},
+        lastTime = GetTime(),
+        mouselookBefore = IsMouselooking(),
+    }
+    current = turn
+    pitchLock.noteTurn()
+    local before = camera.turnWithCameraText()
+    camera.beginTurn()
+    turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
+    stopCamera()
+    camera.align()
+    if not pcall(FlipCameraYaw, flipSign * relative) then
+        release(turn)
+        return false
+    end
+    turnFrame:SetScript("OnUpdate", gamepadUpdate)
+    -- Watchdog, as for the sweep.
+    C_Timer.After(2, function()
+        if current == turn then
+            release(turn)
+            addLog("watchdog stopped a gamepad turn")
+        end
+    end)
+    return true
+end
+
 -- Turn to the active route's current waypoint.
 function module:turnToWaypoint()
     local waypoint = self.path ~= nil and self.path.currentWaypoint or nil
@@ -232,6 +346,10 @@ function module:turnToWaypoint()
     if math.abs(relative) <= TOLERANCE then
         pitchLock.alreadyFacing()
         return true
+    end
+
+    if camera.gamepadOn() and FlipCameraYaw ~= nil then
+        return gamepadTurn(waypoint.x, waypoint.y, relative, facing)
     end
 
     local target = math.abs(relative)
