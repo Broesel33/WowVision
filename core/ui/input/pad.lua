@@ -225,14 +225,19 @@ function pad.dispatch(button, base, hold)
         return
     end
     if entry.kind == "frame" and not InCombatLockdown() then
-        -- A secure action: this button's click goes on to the entry's frame.
-        button:SetAttribute("clickbutton", entry.frame)
+        -- A secure action: this button runs the entry's frame as a key-down
+        -- click, the way its keyboard key would. (A "click" redirect is a
+        -- release, which a key-down button ignores: every secure action did
+        -- nothing from the pad, user test 2026-10-23.)
+        button:SetAttribute("type", "macro")
+        button:SetAttribute("macrotext", "/click " .. entry.frame:GetName() .. " " .. entry.mouseButton .. " true")
     end
 end
 
 local function resetClick(button)
     if not InCombatLockdown() then
-        button:SetAttribute("clickbutton", nil)
+        button:SetAttribute("type", nil)
+        button:SetAttribute("macrotext", nil)
     end
 end
 
@@ -243,7 +248,7 @@ local function buildHold()
     for _, key in ipairs(padLogic.HOLD_KEYS) do
         local button = CreateFrame("Button", "WowVisionPadHold_" .. key, UIParent, "SecureActionButtonTemplate")
         button:RegisterForClicks("AnyDown")
-        button:SetAttribute("type", "click")
+        button:SetAttribute("useOnKeyDown", true)
         button:SetScript("PreClick", function(self)
             pad.dispatch(self, key, true)
         end)
@@ -253,7 +258,8 @@ local function buildHold()
     local key = padLogic.HOLD_KEY
     local button = CreateFrame("Button", "WowVisionPad_" .. key, UIParent, "SecureActionButtonTemplate")
     button:RegisterForClicks("AnyDown", "AnyUp")
-    button:SetAttribute("type", "click")
+    -- Its press runs on the release (the down only arms the D-pad).
+    button:SetAttribute("useOnKeyDown", false)
     -- Down: the D-pad keys with HOLD entries ("bind<KEY>" attributes, set
     -- out of combat) go to the hold buttons, and the press waits. Up: the
     -- D-pad comes back; the press runs unless the D-pad was used.
@@ -301,7 +307,9 @@ local function routerButton(base)
     end
     button = CreateFrame("Button", "WowVisionPad_" .. base, UIParent, "SecureActionButtonTemplate")
     button:RegisterForClicks("AnyDown")
-    button:SetAttribute("type", "click")
+    -- (whatever the player's "use key down" setting: a secure button acts
+    -- only on the half of the click it is set for)
+    button:SetAttribute("useOnKeyDown", true)
     button:SetScript("PreClick", function(self)
         pad.dispatch(self, base, false)
     end)
@@ -382,9 +390,11 @@ function pad.sync()
 end
 
 -- Attach a pooled secure frame (already configured with its action) to a
--- controller input. Returns a token for detach, or nil for a keyboard input.
-function pad.attach(input, frame)
-    local token = padLogic.add(routes, input, { kind = "frame", frame = frame })
+-- controller input; mouseButton is the one its keyboard binding clicks with
+-- (default LeftButton). Returns a token for detach, or nil for a keyboard
+-- input.
+function pad.attach(input, frame, mouseButton)
+    local token = padLogic.add(routes, input, { kind = "frame", frame = frame, mouseButton = mouseButton or "LeftButton" })
     if token ~= nil then
         pad.sync()
     end

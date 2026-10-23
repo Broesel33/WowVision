@@ -58,7 +58,7 @@ function Handle:_engage(inputs, padInputs, emulatedKey)
             if self.action.bind ~= nil then
                 token = pad.attachCommand(input, self.spec.command)
             else
-                token = pad.attach(input, frame)
+                token = pad.attach(input, frame, emulatedKey)
             end
             if token ~= nil then
                 tinsert(self.padTokens, token)

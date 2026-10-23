@@ -31,7 +31,7 @@ function ActivatedBinding:activate()
             self.binding:onActivate(frame, self.info)
         end
         tinsert(self.frames, frame)
-        local token = WowVision.pad.attach(input, frame)
+        local token = WowVision.pad.attach(input, frame, self.info.emulatedKey)
         if token ~= nil then
             tinsert(self.padTokens, token)
         end
