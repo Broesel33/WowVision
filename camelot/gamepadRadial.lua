@@ -205,8 +205,16 @@ stickFrame:SetScript("OnGamepadStick", function(_, stick, x, y)
     return false
 end)
 
+-- Compared with the frame's own state, never an assumed one: the frame is
+-- taking the sticks from the start once it has its stick script (pad log
+-- 2026-10-23: taken at login with the wheel closed, both sticks dead until
+-- the wheel had been opened and closed once).
 local function syncStick()
     local want = GamepadRadial ~= nil and GamepadRadial:IsShown() or false
+    local ok, enabled = pcall(stickFrame.IsGamePadStickEnabled, stickFrame)
+    if ok then
+        stickOn = enabled == true
+    end
     if want == stickOn or InCombatLockdown() then
         return
     end
@@ -231,9 +239,8 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
-events:SetScript("OnEvent", function(_, event)
+events:SetScript("OnEvent", function()
     hookRadial()
-    if event == "PLAYER_REGEN_ENABLED" then
-        syncStick()
-    end
+    syncStick()
 end)
+syncStick()
