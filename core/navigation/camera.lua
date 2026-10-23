@@ -132,31 +132,6 @@ function camera.endTurn()
     savedTurnWithCamera = nil
 end
 
--- With the gamepad the game keeps mouse look on (free look) once the right
--- stick has been used, and the camera sweep of a turn does not reach the
--- character then (pad log 2026-10-23). The gamepad's cursor mode ends free
--- look, the way Blizzard's menus switch it; a turn has the cursor on and
--- gives free look back when it ends. True when the cursor went on.
-local cursorTurn = false
-
-function camera.beginCursorTurn()
-    if cursorTurn or SetGamePadCursorControl == nil then
-        return false
-    end
-    if pcall(SetGamePadCursorControl, true) then
-        cursorTurn = true
-    end
-    return cursorTurn
-end
-
-function camera.endCursorTurn()
-    if not cursorTurn then
-        return
-    end
-    cursorTurn = false
-    pcall(SetGamePadCursorControl, false)
-end
-
 -- For the turn log: how far the camera stick is pushed (0 to 1), nil
 -- without a gamepad. Read only, the way Blizzard's gamepad code reads it.
 function camera.cameraStickLength()

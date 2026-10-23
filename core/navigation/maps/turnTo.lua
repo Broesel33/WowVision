@@ -82,7 +82,6 @@ local function release(turn)
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
         camera.endTurn()
-        camera.endCursorTurn()
     end
 end
 
@@ -122,7 +121,7 @@ local function measure(turn)
         end
     end
     local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, with the cursor on %s",
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -137,8 +136,7 @@ local function measure(turn)
         landDistance,
         turn.moving,
         turn.turnWithCamera or "-",
-        tostring(turn.mouselookBefore),
-        tostring(turn.mouselookAfter)
+        tostring(turn.mouselookBefore)
     )
     if turn.facingTrace ~= nil then
         line = line .. string.format(" | camera stick at the press %s | turned by frame (@ camera stick) ",
@@ -295,33 +293,10 @@ function module:turnToWaypoint()
     current = turn
 
     pitchLock.noteTurn()
-    -- The sweep needs the camera free and the character left behind until
-    -- the pulse. With the gamepad, mouse look is on once the right stick
-    -- has been used, and then the turn went wrong: the character followed
-    -- the sweep for a few frames and stopped, later turns did not move at
-    -- all (pad log 2026-10-23: with mouse look off the same turn landed 1.4
-    -- degrees off). So a turn starts with mouse look off.
     turn.mouselookBefore = IsMouselooking()
-    if turn.mouselookBefore then
-        MouselookStop()
-    end
     local before = camera.turnWithCameraText()
     camera.beginTurn()
     turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
-    -- Gamepad: the game keeps mouse look on (free look) and MouselookStop
-    -- cannot end it; the cursor mode can, as Blizzard's menus switch it.
-    -- For the turn the cursor is on, the sweep starts a frame later, and
-    -- free look comes back when the turn ends (release).
-    if turn.mouselookBefore and camera.gamepadOn() and camera.beginCursorTurn() then
-        C_Timer.After(0, function()
-            if current == turn then
-                turn.mouselookAfter = IsMouselooking()
-                turn.lastTime = GetTime()
-                startSweep(turn)
-            end
-        end)
-        return true
-    end
     startSweep(turn)
     return true
 end
