@@ -67,6 +67,10 @@ end
 local LOG_MAX = 2000
 local logOn = true
 local logHooked = false
+-- Lines from before login (addons loading) wait here: the saved variables
+-- replace WowVisionDump while addons load, and the log starts at login.
+local logStarted = false
+local earlyLines = {}
 
 local function log(fmt, ...)
     if not logOn then
@@ -76,13 +80,18 @@ local function log(fmt, ...)
     if not ok then
         text = fmt
     end
+    local line = string.format("%.3f %s", GetTime(), text)
+    if not logStarted then
+        tinsert(earlyLines, line)
+        return
+    end
     WowVisionDump = WowVisionDump or {}
     local lines = WowVisionDump.padLog
     if lines == nil then
         lines = {}
         WowVisionDump.padLog = lines
     end
-    tinsert(lines, string.format("%.3f %s", GetTime(), text))
+    tinsert(lines, line)
     if #lines > LOG_MAX then
         tremove(lines, 1)
     end
@@ -160,7 +169,77 @@ function pad.restartLog()
         WowVisionDump.padLogBefore = WowVisionDump.padLog
     end
     WowVisionDump.padLog = {}
+    logStarted = true
     log("log started, gamepad interface %s", tostring(pad.controllerUIEnabled()))
+    for _, line in ipairs(earlyLines) do
+        tinsert(WowVisionDump.padLog, line)
+    end
+    earlyLines = {}
+end
+
+-- What decides where the sticks go, logged on every change (the stick
+-- report 2026-10-23: both sticks did nothing, cause unknown). Blizzard's
+-- side read only, never changed: its window focus mode (the sticks steer
+-- the focused frame then), the frame it focuses, its popups, the gamepad
+-- main menu wheel and the binding set it holds the right stick with, the
+-- shortcut layer screen, its stick listener. Other files add their own
+-- (pad.addStateSource): the wheel window's stick handler.
+local stateSources = {}
+
+function pad.addStateSource(name, fn)
+    tinsert(stateSources, { name = name, fn = fn })
+end
+
+local function frameName(frame)
+    if frame == nil then
+        return "none"
+    end
+    local ok, name = pcall(frame.GetName, frame)
+    return ok and name or "unnamed"
+end
+
+local function stickStateText()
+    local gm = GamepadMode
+    if gm == nil then
+        return nil
+    end
+    local fcm = gm.FrameControlsManager
+    local popups = gm.PopupHandler ~= nil and gm.PopupHandler.visiblePopups or nil
+    local radial = GamepadRadial
+    local radialBindings = "-"
+    if radial ~= nil and radial.inputBindings ~= nil and gm.IsBindingGroupActive ~= nil then
+        radialBindings = tostring(call(gm.IsBindingGroupActive, radial.inputBindings))
+    end
+    local listener = inputBindingAxisListener
+    local parts = {
+        "window focus " .. tostring(fcm ~= nil and fcm.isUIFocused),
+        "focused " .. frameName(fcm ~= nil and fcm.focusedFrame or nil),
+        "shown frames " .. tostring(fcm ~= nil and fcm.shownFrames ~= nil and #fcm.shownFrames or "?"),
+        "popups " .. tostring(popups ~= nil and #popups or "?"),
+        "wheel " .. tostring(radial ~= nil and call(radial.IsShown, radial)),
+        "wheel bindings " .. radialBindings,
+        "shortcut screen " .. tostring(GamepadHudMode ~= nil and call(GamepadHudMode.IsShown, GamepadHudMode)),
+        "Blizzard stick listener " .. tostring(listener ~= nil and call(listener.IsGamePadStickEnabled, listener)),
+    }
+    for _, source in ipairs(stateSources) do
+        tinsert(parts, source.name .. " " .. tostring(call(source.fn)))
+    end
+    return table.concat(parts, ", ")
+end
+
+local lastStickState = nil
+local nextStickCheck = 0
+local function watchSticks()
+    local now = GetTime()
+    if now < nextStickCheck then
+        return
+    end
+    nextStickCheck = now + 0.1
+    local text = stickStateText()
+    if text ~= nil and text ~= lastStickState then
+        lastStickState = text
+        log("sticks: %s", text)
+    end
 end
 
 -- The game's shortcut layer (both shoulders), Forever's gamepad interface.
@@ -459,6 +538,9 @@ frame:SetScript("OnEvent", function(_, event)
     end
 end)
 frame:SetScript("OnUpdate", function()
+    if logStarted then
+        watchSticks()
+    end
     if not InCombatLockdown() and (dirty or next(routes) ~= nil) then
         pad.sync()
     end
