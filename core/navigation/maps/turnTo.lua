@@ -107,6 +107,19 @@ local function measure(turn)
         aimError = turnMath.relativeBearing(turn.landX, turn.landY, endFacing, turn.x, turn.y)
         landDistance = math.sqrt((turn.x - turn.landX) ^ 2 + (turn.y - turn.landY) ^ 2)
     end
+    if turn.facingTrace ~= nil then
+        -- After the turn, where the character goes on to: the camera may
+        -- still be moving in gamepad mode.
+        for _, delay in ipairs({ 0.25, 1 }) do
+            C_Timer.After(delay, function()
+                local facing = GetPlayerFacing()
+                if facing ~= nil and WowVision.pad ~= nil then
+                    WowVision.pad.log("turn %.2f s later: turned %.1f of %.1f", delay,
+                        turnMath.turned(turn.startFacing, facing, turn.direction, turn.target), turn.target)
+                end
+            end)
+        end
+    end
     local line = string.format(
         "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s",
         turn.target,
@@ -124,6 +137,9 @@ local function measure(turn)
         turn.moving,
         turn.turnWithCamera or "-"
     )
+    if turn.facingTrace ~= nil then
+        line = line .. " | turned by frame " .. table.concat(turn.facingTrace, "/")
+    end
     addLog(line)
     -- (the always-on pad log, saved: what a turn did with the gamepad on)
     if WowVision.pad ~= nil and WowVision.pad.log ~= nil then
@@ -144,6 +160,12 @@ local function onUpdate()
     end
     local delta = now - turn.lastTime
     turn.lastTime = now
+    -- (gamepad mode: how far the character has turned, frame by frame)
+    if turn.facingTrace ~= nil and #turn.facingTrace < 40 then
+        local facing = GetPlayerFacing()
+        tinsert(turn.facingTrace, facing ~= nil
+            and string.format("%.1f", turnMath.turned(turn.startFacing, facing, turn.direction, turn.target)) or "?")
+    end
     if turn.stopFrame ~= nil then
         turn.framesSinceStop = turn.framesSinceStop + 1
         if turn.framesSinceStop >= turn.settleFrames then
@@ -230,6 +252,7 @@ function module:turnToWaypoint()
         frameMs = {},
         lead = relative - raw,
         moving = moving,
+        facingTrace = camera.gamepadOn() and {} or nil,
     }
     current = turn
 
