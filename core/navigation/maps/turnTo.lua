@@ -82,6 +82,7 @@ local function release(turn)
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
         camera.endTurn()
+        camera.endFreeLookTurn()
     end
 end
 
@@ -121,7 +122,7 @@ local function measure(turn)
         end
     end
     local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s",
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, free look before %s, during %s, mouse look during %s, target before %s, after %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -136,7 +137,12 @@ local function measure(turn)
         landDistance,
         turn.moving,
         turn.turnWithCamera or "-",
-        tostring(turn.mouselookBefore)
+        tostring(turn.mouselookBefore),
+        turn.freeLookBefore or "-",
+        turn.freeLookDuring or "-",
+        tostring(turn.mouselookDuring),
+        tostring(turn.targetBefore),
+        tostring(UnitExists("target"))
     )
     if turn.facingTrace ~= nil then
         line = line .. string.format(" | camera stick at the press %s | turned by frame (@ camera stick) ",
@@ -294,9 +300,23 @@ function module:turnToWaypoint()
 
     pitchLock.noteTurn()
     turn.mouselookBefore = IsMouselooking()
+    turn.targetBefore = UnitExists("target")
+    turn.freeLookBefore = camera.freeLookText()
     local before = camera.turnWithCameraText()
     camera.beginTurn()
     turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
+    if camera.gamepadOn() and camera.beginFreeLookTurn() then
+        -- (free look off; the sweep a frame later, when it has taken)
+        C_Timer.After(0, function()
+            if current == turn then
+                turn.freeLookDuring = camera.freeLookText()
+                turn.mouselookDuring = IsMouselooking()
+                turn.lastTime = GetTime()
+                startSweep(turn)
+            end
+        end)
+        return true
+    end
     startSweep(turn)
     return true
 end

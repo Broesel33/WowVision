@@ -171,6 +171,13 @@ function pad.restartLog()
     WowVisionDump.padLog = {}
     logStarted = true
     log("log started, gamepad interface %s", tostring(pad.controllerUIEnabled()))
+    local names = { "SetGamePadFreeLook", "IsGamePadFreelookEnabled", "SetGamePadCursorControl",
+        "IsGamePadCursorControlEnabled", "FlipCameraYaw" }
+    local found = {}
+    for _, name in ipairs(names) do
+        tinsert(found, name .. " " .. (type(_G[name]) == "function" and "yes" or "no"))
+    end
+    log("game functions: %s", table.concat(found, ", "))
     for _, line in ipairs(earlyLines) do
         tinsert(WowVisionDump.padLog, line)
     end

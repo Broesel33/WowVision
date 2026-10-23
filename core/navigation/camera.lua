@@ -132,6 +132,47 @@ function camera.endTurn()
     savedTurnWithCamera = nil
 end
 
+-- With the gamepad, the character follows the camera only while the camera
+-- stick is pushed: free look, the gamepad's mouse look, is on all the
+-- time, and a swept camera without stick input left the character where
+-- it was (pad log 2026-10-23: every turn that worked had the stick pushed
+-- a little, 0.03 to 0.98; every failed one had it at 0). Retail has a
+-- switch for free look; where the client has it, a turn switches free look
+-- off (then the sweep and pulse work as without a gamepad) and back on
+-- when it ends. True when free look went off.
+local freeLookTurn = false
+
+function camera.beginFreeLookTurn()
+    if freeLookTurn or SetGamePadFreeLook == nil or IsGamePadFreelookEnabled == nil then
+        return false
+    end
+    local ok, enabled = pcall(IsGamePadFreelookEnabled)
+    if not ok or not enabled then
+        return false
+    end
+    if pcall(SetGamePadFreeLook, false) then
+        freeLookTurn = true
+    end
+    return freeLookTurn
+end
+
+function camera.endFreeLookTurn()
+    if not freeLookTurn then
+        return
+    end
+    freeLookTurn = false
+    pcall(SetGamePadFreeLook, true)
+end
+
+-- For the turn log: free look now ("-": no such function here).
+function camera.freeLookText()
+    if IsGamePadFreelookEnabled == nil then
+        return "-"
+    end
+    local ok, enabled = pcall(IsGamePadFreelookEnabled)
+    return ok and tostring(enabled) or "?"
+end
+
 -- For the turn log: how far the camera stick is pushed (0 to 1), nil
 -- without a gamepad. Read only, the way Blizzard's gamepad code reads it.
 function camera.cameraStickLength()
