@@ -64,18 +64,12 @@ function camera.transfer()
     MouselookStop()
 end
 
--- With the gamepad interface on, the character follows the camera only as
--- Options, Gamepad, Turn With Camera says; its default (3) is "moving, in
--- combat or casting", so standing still the sweep turned the camera alone
--- and the turn key did nothing (user test 2026-10-22, keyboard I and the
--- right stick press alike). The first login with the gamepad interface on
--- sets it to "always" (2), like the camera settings above; a player who
--- changes it back keeps their choice. In case it is not "always" anyway
--- (changed back, or reset), each turn sets it for its own length and then
--- gives the player's value back.
-camera.TURN_WITH_CAMERA = "GamePadTurnWithCamera"
-camera.TURN_WITH_CAMERA_ALWAYS = "2"
-local savedTurnWithCamera = nil
+-- The gamepad (WoW: Forever's gamepad interface). Free look, the gamepad's
+-- mouse look, is on all the time there, and the swept camera then reaches
+-- the character only while the camera stick is pushed (pad logs
+-- 2026-10-23). For the length of a turn free look is off; then the sweep
+-- and the pulse work as without a gamepad.
+local freeLookOff = false
 
 local function gamepadOn()
     local gamePad = C_GamePad
@@ -85,121 +79,24 @@ local function gamepadOn()
     local ok, enabled = pcall(gamePad.IsEnabled)
     return ok and enabled == true
 end
-camera.gamepadOn = gamepadOn
 
--- state.gamepadTurnSet records that this character was handled. Only a
--- login with the gamepad interface on counts. Returns true when the setting
--- was changed.
-function camera.applyGamepadOnce(state, getCVar, setCVar, isGamepadOn)
-    if state.gamepadTurnSet or getCVar == nil or setCVar == nil or not isGamepadOn() then
+-- True when free look went off for this turn.
+function camera.beginGamepadTurn()
+    if freeLookOff or not gamepadOn() or SetGamePadFreeLook == nil or IsGamePadFreelookEnabled == nil then
         return false
     end
-    local okRead, value = pcall(getCVar, camera.TURN_WITH_CAMERA)
-    if not okRead or value == nil then
-        -- No such setting in this client.
-        return false
+    local ok, on = pcall(IsGamePadFreelookEnabled)
+    if ok and on and pcall(SetGamePadFreeLook, false) then
+        freeLookOff = true
     end
-    if tostring(value) == camera.TURN_WITH_CAMERA_ALWAYS then
-        state.gamepadTurnSet = true
-        return false
-    end
-    if not pcall(setCVar, camera.TURN_WITH_CAMERA, camera.TURN_WITH_CAMERA_ALWAYS) then
-        -- Refused: try again next login.
-        return false
-    end
-    state.gamepadTurnSet = true
-    return true
+    return freeLookOff
 end
 
-function camera.beginTurn()
-    if savedTurnWithCamera ~= nil or not gamepadOn() then
-        return
+function camera.endGamepadTurn()
+    if freeLookOff then
+        freeLookOff = false
+        pcall(SetGamePadFreeLook, true)
     end
-    local ok, value = pcall(GetCVar, camera.TURN_WITH_CAMERA)
-    if not ok or value == nil or tostring(value) == camera.TURN_WITH_CAMERA_ALWAYS then
-        return
-    end
-    if pcall(SetCVar, camera.TURN_WITH_CAMERA, camera.TURN_WITH_CAMERA_ALWAYS) then
-        savedTurnWithCamera = tostring(value)
-    end
-end
-
-function camera.endTurn()
-    if savedTurnWithCamera == nil then
-        return
-    end
-    pcall(SetCVar, camera.TURN_WITH_CAMERA, savedTurnWithCamera)
-    savedTurnWithCamera = nil
-end
-
--- With the gamepad, the character follows the camera only while the camera
--- stick is pushed: free look, the gamepad's mouse look, is on all the
--- time, and a swept camera without stick input left the character where
--- it was (pad log 2026-10-23: every turn that worked had the stick pushed
--- a little, 0.03 to 0.98; every failed one had it at 0). Retail has a
--- switch for free look; where the client has it, a turn switches free look
--- off (then the sweep and pulse work as without a gamepad) and back on
--- when it ends. True when free look went off.
-local freeLookTurn = false
-
-function camera.beginFreeLookTurn()
-    if freeLookTurn or SetGamePadFreeLook == nil or IsGamePadFreelookEnabled == nil then
-        return false
-    end
-    local ok, enabled = pcall(IsGamePadFreelookEnabled)
-    if not ok or not enabled then
-        return false
-    end
-    if pcall(SetGamePadFreeLook, false) then
-        freeLookTurn = true
-    end
-    return freeLookTurn
-end
-
-function camera.endFreeLookTurn()
-    if not freeLookTurn then
-        return
-    end
-    freeLookTurn = false
-    pcall(SetGamePadFreeLook, true)
-end
-
--- For the turn log: free look now ("-": no such function here).
-function camera.freeLookText()
-    if IsGamePadFreelookEnabled == nil then
-        return "-"
-    end
-    local ok, enabled = pcall(IsGamePadFreelookEnabled)
-    return ok and tostring(enabled) or "?"
-end
-
--- For the turn log: how far the camera stick is pushed (0 to 1), nil
--- without a gamepad. Read only, the way Blizzard's gamepad code reads it.
-function camera.cameraStickLength()
-    local gamePad = C_GamePad
-    if gamePad == nil or gamePad.GetDeviceMappedState == nil then
-        return nil
-    end
-    local ok, state = pcall(gamePad.GetDeviceMappedState)
-    if not ok or state == nil or state.sticks == nil then
-        return nil
-    end
-    for i = 1, state.stickCount or 0 do
-        local okName, name = pcall(gamePad.StickIndexToConfigName, i - 1)
-        if okName and name == "Camera" and state.sticks[i] ~= nil then
-            return state.sticks[i].len
-        end
-    end
-    return nil
-end
-
--- For the turn log: the setting now ("-" without a gamepad).
-function camera.turnWithCameraText()
-    if not gamepadOn() then
-        return "-"
-    end
-    local ok, value = pcall(GetCVar, camera.TURN_WITH_CAMERA)
-    return ok and tostring(value) or "?"
 end
 
 WowVision.navigationCamera = camera

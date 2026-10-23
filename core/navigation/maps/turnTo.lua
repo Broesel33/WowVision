@@ -81,8 +81,7 @@ local function release(turn)
     if current == turn then
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
-        camera.endTurn()
-        camera.endFreeLookTurn()
+        camera.endGamepadTurn()
     end
 end
 
@@ -108,21 +107,8 @@ local function measure(turn)
         aimError = turnMath.relativeBearing(turn.landX, turn.landY, endFacing, turn.x, turn.y)
         landDistance = math.sqrt((turn.x - turn.landX) ^ 2 + (turn.y - turn.landY) ^ 2)
     end
-    if turn.facingTrace ~= nil then
-        -- After the turn, where the character goes on to: the camera may
-        -- still be moving in gamepad mode.
-        for _, delay in ipairs({ 0.25, 1 }) do
-            C_Timer.After(delay, function()
-                local facing = GetPlayerFacing()
-                if facing ~= nil and WowVision.pad ~= nil then
-                    WowVision.pad.log("turn %.2f s later: turned %.1f of %.1f", delay,
-                        turnMath.turned(turn.startFacing, facing, turn.direction, turn.target), turn.target)
-                end
-            end)
-        end
-    end
-    local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s, free look before %s, during %s, mouse look during %s, sweep from %s, target before %s, after %s",
+    addLog(string.format(
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f",
         turn.target,
         turned,
         turned - turn.target,
@@ -135,30 +121,9 @@ local function measure(turn)
         turn.lead,
         aimError,
         landDistance,
-        turn.moving,
-        turn.turnWithCamera or "-",
-        tostring(turn.mouselookBefore),
-        turn.freeLookBefore or "-",
-        turn.freeLookDuring or "-",
-        tostring(turn.mouselookDuring),
-        turn.startedAt or "the press",
-        tostring(turn.targetBefore),
-        tostring(UnitExists("target"))
-    )
-    if turn.facingTrace ~= nil then
-        line = line .. string.format(" | camera stick at the press %s | turned by frame (@ camera stick) ",
-            turn.stickAtPress ~= nil and string.format("%.2f", turn.stickAtPress) or "?")
-            .. table.concat(turn.facingTrace, "/")
-    end
-    addLog(line)
-    -- (the always-on pad log, saved: what a turn did with the gamepad on)
-    if WowVision.pad ~= nil and WowVision.pad.log ~= nil then
-        WowVision.pad.log("turn: %s", line)
-    end
+        turn.moving
+    ))
 end
-
--- (defined below: the update starts a sweep the press could not)
-local startSweep
 
 local function onUpdate()
     local turn = current
@@ -173,21 +138,6 @@ local function onUpdate()
     end
     local delta = now - turn.lastTime
     turn.lastTime = now
-    if turn.pendingStart then
-        -- (gamepad: free look took a frame to go off)
-        turn.pendingStart = nil
-        turn.mouselookDuring = IsMouselooking()
-        startSweep(turn)
-        return
-    end
-    -- (gamepad mode: how far the character has turned, frame by frame)
-    if turn.facingTrace ~= nil and #turn.facingTrace < 40 then
-        local facing = GetPlayerFacing()
-        local stick = camera.cameraStickLength()
-        tinsert(turn.facingTrace, (facing ~= nil
-            and string.format("%.1f", turnMath.turned(turn.startFacing, facing, turn.direction, turn.target)) or "?")
-            .. (stick ~= nil and string.format("@%.2f", stick) or ""))
-    end
     if turn.stopFrame ~= nil then
         turn.framesSinceStop = turn.framesSinceStop + 1
         if turn.framesSinceStop >= turn.settleFrames then
@@ -213,36 +163,6 @@ local function onUpdate()
     elseif action == "trim" then
         SetCVar("cameraYawMoveSpeed", turn.cvar * fraction)
     end
-end
-
--- Start the camera sweep of a planned turn.
-function startSweep(turn)
-    stopCamera()
-    camera.align()
-    if savedYawSpeed == nil then
-        savedYawSpeed = GetCVar("cameraYawMoveSpeed")
-    end
-    SetCVar("cameraYawMoveSpeed", turn.cvar)
-    if turn.direction > 0 then
-        CAMERA_RIGHT_START(turn.speed / turn.cvar)
-    else
-        CAMERA_LEFT_START(turn.speed / turn.cvar)
-    end
-    turnFrame:SetScript("OnUpdate", onUpdate)
-
-    -- Watchdog: if the frame counter never runs (an error in it), the
-    -- camera must not keep spinning nor the speed stay changed.
-    C_Timer.After((turn.steps + 1 + turn.settleFrames) * turn.frameTime * 4 + 1, function()
-        if current ~= turn then
-            return
-        end
-        if turn.stopFrame == nil then
-            stopCamera()
-        end
-        restoreYawSpeed()
-        release(turn)
-        addLog("watchdog stopped a turn")
-    end)
 end
 
 -- Turn to the active route's current waypoint.
@@ -304,47 +224,41 @@ function module:turnToWaypoint()
         frameMs = {},
         lead = relative - raw,
         moving = moving,
-        facingTrace = camera.gamepadOn() and {} or nil,
-        stickAtPress = camera.cameraStickLength(),
     }
     current = turn
 
     pitchLock.noteTurn()
-    turn.mouselookBefore = IsMouselooking()
-    turn.targetBefore = UnitExists("target")
-    turn.freeLookBefore = camera.freeLookText()
-    local before = camera.turnWithCameraText()
-    camera.beginTurn()
-    turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
-    -- Gamepad: pressing the stick nudges the camera off the character, and
-    -- switching free look off hands that offset to the character before
-    -- the turn (pad log 2026-10-23, 11:43: jumps of 8 to 28 degrees before
-    -- the sweep, the turn off by as much). So the camera goes straight
-    -- behind the character first.
-    if camera.gamepadOn() then
-        stopCamera()
-        camera.align()
+    stopCamera()
+    camera.align()
+    -- With the gamepad, free look is off for the turn (camera.lua). Only now,
+    -- with the camera straight behind the character: free look going off
+    -- hands any camera offset to the character, and pressing the stick
+    -- nudges the camera.
+    camera.beginGamepadTurn()
+    if savedYawSpeed == nil then
+        savedYawSpeed = GetCVar("cameraYawMoveSpeed")
     end
-    if camera.gamepadOn() and camera.beginFreeLookTurn() then
-        turn.freeLookDuring = camera.freeLookText()
-        turn.mouselookDuring = IsMouselooking()
-        -- The sweep's frame count rests on starting at the press. A start
-        -- from a timer a frame later landed one frame too far about every
-        -- second turn (pad log 2026-10-23, 11:39: 0 or about 21 degrees),
-        -- as timers run before or after the camera's update. So: at the
-        -- press when free look is off at once, else in the turn frame's
-        -- own next update.
-        if not turn.mouselookDuring then
-            turn.startedAt = "the press"
-            startSweep(turn)
-        else
-            turn.startedAt = "the next update"
-            turn.pendingStart = true
-            turnFrame:SetScript("OnUpdate", onUpdate)
+    SetCVar("cameraYawMoveSpeed", cvar)
+    if turn.direction > 0 then
+        CAMERA_RIGHT_START(sweepSpeed / cvar)
+    else
+        CAMERA_LEFT_START(sweepSpeed / cvar)
+    end
+    turnFrame:SetScript("OnUpdate", onUpdate)
+
+    -- Watchdog: if the frame counter never runs (an error in it), the
+    -- camera must not keep spinning nor the speed stay changed.
+    C_Timer.After((steps + 1 + turn.settleFrames) * frameTime * 4 + 1, function()
+        if current ~= turn then
+            return
         end
-        return true
-    end
-    startSweep(turn)
+        if turn.stopFrame == nil then
+            stopCamera()
+        end
+        restoreYawSpeed()
+        release(turn)
+        addLog("watchdog stopped a turn")
+    end)
     return true
 end
 

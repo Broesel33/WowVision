@@ -34,8 +34,5 @@
   <Script file="gamepadBars.lua" />
   <!-- Blizzard's gamepad main menu (the wheel) as a window. -->
   <Script file="gamepadRadial.lua" />
-  <!-- Developer tool: checks what controller support would rest on
-       (/wv padprobe). -->
-  <Script file="gamepadProbe.lua" />
 
 </Ui>

@@ -5,8 +5,8 @@
 -- each pad key once, to its own secure button, and a press picks the entry
 -- for the modifiers held right then (padLogic.heldModKey).
 --
--- What the gamepad probe (camelot/gamepadProbe.lua, 2026-10-21) showed and
--- this rests on:
+-- What a probe in the game showed (WoW: Forever, 2026-10-21) and this rests
+-- on:
 -- - The pad sends no Shift, Ctrl or Alt; IsKeyDown reads every pad button.
 -- - An addon override binding on a pad key beats the game's gamepad
 --   bindings. Blizzard's window mode (UI focus) binds every pad key over
@@ -58,19 +58,16 @@ local function isDown(key)
     return call(IsKeyDown, key) == true
 end
 
--- The pad log, always on: every pad press, every key taken back from the
--- game, the window keys and the speech around them, with the time, into
--- WowVisionDump.padLog (the last LOG_MAX lines, saved at logout or
--- /reload). Keyboard presses show up as window keys and speech without a
--- pad line, for comparison. Nothing is printed per line: chat output must
--- not mix into the speech it logs. /wv padlog starts it afresh.
+-- The pad log, into WowVisionDump.padLog (the last LOG_MAX lines, saved at
+-- logout or /reload; the session before stays as padLogBefore): every pad
+-- press and what it ran, every key taken back from the game, the window
+-- keys and the speech around them. It runs by itself while the gamepad
+-- interface is on, so a tester's report comes with its log; /wv padlog
+-- starts it afresh. Nothing is printed: chat output would mix into the
+-- speech it logs.
 local LOG_MAX = 2000
-local logOn = true
+local logOn = false
 local logHooked = false
--- Lines from before login (addons loading) wait here: the saved variables
--- replace WowVisionDump while addons load, and the log starts at login.
-local logStarted = false
-local earlyLines = {}
 
 local function log(fmt, ...)
     if not logOn then
@@ -80,22 +77,13 @@ local function log(fmt, ...)
     if not ok then
         text = fmt
     end
-    local line = string.format("%.3f %s", GetTime(), text)
-    if not logStarted then
-        tinsert(earlyLines, line)
-        return
-    end
-    WowVisionDump = WowVisionDump or {}
     local lines = WowVisionDump.padLog
-    if lines == nil then
-        lines = {}
-        WowVisionDump.padLog = lines
-    end
-    tinsert(lines, line)
+    tinsert(lines, string.format("%.3f %s", GetTime(), text))
     if #lines > LOG_MAX then
         tremove(lines, 1)
     end
 end
+pad.log = log
 
 -- Spoken text for the log; secret text (Retail-style unit values) is not
 -- touched.
@@ -109,16 +97,8 @@ local function shortText(text)
     return text:sub(1, 50)
 end
 
-local function facingText()
-    local facing = call(GetPlayerFacing)
-    if type(facing) ~= "number" or WowVision.isSecret(facing) then
-        return "?"
-    end
-    return string.format("%.1f", math.deg(facing))
-end
-
--- The hooks go in at login: the speech and maps modules load after this
--- file.
+-- The hooks go in at the first start: the speech module and the window host
+-- load after this file.
 local function hookLog()
     if logHooked then
         return
@@ -141,112 +121,23 @@ local function hookLog()
     hooksecurefunc(WowVision.graphHost, "onKey", function(_, key)
         log("window key %s", tostring(key))
     end)
-    local maps = WowVision.base.navigation ~= nil and WowVision.base.navigation.maps or nil
-    if maps ~= nil and maps.turnToWaypoint ~= nil then
-        hooksecurefunc(maps, "turnToWaypoint", function(self)
-            local waypoint = self.path ~= nil and self.path.currentWaypoint or nil
-            log(
-                "turn to waypoint: waypoint %s, facing %s, mouselook %s",
-                waypoint ~= nil and "yes" or "no",
-                facingText(),
-                tostring(call(IsMouselooking))
-            )
-            C_Timer.After(0.5, function()
-                log("turn half a second later: facing %s, mouselook %s", facingText(), tostring(call(IsMouselooking)))
-            end)
-        end)
-    end
 end
 
-pad.log = log
-
--- A fresh log: at login and on /wv padlog. The one before stays as
--- padLogBefore, so a test is still there after the next login.
+-- A fresh log, at login and on /wv padlog. False with the gamepad
+-- interface off: then nothing is logged.
 function pad.restartLog()
+    logOn = pad.controllerUIEnabled()
+    if not logOn then
+        return false
+    end
     hookLog()
     WowVisionDump = WowVisionDump or {}
     if WowVisionDump.padLog ~= nil and #WowVisionDump.padLog > 1 then
         WowVisionDump.padLogBefore = WowVisionDump.padLog
     end
     WowVisionDump.padLog = {}
-    logStarted = true
-    log("log started, gamepad interface %s", tostring(pad.controllerUIEnabled()))
-    local names = { "SetGamePadFreeLook", "IsGamePadFreelookEnabled", "SetGamePadCursorControl",
-        "IsGamePadCursorControlEnabled", "FlipCameraYaw" }
-    local found = {}
-    for _, name in ipairs(names) do
-        tinsert(found, name .. " " .. (type(_G[name]) == "function" and "yes" or "no"))
-    end
-    log("game functions: %s", table.concat(found, ", "))
-    for _, line in ipairs(earlyLines) do
-        tinsert(WowVisionDump.padLog, line)
-    end
-    earlyLines = {}
-end
-
--- What decides where the sticks go, logged on every change (the stick
--- report 2026-10-23: both sticks did nothing, cause unknown). Blizzard's
--- side read only, never changed: its window focus mode (the sticks steer
--- the focused frame then), the frame it focuses, its popups, the gamepad
--- main menu wheel and the binding set it holds the right stick with, the
--- shortcut layer screen, its stick listener. Other files add their own
--- (pad.addStateSource): the wheel window's stick handler.
-local stateSources = {}
-
-function pad.addStateSource(name, fn)
-    tinsert(stateSources, { name = name, fn = fn })
-end
-
-local function frameName(frame)
-    if frame == nil then
-        return "none"
-    end
-    local ok, name = pcall(frame.GetName, frame)
-    return ok and name or "unnamed"
-end
-
-local function stickStateText()
-    local gm = GamepadMode
-    if gm == nil then
-        return nil
-    end
-    local fcm = gm.FrameControlsManager
-    local popups = gm.PopupHandler ~= nil and gm.PopupHandler.visiblePopups or nil
-    local radial = GamepadRadial
-    local radialBindings = "-"
-    if radial ~= nil and radial.inputBindings ~= nil and gm.IsBindingGroupActive ~= nil then
-        radialBindings = tostring(call(gm.IsBindingGroupActive, radial.inputBindings))
-    end
-    local listener = inputBindingAxisListener
-    local parts = {
-        "window focus " .. tostring(fcm ~= nil and fcm.isUIFocused),
-        "focused " .. frameName(fcm ~= nil and fcm.focusedFrame or nil),
-        "shown frames " .. tostring(fcm ~= nil and fcm.shownFrames ~= nil and #fcm.shownFrames or "?"),
-        "popups " .. tostring(popups ~= nil and #popups or "?"),
-        "wheel " .. tostring(radial ~= nil and call(radial.IsShown, radial)),
-        "wheel bindings " .. radialBindings,
-        "shortcut screen " .. tostring(GamepadHudMode ~= nil and call(GamepadHudMode.IsShown, GamepadHudMode)),
-        "Blizzard stick listener " .. tostring(listener ~= nil and call(listener.IsGamePadStickEnabled, listener)),
-    }
-    for _, source in ipairs(stateSources) do
-        tinsert(parts, source.name .. " " .. tostring(call(source.fn)))
-    end
-    return table.concat(parts, ", ")
-end
-
-local lastStickState = nil
-local nextStickCheck = 0
-local function watchSticks()
-    local now = GetTime()
-    if now < nextStickCheck then
-        return
-    end
-    nextStickCheck = now + 0.1
-    local text = stickStateText()
-    if text ~= nil and text ~= lastStickState then
-        lastStickState = text
-        log("sticks: %s", text)
-    end
+    log("log started")
+    return true
 end
 
 -- The game's shortcut layer (both shoulders), Forever's gamepad interface.
@@ -545,9 +436,6 @@ frame:SetScript("OnEvent", function(_, event)
     end
 end)
 frame:SetScript("OnUpdate", function()
-    if logStarted then
-        watchSticks()
-    end
     if not InCombatLockdown() and (dirty or next(routes) ~= nil) then
         pad.sync()
     end

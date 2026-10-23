@@ -24,15 +24,18 @@ module:registerCommand({
     end,
 })
 
--- Chasing controller problems with testers: pad presses, keys taken back
--- and the speech around them, always logged to WowVisionDump.padLog. This
--- only starts it afresh.
+-- Chasing controller problems with testers: the pad log (core/ui/input/
+-- pad.lua) runs by itself with the gamepad interface on; this starts it
+-- afresh.
 module:registerCommand({
     name = "padlog",
     description = "Start the controller log afresh",
     func = function()
-        WowVision.pad.restartLog()
-        print("WowVision pad log started afresh")
+        if WowVision.pad.restartLog() then
+            print("WowVision pad log started afresh")
+        else
+            print("WowVision pad log: only with the gamepad interface on")
+        end
     end,
 })
 

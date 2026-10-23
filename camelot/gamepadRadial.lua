@@ -178,9 +178,6 @@ end
 local stickFrame = CreateFrame("Frame")
 local armed = true
 local stickOn = false
-WowVision.pad.addStateSource("WowVision wheel stick", function()
-    return stickFrame:IsGamePadStickEnabled()
-end)
 
 stickFrame:SetScript("OnGamepadStick", function(_, stick, x, y)
     if stick ~= "Movement" or not radialFocused() then
