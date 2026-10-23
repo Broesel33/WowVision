@@ -11,15 +11,12 @@
 -- with the wheel (padKeys), so the shoulders, the D-pad, B and Start work as
 -- Blizzard made them.
 --
--- A slice runs through the game: the micro menu button behind it is
--- clicked, or the game's own key command runs (bags, social). Tracking opens
--- the scanner and chat the chat window, WowVision's own windows for them.
--- Buffs is not supported yet. Anything else (clock, calendar, PvP, the
--- emotes) runs the slice's own action, as the wheel would.
---
--- WowVision never closes the wheel itself: its hide runs Blizzard's binding
--- manager, and run from addon code that would taint it. B or Start closes
--- it, as for everyone.
+-- A slice closes the wheel, as picking one does for everyone, then runs
+-- through the game: the micro menu button behind it is clicked, tracking
+-- opens the scanner and chat the chat window (WowVision's own windows for
+-- them), anything else (bags, social, clock, PvP, the emotes) runs the
+-- slice's own action. Buffs is not supported yet. B or Start closes the
+-- wheel as Blizzard made them.
 local module = WowVision.base.windows:createModule("gamepadRadial")
 local L = module.L
 module:setLabel(L["Gamepad Main Menu"])
@@ -38,7 +35,6 @@ local ROWS = {
 }
 
 -- Slices by the key Blizzard's pages use for them.
-local COMMANDS = { bags = "OPENALLBAGS", social = "TOGGLEFRIENDSTAB" }
 local WINDOWS = { tracking = "scanner", chat = "chat" }
 local UNSUPPORTED = { buffs = true }
 local BUTTONS = { calendar = "GameTimeFrame", time = "TimeManagerClockButton" }
@@ -69,13 +65,49 @@ local function slotLabel(handler)
     end
 end
 
-local function secureNode(label, spec)
-    spec.binding = "leftClick"
+-- Blizzard's wheel runs a slice and closes; a slice run with the wheel
+-- open did nothing (the micro menu buttons) or opened behind it (the
+-- bags). WowVision must not hide the wheel itself (its hide runs
+-- Blizzard's binding manager, which addon code would taint), so a slice is
+-- a secure macro that first clicks the button behind the B binding, the
+-- way pressing B does (on an emote page B goes back to the main page
+-- first, so twice there), and then runs the slice as without a wheel.
+local NEWLINE = string.char(10)
+
+local function closeLines(radial)
+    local line = "/click InputFunctionBindingButton_" .. (GAMEPAD_FACE_RIGHT or "PAD2") .. " LeftButton true"
+    if radial.currentMainMenuPageIndex == nil then
+        return line .. NEWLINE .. line
+    end
+    return line
+end
+
+-- Slices whose action is not a button: the wheel's own action, run after
+-- the wheel is gone from the macro's "/run" line, by slot number (the wheel
+-- shows one page at a time; each render fills in the page shown).
+local pendingSlices = {}
+
+function module.runSlice(id)
+    local handler = pendingSlices[id]
+    if handler ~= nil then
+        call(handler, "Trigger")
+    end
+end
+
+local function macroNode(label, script)
     return {
         controlType = graph.controlTypes.button,
         announcements = { { text = label, kind = kinds.label } },
-        bindings = { spec },
+        bindings = { { binding = "leftClick", type = "Script", script = script } },
     }
+end
+
+local function buttonName(button)
+    if type(button) ~= "table" or button.GetName == nil then
+        return nil
+    end
+    local ok, name = pcall(button.GetName, button)
+    return ok and name or nil
 end
 
 local function slotNode(radial, index)
@@ -95,31 +127,18 @@ local function slotNode(radial, index)
             end,
         })
     end
+    local close = closeLines(radial)
     if WINDOWS[key] ~= nil then
-        local window = WINDOWS[key]
-        return nodes.button({
-            label = label,
-            onActivate = function()
-                WowVision.UIHost:openWindow(window)
-            end,
-        })
+        return macroNode(label, close .. NEWLINE .. "/run WowVision.UIHost:openWindow('" .. WINDOWS[key] .. "')")
     end
-    if COMMANDS[key] ~= nil then
-        return secureNode(label, { type = "Command", command = COMMANDS[key] })
+    -- A micro menu button (or the clock's and calendar's own) is clicked,
+    -- securely, as the wheel clicks it.
+    local name = buttonName(handler.button) or BUTTONS[key]
+    if name ~= nil then
+        return macroNode(label, close .. NEWLINE .. "/click " .. name)
     end
-    local button = handler.button
-    if button == nil and BUTTONS[key] ~= nil then
-        button = _G[BUTTONS[key]]
-    end
-    if type(button) == "table" and button.Click ~= nil then
-        return secureNode(label, { type = "Click", emulatedKey = "LeftButton", target = button })
-    end
-    return nodes.button({
-        label = label,
-        onActivate = function()
-            call(handler, "Trigger")
-        end,
-    })
+    pendingSlices[index] = handler
+    return macroNode(label, close .. NEWLINE .. "/run WowVision.base.windows.gamepadRadial.runSlice(" .. index .. ")")
 end
 
 -- "Main Menu, page 2 of 3"; the emote wheel has no pages.

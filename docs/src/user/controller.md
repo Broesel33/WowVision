@@ -52,7 +52,7 @@ Hold both shoulders, out of combat, for the shortcuts whose game buttons only sh
 
 ## The gamepad main menu
 
-The Start button opens the game's gamepad main menu, the wheel. WowVision shows it as a window of two rows of four: the upper row is the wheel's right half clockwise from the top, the lower row its left half. The **left stick** moves in the grid, **A** runs the slice, the shoulders turn the pages, and **B** or **Start** close it.
+The Start button opens the game's gamepad main menu, the wheel. WowVision shows it as a window of two rows of four: the upper row is the wheel's right half clockwise from the top, the lower row its left half. The **left stick** moves in the grid, **A** closes the wheel and runs the slice (as picking one does for everyone, so the window it opens has the focus), the shoulders turn the pages, and **B** or **Start** close it.
 
 ## In combat
 
