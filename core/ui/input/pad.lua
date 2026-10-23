@@ -225,12 +225,18 @@ function pad.dispatch(button, base, hold)
         return
     end
     if entry.kind == "frame" and not InCombatLockdown() then
-        -- A secure action: this button runs the entry's frame as a key-down
-        -- click, the way its keyboard key would. (A "click" redirect is a
-        -- release, which a key-down button ignores: every secure action did
-        -- nothing from the pad, user test 2026-10-23.)
+        -- A secure action, run by this button as the entry's keyboard key
+        -- runs it. A macro is taken over as it is: one started from another
+        -- macro's /click does not run (the wheel's slices, 2026-10-23).
+        -- Anything else is clicked as a key-down click: a "click" redirect
+        -- is a release, which a key-down button ignores.
         button:SetAttribute("type", "macro")
-        button:SetAttribute("macrotext", "/click " .. entry.frame:GetName() .. " " .. entry.mouseButton .. " true")
+        local frame = entry.frame
+        if frame:GetAttribute("type") == "macro" then
+            button:SetAttribute("macrotext", frame:GetAttribute("macrotext"))
+        else
+            button:SetAttribute("macrotext", "/click " .. frame:GetName() .. " " .. entry.mouseButton .. " true")
+        end
     end
 end
 
