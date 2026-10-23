@@ -157,6 +157,26 @@ function camera.endCursorTurn()
     pcall(SetGamePadCursorControl, false)
 end
 
+-- For the turn log: how far the camera stick is pushed (0 to 1), nil
+-- without a gamepad. Read only, the way Blizzard's gamepad code reads it.
+function camera.cameraStickLength()
+    local gamePad = C_GamePad
+    if gamePad == nil or gamePad.GetDeviceMappedState == nil then
+        return nil
+    end
+    local ok, state = pcall(gamePad.GetDeviceMappedState)
+    if not ok or state == nil or state.sticks == nil then
+        return nil
+    end
+    for i = 1, state.stickCount or 0 do
+        local okName, name = pcall(gamePad.StickIndexToConfigName, i - 1)
+        if okName and name == "Camera" and state.sticks[i] ~= nil then
+            return state.sticks[i].len
+        end
+    end
+    return nil
+end
+
 -- For the turn log: the setting now ("-" without a gamepad).
 function camera.turnWithCameraText()
     if not gamepadOn() then

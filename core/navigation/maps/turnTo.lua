@@ -141,7 +141,9 @@ local function measure(turn)
         tostring(turn.mouselookAfter)
     )
     if turn.facingTrace ~= nil then
-        line = line .. " | turned by frame " .. table.concat(turn.facingTrace, "/")
+        line = line .. string.format(" | camera stick at the press %s | turned by frame (@ camera stick) ",
+            turn.stickAtPress ~= nil and string.format("%.2f", turn.stickAtPress) or "?")
+            .. table.concat(turn.facingTrace, "/")
     end
     addLog(line)
     -- (the always-on pad log, saved: what a turn did with the gamepad on)
@@ -166,8 +168,10 @@ local function onUpdate()
     -- (gamepad mode: how far the character has turned, frame by frame)
     if turn.facingTrace ~= nil and #turn.facingTrace < 40 then
         local facing = GetPlayerFacing()
-        tinsert(turn.facingTrace, facing ~= nil
+        local stick = camera.cameraStickLength()
+        tinsert(turn.facingTrace, (facing ~= nil
             and string.format("%.1f", turnMath.turned(turn.startFacing, facing, turn.direction, turn.target)) or "?")
+            .. (stick ~= nil and string.format("@%.2f", stick) or ""))
     end
     if turn.stopFrame ~= nil then
         turn.framesSinceStop = turn.framesSinceStop + 1
@@ -286,6 +290,7 @@ function module:turnToWaypoint()
         lead = relative - raw,
         moving = moving,
         facingTrace = camera.gamepadOn() and {} or nil,
+        stickAtPress = camera.cameraStickLength(),
     }
     current = turn
 
