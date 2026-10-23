@@ -121,7 +121,7 @@ local function measure(turn)
         end
     end
     local line = string.format(
-        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s",
+        "target %.1f turned %.1f error %.1f | speed %.0f frames %d/%d trim %s fps %.0f frame ms %s | lead %.1f, aim at landing %.1f, %.1f yd, moving %.1f | gamepad turn with camera %s, mouse look before %s",
         turn.target,
         turned,
         turned - turn.target,
@@ -135,7 +135,8 @@ local function measure(turn)
         aimError,
         landDistance,
         turn.moving,
-        turn.turnWithCamera or "-"
+        turn.turnWithCamera or "-",
+        tostring(turn.mouselookBefore)
     )
     if turn.facingTrace ~= nil then
         line = line .. " | turned by frame " .. table.concat(turn.facingTrace, "/")
@@ -257,6 +258,16 @@ function module:turnToWaypoint()
     current = turn
 
     pitchLock.noteTurn()
+    -- The sweep needs the camera free and the character left behind until
+    -- the pulse. With the gamepad, mouse look is on once the right stick
+    -- has been used, and then the turn went wrong: the character followed
+    -- the sweep for a few frames and stopped, later turns did not move at
+    -- all (pad log 2026-10-23: with mouse look off the same turn landed 1.4
+    -- degrees off). So a turn starts with mouse look off.
+    turn.mouselookBefore = IsMouselooking()
+    if turn.mouselookBefore then
+        MouselookStop()
+    end
     local before = camera.turnWithCameraText()
     camera.beginTurn()
     turn.turnWithCamera = before .. " -> " .. camera.turnWithCameraText()
