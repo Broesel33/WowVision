@@ -16,26 +16,8 @@ local oldSpeak = C_VoiceChat.SpeakText
 module.queue = {}
 module.speaking = false
 
--- A voice that hands the text to a screen reader (SAPI2SR, NVDA's bridge)
--- ends each line at once, while the screen reader goes on reading it, so
--- StopSpeakingText has nothing left to stop there and NVDA reads the old
--- line to its end. Only a key press made NVDA stop by itself; controller
--- presses never did (user test 2026-10-23). What does reach the bridge is
--- the next line itself: after a stop, the next line handed over carries
--- this bookmark, and the bridge as patched for Sku (its installer 5.1,
--- "Patch C") stops NVDA's speech when it sees it, then reads the line.
--- Real SAPI voices skip the bookmark silently, and so does an unpatched
--- bridge (measured in Sku, 2026-09-18).
-local INTERRUPT_MARK = '<bookmark mark="skuint"/>'
-local interruptNext = false
-
-local function handOver(text)
-    if interruptNext then
-        interruptNext = false
-        return text .. INTERRUPT_MARK
-    end
-    return text
-end
+-- After a stop the next line cuts a screen reader bridge voice (core/speechInterrupt.lua).
+local handOver = WowVision.speechInterrupt.handOver
 
 local function pollQueue()
     if module.speaking then
@@ -185,7 +167,6 @@ function module:stop()
     self.queue = {}
     C_VoiceChat.StopSpeakingText()
     self.speaking = false
-    interruptNext = true
 end
 
 function module:uiStop()
