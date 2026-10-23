@@ -5,7 +5,7 @@
 -- side. Pure Lua: the headless tests run it.
 --
 -- In WoW: Forever's gamepad interface the pad sends no Shift, Ctrl or Alt to
--- the game (the gamepad probe, 2026-10-21), so WowVision reads the held
+-- the game (probed in the game, 2026-10-21), so WowVision reads the held
 -- buttons itself. A controller input is written like a keyboard one, the
 -- modifiers before the button: "ALT-PADRSTICK". The modifiers are
 --   ALT    the left shoulder held
@@ -251,8 +251,9 @@ function padLogic.inputText(input, names)
     return table.concat(parts, names.joiner or " + ")
 end
 
--- Default controller inputs per binding key. Bindings that do not exist on
--- a client simply never ask.
+-- Default controller inputs per binding key, for the bindings of the core.
+-- A binding elsewhere declares its own (registerBinding's padInputs), and
+-- one that does not exist on a client simply never asks.
 padLogic.DEFAULTS = {
     -- Windows: the D-pad moves, the face buttons are Enter, Backspace,
     -- Escape and Space, the shoulders Tab, the right trigger is Ctrl.
@@ -280,12 +281,9 @@ padLogic.DEFAULTS = {
     ["chat/previousPart"] = { "CTRL-PADDLEFT" },
     ["chat/nextPart"] = { "CTRL-PADDRIGHT" },
     ["chat/shiftClick"] = { "SHIFT-PAD1" },
-    -- In the world, all the time: the right stick press (ping) and its
-    -- combinations.
+    -- In the world, all the time: the right stick press (ping); its
+    -- combinations (left shoulder, triggers) are free for features.
     ["maps/turnToWaypoint"] = { "PADRSTICK" },
-    ["surroundings/leadOn"] = { "ALT-PADRSTICK" },
-    ["surroundings/describe"] = { "SHIFT-PADRSTICK" },
-    ["groupHealth/snapshot"] = { "CTRL-PADRSTICK" },
     -- Buffers: the D-pad while the right stick press is held.
     ["buffers/previousItem"] = { "HOLD-PADDUP" },
     ["buffers/nextItem"] = { "HOLD-PADDDOWN" },
@@ -300,7 +298,6 @@ padLogic.DEFAULTS = {
     ["scanner/open"] = { "LAYER-PAD3" },
     ["wowvision/menu"] = { "LAYER-PAD1" },
     ["bars/openWindow"] = { "LAYER-PADLSTICK" },
-    ["surroundings/places"] = { "LAYER-PADRSTICK" },
 }
 
 -- A fresh copy of a binding's default controller inputs.

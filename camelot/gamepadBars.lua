@@ -30,7 +30,7 @@ function GamepadActionBar:getBar()
 end
 
 function GamepadActionBar:isVisible()
-    if InputUtil == nil or InputUtil.IsGamepadUIEnabled == nil or not InputUtil.IsGamepadUIEnabled() then
+    if not WowVision.pad.controllerUIEnabled() then
         return false
     end
     local bar = self:getBar()

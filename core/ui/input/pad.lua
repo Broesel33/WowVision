@@ -417,8 +417,15 @@ function pad.controllerUIEnabled()
     return util ~= nil and call(util.IsGamepadUIEnabled) == true
 end
 
--- Every frame: the window state, the shortcut layer and the game's window
--- mode change what we own and can take keys from us.
+-- Whether a gamepad is in use (Options, Gamepad, Enable Gamepad). Without
+-- one, nothing takes the pad keys from us and nothing changes the layer.
+local function gamepadEnabled()
+    local gamePad = C_GamePad
+    return gamePad ~= nil and call(gamePad.IsEnabled) == true
+end
+
+-- Every frame, with a gamepad: the window state, the shortcut layer and the
+-- game's window mode change what we own and can take keys from us.
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -436,7 +443,7 @@ frame:SetScript("OnEvent", function(_, event)
     end
 end)
 frame:SetScript("OnUpdate", function()
-    if not InCombatLockdown() and (dirty or next(routes) ~= nil) then
+    if not InCombatLockdown() and (dirty or (next(routes) ~= nil and gamepadEnabled())) then
         pad.sync()
     end
 end)

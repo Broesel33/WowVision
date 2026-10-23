@@ -161,10 +161,11 @@ module:registerWindow({
 })
 
 -- The left stick, while the wheel's window has the focus: one step per push,
--- the next one after the stick came back to the middle. The handler takes
--- the stick from the game (the character does not walk), the way the wheel
--- takes the right stick; any other stick, or the stick while the window is
--- not focused, goes on to the game. Taking the stick is protected, so it
+-- the next one after the stick came back to the middle. While the handler
+-- has the sticks the game gets none of them, whatever it returns (pad log
+-- 2026-10-23: both sticks dead while it had them), so it has them only
+-- while the wheel is shown; the character does not walk then, the way the
+-- wheel holds the right stick. Taking the sticks is protected, so it
 -- switches out of combat only.
 local STEP = 0.6
 local CENTER = 0.3
@@ -202,14 +203,13 @@ stickFrame:SetScript("OnGamepadStick", function(_, stick, x, y)
     return false
 end)
 
--- Compared with the frame's own state, never an assumed one: the frame is
--- taking the sticks from the start once it has its stick script (pad log
--- 2026-10-23: taken at login with the wheel closed, both sticks dead until
--- the wheel had been opened and closed once).
+-- Compared with the frame's own state, never an assumed one: the frame has
+-- the sticks from the start once it has its stick script (pad log
+-- 2026-10-23: taken at login with the wheel closed).
 local function syncStick()
     local want = GamepadRadial ~= nil and GamepadRadial:IsShown() or false
-    local ok, enabled = pcall(stickFrame.IsGamePadStickEnabled, stickFrame)
-    if ok then
+    local read, enabled = pcall(stickFrame.IsGamePadStickEnabled, stickFrame)
+    if read then
         stickOn = enabled == true
     end
     if want == stickOn or InCombatLockdown() then
