@@ -21,7 +21,8 @@ function SpeechStyle:output(text, voice)
     end
     C_VoiceChat.SpeakText(
         voice or self.module.settings.voiceID,
-        WowVision.ttsCacheBust.bust(text),
+        -- after a stop it cuts a screen reader bridge voice (core/speechInterrupt.lua)
+        WowVision.speechInterrupt.handOver(WowVision.ttsCacheBust.bust(text)),
         self.module.settings.speechRate,
         volume
     )

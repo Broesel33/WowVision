@@ -16,6 +16,9 @@ local oldSpeak = C_VoiceChat.SpeakText
 module.queue = {}
 module.speaking = false
 
+-- After a stop the next line cuts a screen reader bridge voice (core/speechInterrupt.lua).
+local handOver = WowVision.speechInterrupt.handOver
+
 local function pollQueue()
     if module.speaking then
         return
@@ -27,7 +30,7 @@ local function pollQueue()
     -- Mark busy immediately so a poll triggered before PLAYBACK_STARTED arrives
     -- does not dispatch a second utterance on top of this one.
     module.speaking = true
-    oldSpeak(item.voice, item.text, item.rate, item.volume, true)
+    oldSpeak(item.voice, handOver(item.text), item.rate, item.volume, true)
 end
 
 local function enqueue(voice, text, rate, volume)
@@ -153,6 +156,10 @@ function module:speak(text, voice)
     -- the single switch: when on, this hits our queue; when off, Blizzard's
     -- original SpeakText runs directly. Busted here so both paths get it.
     text = WowVision.ttsCacheBust.bust(text)
+    if C_VoiceChat.SpeakText ~= queuedSpeak then
+        -- (without the queue this is the hand-over)
+        text = handOver(text)
+    end
     C_VoiceChat.SpeakText(voice or self.settings.voiceID, text, self.settings.speechRate, volume, false)
 end
 
