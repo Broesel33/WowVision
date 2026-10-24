@@ -12,8 +12,12 @@
 -- (Retail, Forever; Mists and older lack it), and the key's game binding
 -- command checked against the movement flags the hooks in core/movement.lua
 -- maintain, which covers every command the game runs on press and ends on
--- release. Unit speed and "is moving" are secret on the modern clients, so
--- neither is used.
+-- release. A flag can go stale (a key release the hooked Stop function never
+-- saw), and a stale flag would hold every window off its keys for good, so
+-- a movement flag counts only while the game says the player is moving
+-- (IsPlayerMoving, plain on every client), a turn flag only while the game
+-- says they are turning. Unit speed is secret on the modern clients, so it
+-- is not used.
 --
 -- Pure Lua: the game functions arrive through an env table (gameEnv builds
 -- the real one) so the headless tests run it.
@@ -36,6 +40,19 @@ heldKeys.HELD_COMMANDS = {
     MOVEANDSTEER = "moveAndSteer",
 }
 
+-- The game state that backs a flag: "moving" for the translations, "turning"
+-- for the turns. The rest (jump, descend, pitch) have no state to ask and
+-- stand on their flag alone.
+local FLAG_SIGNAL = {
+    moveForward = "moving",
+    moveBackward = "moving",
+    strafeLeft = "moving",
+    strafeRight = "moving",
+    moveAndSteer = "moving",
+    turnLeft = "turning",
+    turnRight = "turning",
+}
+
 -- The key an input ends with: "CTRL-SHIFT-TAB" is TAB. The minus key itself
 -- ("-", "CTRL--") stays "-".
 function heldKeys.baseKey(input)
@@ -50,11 +67,29 @@ end
 
 -- The real game functions. Any may be missing on a client.
 function heldKeys.gameEnv()
+    local movement = WowVision.movement
     return {
         isKeyDown = IsKeyDown,
         bindingAction = GetBindingAction,
-        flags = WowVision.movement ~= nil and WowVision.movement.flags or nil,
+        flags = movement ~= nil and movement.flags or nil,
+        isMoving = IsPlayerMoving,
+        isTurning = movement ~= nil and function()
+            return movement.turning == true
+        end or nil,
     }
+end
+
+-- Whether a flag that is on is still backed by the game: false when the
+-- game says the player is not moving (or turning) after all, so the flag is
+-- stale. Without the game's answer the flag stands.
+local function flagLive(flag, env)
+    local signal = FLAG_SIGNAL[flag]
+    local ask = signal == "moving" and env.isMoving or signal == "turning" and env.isTurning or nil
+    if ask == nil then
+        return true
+    end
+    local ok, state = pcall(ask)
+    return not ok or state == true
 end
 
 -- The held command this key is bound to in the game, as its movement flag
@@ -75,7 +110,8 @@ local function heldCommand(key, env)
 end
 
 -- Whether the key of this input is physically down.
--- env: { isKeyDown = function(key)?, bindingAction = function(key)?, flags = table? }
+-- env: { isKeyDown = function(key)?, bindingAction = function(key)?, flags = table?,
+--        isMoving = function()?, isTurning = function()? }
 function heldKeys.isHeld(input, env)
     local key = heldKeys.baseKey(input)
     if key == nil then
@@ -88,7 +124,7 @@ function heldKeys.isHeld(input, env)
         end
     end
     local flag = heldCommand(key, env)
-    return flag ~= nil and env.flags[flag] == true
+    return flag ~= nil and env.flags[flag] == true and flagLive(flag, env)
 end
 
 -- What the two signals say about these inputs, as one plain line for the key
@@ -109,7 +145,13 @@ function heldKeys.describe(inputs, env)
         end
         local flag, action = heldCommand(key, env)
         if flag ~= nil then
-            tinsert(notes, action .. (env.flags[flag] == true and " on" or " off"))
+            if env.flags[flag] ~= true then
+                tinsert(notes, action .. " off")
+            elseif flagLive(flag, env) then
+                tinsert(notes, action .. " on")
+            else
+                tinsert(notes, action .. " on but stale, the game says not " .. FLAG_SIGNAL[flag])
+            end
         end
         if #notes > 0 then
             tinsert(parts, input .. " " .. table.concat(notes, ", "))

@@ -28,6 +28,10 @@ local movement = {
     -- function runs, in the same frame, so a start with no flag set can still
     -- be the player's own: compare against this.
     lastCommandAt = 0,
+    -- The game's own turning state (PLAYER_STARTED_TURNING and
+    -- PLAYER_STOPPED_TURNING): the ground truth behind the turn flags, as
+    -- IsPlayerMoving is behind the movement flags.
+    turning = false,
 }
 WowVision.movement = movement
 
@@ -126,10 +130,16 @@ hooksecurefunc("StartAutoRun", flagSetter("following", false))
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_STOPPED_MOVING")
 frame:RegisterEvent("AUTOFOLLOW_END")
+frame:RegisterEvent("PLAYER_STARTED_TURNING")
+frame:RegisterEvent("PLAYER_STOPPED_TURNING")
 frame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_STOPPED_MOVING" then
         movement.flags.autorun = false
-    else
+    elseif event == "AUTOFOLLOW_END" then
         movement.flags.following = false
+    elseif event == "PLAYER_STARTED_TURNING" then
+        movement.turning = true
+    elseif event == "PLAYER_STOPPED_TURNING" then
+        movement.turning = false
     end
 end)

@@ -30,10 +30,10 @@
        Blizzard addon; lfg.lua adds what that build changed. -->
   <Script file="..\tbc\lfg.lua" />
   <Script file="lfg.lua" />
-  <!-- The Social window, which the friends key opens (Forever turns it on
-       and the old character friend list off, so Forever's own FriendsFrame
-       build never shows): friends, requests, recent allies, quick join,
-       raid, its side windows, and Add Friend. -->
-  <Script file="socialUI.lua" />
+  <!-- WowNav routes (a setting under Navigation): Broesel's engine and route rules, then his navigation data
+       (the WoW_NavigationData repository as a submodule), packed by tools/wownav-pack.lua into
+       mapdata/WowNavPacked. -->
+  <Include file="wownav\modules.xml" />
+  <Include file="..\mapdata\WowNavPacked\data.xml" />
 
 </Ui>

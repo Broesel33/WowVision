@@ -7,9 +7,11 @@ local nodes = graph.nodes
 local ControlId = graph.ControlId
 local kinds = graph.kinds
 
--- The Social window (SocialUIFrame, Blizzard_SocialUI): on WoW: Forever the
--- server turns it on (C_SocialUI.IsSystemEnabled), and the friends key
--- opens it in place of the old friends window. A Battle.net bar on top
+-- The Social window (SocialUIFrame, Blizzard_SocialUI, the same addon on
+-- Retail and WoW: Forever): where the server turns it on
+-- (C_SocialUI.IsSystemEnabled; Forever does), the friends key opens it in
+-- place of the old friends window. Built and tested on Forever; Retail's
+-- copy differs in small ways and has not been tried there yet. A Battle.net bar on top
 -- (your BattleTag, status, the menu with broadcast and ignore list), the
 -- shown tab's page, and the tabs down the right side (a row here, like every
 -- tab strip): Friends, Recent Allies, Quick Join, Friend Requests, Recruit a

@@ -19,6 +19,13 @@
   <!-- The chat channels window: the same Blizzard_Channels on Retail and
        WoW: Forever. -->
   <Script file="channels.lua" />
+  <!-- The Social window (Blizzard_SocialUI on Retail and WoW: Forever),
+       which the friends key opens where the server turns it on (Forever
+       does, and turns the old character friend list off): friends,
+       requests, recent allies, quick join, raid, its side windows, and Add
+       Friend. Tested on Forever; Retail ships the same window with small
+       differences. -->
+  <Script file="socialUI.lua" />
   <Include file="containers/modules.xml" />
   <Include file="groupHealth/modules.xml" />
 

@@ -109,6 +109,45 @@ testRunner:addSuite("HeldKeys", {
             "key state unavailable. UP MOVEFORWARD on")
     end,
 
+    ["a stale movement flag is not held once the game says the player is not moving"] = function(t)
+        local env = classicEnv({ DOWN = "MOVEBACKWARD", LEFT = "TURNLEFT" }, { moveBackward = true, turnLeft = true })
+        env.isMoving = function()
+            return false
+        end
+        env.isTurning = function()
+            return false
+        end
+        t:assertFalse(heldKeys.isHeld("DOWN", env))
+        t:assertFalse(heldKeys.isHeld("LEFT", env))
+        env.isMoving = function()
+            return true
+        end
+        env.isTurning = function()
+            return true
+        end
+        t:assertTrue(heldKeys.isHeld("DOWN", env))
+        t:assertTrue(heldKeys.isHeld("LEFT", env))
+        t:assertEqual(
+            heldKeys.describe({ "DOWN" }, classicEnv({ DOWN = "MOVEBACKWARD" }, { moveBackward = true })),
+            "key state unavailable. DOWN MOVEBACKWARD on"
+        )
+        env.isMoving = function()
+            return false
+        end
+        t:assertEqual(
+            heldKeys.describe({ "DOWN" }, env),
+            "key state unavailable. DOWN MOVEBACKWARD on but stale, the game says not moving"
+        )
+    end,
+
+    ["flags without a game state behind them stand alone"] = function(t)
+        local env = classicEnv({ SPACE = "JUMP" }, { ascend = true })
+        env.isMoving = function()
+            return false
+        end
+        t:assertTrue(heldKeys.isHeld("SPACE", env))
+    end,
+
     ["classic client: autorun and follow are not held keys"] = function(t)
         local env = classicEnv({ UP = "MOVEFORWARD" }, { autorun = true, following = true })
         t:assertFalse(heldKeys.isHeld("UP", env))
