@@ -64,4 +64,39 @@ function camera.transfer()
     MouselookStop()
 end
 
+-- The gamepad (WoW: Forever's gamepad interface). Free look, the gamepad's
+-- mouse look, is on all the time there, and the swept camera then reaches
+-- the character only while the camera stick is pushed (pad logs
+-- 2026-10-23). For the length of a turn free look is off; then the sweep
+-- and the pulse work as without a gamepad.
+local freeLookOff = false
+
+local function gamepadOn()
+    local gamePad = C_GamePad
+    if gamePad == nil or type(gamePad.IsEnabled) ~= "function" then
+        return false
+    end
+    local ok, enabled = pcall(gamePad.IsEnabled)
+    return ok and enabled == true
+end
+
+-- True when free look went off for this turn.
+function camera.beginGamepadTurn()
+    if freeLookOff or not gamepadOn() or SetGamePadFreeLook == nil or IsGamePadFreelookEnabled == nil then
+        return false
+    end
+    local ok, on = pcall(IsGamePadFreelookEnabled)
+    if ok and on and pcall(SetGamePadFreeLook, false) then
+        freeLookOff = true
+    end
+    return freeLookOff
+end
+
+function camera.endGamepadTurn()
+    if freeLookOff then
+        freeLookOff = false
+        pcall(SetGamePadFreeLook, true)
+    end
+end
+
 WowVision.navigationCamera = camera

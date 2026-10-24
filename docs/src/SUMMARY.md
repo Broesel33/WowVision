@@ -9,6 +9,7 @@
 - [Buffers](./user/buffers.md)
 - [Monitors](./user/monitors.md)
 - [Keybindings](./user/keybindings.md)
+- [Controller](./user/controller.md)
 - [Chat](./user/chat.md)
 - [Settings & the WowVision Menu](./user/settings.md)
 - [Commands](./user/commands.md)

@@ -78,7 +78,8 @@ function module.getActionButtonLabel(button)
             .. (actionSubtype or "none")
     end
     local label = name
-    local hotkey = button.HotKey:GetText()
+    -- Gamepad bar buttons have no hotkey text.
+    local hotkey = button.HotKey ~= nil and button.HotKey:GetText() or nil
     if hotkey then
         label = label .. " (" .. hotkey .. ")"
     end

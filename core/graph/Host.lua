@@ -448,6 +448,10 @@ function GraphHost:_releaseNavBindings()
         self._closeHandle:release()
         self._closeHandle = nil
     end
+    if self._gameCloseHandle ~= nil then
+        self._gameCloseHandle:release()
+        self._gameCloseHandle = nil
+    end
 end
 
 -- The close key (Escape) engages only when the focused stack owns something
@@ -470,6 +474,20 @@ function GraphHost:_syncCloseKey()
     elseif not wants and self._closeHandle ~= nil then
         self._closeHandle:release()
         self._closeHandle = nil
+    end
+    -- The controller has no Escape key: where Escape stays with the game, the
+    -- B button runs the game's own Escape command (gameClose keymap, no
+    -- keyboard input), so the game closes its frame with its own sounds.
+    local wantsGame = stack ~= nil and not wants
+    if wantsGame and self._gameCloseHandle == nil and not WowVision.inputActivator:anyInputHeld({ "gameClose" }) then
+        self._gameCloseHandle = WowVision.inputActivator:activate({
+            binding = "gameClose",
+            type = "Command",
+            command = "TOGGLEGAMEMENU",
+        })
+    elseif not wantsGame and self._gameCloseHandle ~= nil then
+        self._gameCloseHandle:release()
+        self._gameCloseHandle = nil
     end
 end
 

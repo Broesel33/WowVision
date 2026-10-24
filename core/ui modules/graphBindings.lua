@@ -52,6 +52,33 @@ local function completeMapping(set, binding, mapping)
     refreshAll(set)
 end
 
+-- Controller inputs: the same flow, on the binding's padInputs.
+local function removePadInput(set, binding, input)
+    binding:removePadInput(input)
+    refreshAll(set)
+end
+
+local function completePadMapping(set, binding, mapping)
+    local conflicting = binding:doesPadInputConflict(mapping)
+    if conflicting ~= nil then
+        if conflicting == binding then
+            WowVision:speak(L["This input already exists for this binding."])
+            return
+        end
+        nodes.pushConfirm({
+            prompt = L["This input conflicts with"] .. " " .. conflicting:getLabel() .. ". " .. L["Replace?"],
+            onConfirm = function()
+                conflicting:removePadInput(mapping)
+                binding:addPadInput(mapping)
+                refreshAll(set)
+            end,
+        })
+        return
+    end
+    binding:addPadInput(mapping)
+    refreshAll(set)
+end
+
 local function renderBindings(builder)
     local set = WowVision.input.bindings
     builder:pushContext("bindings", L["Bindings"])
@@ -90,6 +117,39 @@ local function renderBindings(builder)
                 end,
             })
         )
+        -- Controller inputs only while the game's gamepad interface is on;
+        -- for keyboard players they would only be noise.
+        local showPad = WowVision.pad.controllerUIEnabled()
+        for _, input in ipairs(showPad and binding.padInputs or {}) do
+            local capturedInput = input
+            builder:addItem(
+                ControlId.structural("p:" .. binding.key .. ":" .. capturedInput),
+                nodes.button({
+                    label = function()
+                        return WowVision.pad.inputText(capturedInput)
+                    end,
+                    onActivate = function()
+                        removePadInput(set, binding, capturedInput)
+                    end,
+                })
+            )
+        end
+        if showPad then
+            builder:addItem(
+                ControlId.structural("p:" .. binding.key .. ":add"),
+                nodes.button({
+                    label = L["Add Controller Button"],
+                    onActivate = function()
+                        WowVision.graphHost:openPadCapture({
+                            label = label,
+                            onCommit = function(mapping)
+                                completePadMapping(set, binding, mapping)
+                            end,
+                        })
+                    end,
+                })
+            )
+        end
         builder:endRow()
         builder:popContext()
     end

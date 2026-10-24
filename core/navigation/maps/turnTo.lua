@@ -81,6 +81,7 @@ local function release(turn)
     if current == turn then
         current = nil
         turnFrame:SetScript("OnUpdate", nil)
+        camera.endGamepadTurn()
     end
 end
 
@@ -229,6 +230,11 @@ function module:turnToWaypoint()
     pitchLock.noteTurn()
     stopCamera()
     camera.align()
+    -- With the gamepad, free look is off for the turn (camera.lua). Only now,
+    -- with the camera straight behind the character: free look going off
+    -- hands any camera offset to the character, and pressing the stick
+    -- nudges the camera.
+    camera.beginGamepadTurn()
     if savedYawSpeed == nil then
         savedYawSpeed = GetCVar("cameraYawMoveSpeed")
     end
