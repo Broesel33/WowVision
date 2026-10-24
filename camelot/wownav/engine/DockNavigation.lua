@@ -1,5 +1,5 @@
 -- WowNav engine by Broesel33 (github.com/Broesel33/WoW_NavigationData, DemoAddon/WowVisionNavigation/DockNavigation.lua at
--- 9423773), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
+-- a3dce3f), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
 
 -- Passive waiting-point mode with a fixed boarding orientation point. Audio and the XY arrival signal run only in the
 -- core OnUpdate; there is no vehicle detection.
@@ -155,7 +155,8 @@ function Dock:BoardingTarget(target, nav)
         and validTarget(target, nav) and playerMap() == target.nativeMapId then
         -- the search finds the boarding point by its German and by its English words
         local aliases = {"Einsteigrichtung", "Einsteigpunkt", "Orientierungspunkt", "Am Schiff", "Am Zeppelin",
-                         "boarding direction", "boarding point", "orientation point", "On the ship", "On the zeppelin"}
+                         "boarding direction", "boarding point", "orientation point", "On the ship", "On the zeppelin",
+                         "Am Fahrzeug", "In der Bahn", "At the vehicle", "On the tram"}
         for _, alias in ipairs(target.searchAliases or {}) do aliases[#aliases + 1] = alias end
         return {
                 id = "dock-boarding:" .. target.id, boardingTargetId = target.id,

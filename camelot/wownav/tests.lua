@@ -219,6 +219,35 @@ if haveNetwork then
         t:assertTrue(slices > 1, "the search yielded at least once")
     end
 
+    suite["a route avoids the outposts of the opposing faction: allowed in a capital of one's own, flagged in an enemy one"] = function(t)
+        setup()
+        local game = newGame()
+        local route = Route.new(game.env)
+        local x, y = bindablePosition(STORMWIND, game, route)
+        t:assertNotNil(x, "a bindable Stormwind waypoint")
+        local start = route:startBinding(x, y)
+        local farId = STORMWIND * N.ZONE_BASE + 3000
+        local function search()
+            local result = N.RouteIds(start, farId)
+            return result
+        end
+        N.SetAvoidOutposts(true)
+        N.SetPlayerFaction("Alliance")
+        local own = search()
+        t:assertNotNil(own, "a route across Stormwind for an Alliance player")
+        t:assertNil(own.outpost, "Stormwind is no enemy outpost for the Alliance")
+        N.SetPlayerFaction("Horde")
+        local enemy = search()
+        t:assertNotNil(enemy, "a route is never refused because of an outpost")
+        t:assertEqual(enemy.outpost, "target", "the route starts and ends inside an enemy capital: flagged, not refused")
+        N.SetAvoidOutposts(false)
+        local off = search()
+        t:assertNil(off.outpost, "no flag with the avoidance off")
+        t:assertEqual(#off.path, #enemy.path, "the way inside the capital is the same")
+        N.SetAvoidOutposts(true)
+        N.SetPlayerFaction(nil)
+    end
+
     suite["the continent catalogue lists both layers with categories and zone"] = function(t)
         setup()
         local rows = zoneRows(STORMWIND)

@@ -30,6 +30,9 @@ local settings = module:hasSettings()
 settings:add({ key = "enabled", type = "Bool", label = L["Routes from WowNav"], default = false })
 -- WowNav's comfort level: a road route may be up to this many percent longer than the shortest way.
 settings:add({ key = "comfort", type = "Number", label = L["Road Preference (Percent Longer)"], default = 50, min = 0, max = 300 })
+-- his /vn outposts (default on): routes avoid the outposts and capitals of the opposing faction; without a way around
+-- they lead through one and say so
+settings:add({ key = "avoidOutposts", type = "Bool", label = L["Avoid Enemy Outposts"], default = true })
 -- his /vn showauto (default off): the network's own waypoints near the player join the F10 list, by type and height
 settings:add({ key = "showAuto", type = "Bool", label = L["Show Automatic Waypoints"], default = false })
 -- his /vn radius and /vn toleranz: how far from the network a target may lie, and the height band of a floor
@@ -126,6 +129,7 @@ local function ready(self)
         })
     end
     N.SetComfort(self.settings.comfort or 50)
+    N.SetAvoidOutposts(self.settings.avoidOutposts ~= false)
     -- his settings live in WowVisionNavigationDB, where his resolver and route rules read them (R:Settings,
     -- Route.chokeFallback); while the standalone addon is loaded this module is off and the table is his
     WowVisionNavigationDB = type(WowVisionNavigationDB) == "table" and WowVisionNavigationDB or {}
@@ -443,6 +447,12 @@ local function startRoute(self, request, outcome)
         text = text .. ". " .. WowVisionNavigationText("approx_target")
     end
     say(text)
+    -- his outpost warnings: no way around an enemy outpost (the route leads through it), or a target inside one
+    if outcome.result ~= nil and outcome.result.outpost == "through" then
+        say(WowVisionNavigationText("outpost_through"))
+    elseif outcome.result ~= nil and outcome.result.outpost == "target" then
+        say(WowVisionNavigationText("outpost_target"))
+    end
 end
 
 -- Starts the search for a request. request: { contract or nodeId, label, onArrive, startOverride }.
@@ -1032,6 +1042,17 @@ module:registerBinding({
 })
 
 module.settings.class:getField("comfort").events.valueChange:subscribe(module, function()
+    if module:runningRequest() ~= nil then
+        recalcAt = GetTime() + RECALC_DELAY
+    end
+end)
+
+-- Avoiding enemy outposts changes the route in the same way: the running route is searched again.
+module.settings.class:getField("avoidOutposts").events.valueChange:subscribe(module, function(_, _, _, _, value)
+    local N = module:network()
+    if N ~= nil and N.SetAvoidOutposts ~= nil then
+        N.SetAvoidOutposts(value ~= false)
+    end
     if module:runningRequest() ~= nil then
         recalcAt = GetTime() + RECALC_DELAY
     end

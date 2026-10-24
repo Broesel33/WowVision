@@ -1,5 +1,5 @@
 -- WowNav engine by Broesel33 (github.com/Broesel33/WoW_NavigationData, DemoAddon/WowVisionNavigation/TargetCatalog.lua at
--- 9423773), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
+-- a3dce3f), carried in WowVision with his permission. Changes for WowVision: see camelot/wownav/engine/README.md.
 
 -- Independent provider snapshots. No provider owns a physical graph node.
 WowVisionNavigationTargetCatalog = { providers = {}, revision = 0 }
