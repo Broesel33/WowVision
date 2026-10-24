@@ -1,10 +1,9 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
 
-  <!-- Controller input: the pure part first (binding.lua asks it for the
-       default controller inputs), the game side after the activator. -->
-  <Script file="padLogic.lua" />
-  <Script file="padLogicTests.lua" />
+  <!-- Controller input: the pure part (padLogic.lua) loads from
+       core/modules.xml ahead of the graph framework, whose keyCapture.lua
+       reads it at load; the game side comes after the activator. -->
   <Script file="input.lua" />
   <Script file="binding.lua" />
   <Script file="bindings.lua" />

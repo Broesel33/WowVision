@@ -41,6 +41,10 @@
     <Include file="audio/modules.xml" />
     <Include file="../audio/modules.xml" />
     <Include file="alerts/modules.xml" />
+  <!-- Pure controller input logic, before the graph framework
+       (graph/keyCapture.lua reads it at load) and the input system. -->
+  <Script file="ui/input/padLogic.lua" />
+  <Script file="ui/input/padLogicTests.lua" />
   <Include file="graph/modules.xml" />
   <Include file="ui/modules.xml" />
     <Script file="UIHost.lua" />
