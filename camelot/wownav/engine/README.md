@@ -42,6 +42,10 @@ files, `tools/wownav-pack.lua` is no longer needed.
 ## Updating
 
 1. Update the submodule `mapdata/WoW_NavigationData` and run `luajit tools/wownav-pack.lua`.
+   Only its `Forever/` folder is checked out (`git sparse-checkout set --no-cone /Forever/` inside the submodule; a
+   fresh clone needs this once, in Git Bash with `MSYS_NO_PATHCONV=1`), and `.pkgmeta` leaves `DemoAddon/` and
+   `ReadMe.txt` out of the release. The demo addon is still readable with `git show <commit>:DemoAddon/...`, or
+   `git sparse-checkout disable` to see it on disk.
 2. Compare his six files in `DemoAddon/WowVisionNavigation/` with the commit named in our headers
    (`git -C mapdata/WoW_NavigationData diff <old> <new> -- DemoAddon/WowVisionNavigation/<file>`); carry his changes
    over, keep the changes listed above, and update the header lines.
