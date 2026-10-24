@@ -69,7 +69,7 @@ function StateRule:updateResolved(stateKey)
         return
     end
 
-    local message = { text = stateKey, state = stateKey, rule = self }
+    local message = self:stateMessage(stateKey)
 
     for outputKey, resolvedState in pairs(newResolved) do
         if previousResolved[outputKey] ~= resolvedState then
@@ -85,6 +85,13 @@ function StateRule:updateResolved(stateKey)
     end
 
     self._resolvedStates = newResolved
+end
+
+-- The message the outputs get on a transition; the TTS output speaks its
+-- text unless the player set one. Subclasses name the thing: "Moonfire
+-- Applied".
+function StateRule:stateMessage(stateKey)
+    return { text = stateKey, state = stateKey, rule = self }
 end
 
 function StateRule:transitionTo(stateKey, message)

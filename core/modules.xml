@@ -52,6 +52,7 @@
           <Include file="ui modules/modules.xml" />
     <Include file="objects/modules.xml" />
     <Include file="buffers/modules.xml" />
+    <Include file="monitors/modules.xml" />
     <Include file="windows/modules.xml" />
   <Include file="chat/modules.xml" />
   <Include file="errors/modules.xml" />

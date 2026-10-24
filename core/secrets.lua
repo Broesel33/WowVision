@@ -34,6 +34,45 @@ function secrets.hasText(text)
     return text ~= ""
 end
 
+-- "" when the number is zero or nil, else prefix .. whole number .. suffix.
+-- A secret number goes through the game's string utilities, which take it
+-- (C_StringUtil.TruncateWhenZero, WrapString); without them nothing can be
+-- said about it.
+function secrets.whenNonZero(number, prefix, suffix)
+    if number == nil then
+        return ""
+    end
+    if secrets.isSecret(number) then
+        if C_StringUtil ~= nil and C_StringUtil.TruncateWhenZero ~= nil and C_StringUtil.WrapString ~= nil then
+            return C_StringUtil.WrapString(C_StringUtil.TruncateWhenZero(number), prefix, suffix)
+        end
+        return ""
+    end
+    local whole = math.floor(number)
+    if whole == 0 then
+        return ""
+    end
+    return prefix .. whole .. suffix
+end
+
+-- "" when the text is empty or nil, else prefix .. text .. suffix. A secret
+-- string goes through WrapString, which drops it when empty.
+function secrets.whenText(text, prefix, suffix)
+    if text == nil then
+        return ""
+    end
+    if secrets.isSecret(text) then
+        if C_StringUtil ~= nil and C_StringUtil.WrapString ~= nil then
+            return C_StringUtil.WrapString(text, prefix, suffix)
+        end
+        return prefix .. text .. suffix
+    end
+    if text == "" then
+        return ""
+    end
+    return prefix .. text .. suffix
+end
+
 -- table.concat refuses secret strings; concatenation carries them through.
 -- Joins a list of strings with a separator the same way.
 function secrets.join(list, separator)

@@ -71,42 +71,8 @@ AuraBuffer:addFields({
     },
 })
 
--- "" when the number is zero or nil, else prefix .. whole number .. suffix.
--- A secret number goes through the game's string utilities, which take it;
--- without them nothing can be said about it.
-local function whenNonZero(number, prefix, suffix)
-    if number == nil then
-        return ""
-    end
-    if secrets.isSecret(number) then
-        if C_StringUtil ~= nil and C_StringUtil.TruncateWhenZero ~= nil and C_StringUtil.WrapString ~= nil then
-            return C_StringUtil.WrapString(C_StringUtil.TruncateWhenZero(number), prefix, suffix)
-        end
-        return ""
-    end
-    local whole = math.floor(number)
-    if whole == 0 then
-        return ""
-    end
-    return prefix .. whole .. suffix
-end
-
--- "" when the text is empty or nil, else prefix .. text .. suffix.
-local function whenText(text, prefix, suffix)
-    if text == nil then
-        return ""
-    end
-    if secrets.isSecret(text) then
-        if C_StringUtil ~= nil and C_StringUtil.WrapString ~= nil then
-            return C_StringUtil.WrapString(text, prefix, suffix)
-        end
-        return prefix .. text .. suffix
-    end
-    if text == "" then
-        return ""
-    end
-    return prefix .. text .. suffix
-end
+local whenNonZero = secrets.whenNonZero
+local whenText = secrets.whenText
 
 -- The index read: the aura, and whether the game allowed the read at all.
 local function auraAt(unit, index, filter)

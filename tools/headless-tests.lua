@@ -447,9 +447,9 @@ WowVision.testing.testRunner:addSuite("BufferConstruction", {
 })
 
 -- Monitors and rules on the new class system.
-loadAddonFile("classic/monitors/Rule.lua")
-loadAddonFile("classic/monitors/Monitor.lua")
-loadAddonFile("classic/monitors/rules/StateRule.lua")
+loadAddonFile("core/monitors/Rule.lua")
+loadAddonFile("core/monitors/Monitor.lua")
+loadAddonFile("core/monitors/rules/StateRule.lua")
 WowVision.testing.testRunner:addSuite("MonitorConstruction", {
     ["a monitor with a state rule round-trips its db"] = function(t)
         local StateRule = WowVision.monitors.ruleRegistry.types:get("State")
@@ -482,6 +482,139 @@ WowVision.testing.testRunner:addSuite("MonitorConstruction", {
         field:setDB(container2, db)
         t:assertEqual(container2.monitors[1].label, "Test Monitor")
         t:assertEqual(container2.monitors[1].enabled, false)
+    end,
+})
+
+-- The cooldown manager aura monitor reads Blizzard's item frames; fake ones here.
+C_Spell = C_Spell or {}
+local fakeSpellNames = { [8921] = "Moonfire", [164812] = "Moonfire", [93402] = "Sunfire" }
+C_Spell.GetSpellName = C_Spell.GetSpellName or function(id)
+    return fakeSpellNames[id]
+end
+C_Spell.GetSpellInfo = C_Spell.GetSpellInfo or function(id)
+    local name = fakeSpellNames[id]
+    return name ~= nil and { name = name, spellID = id } or nil
+end
+GetTime = GetTime or function()
+    return 0
+end
+local function fakeItem(spellID, buffItem)
+    local item = {
+        info = { spellID = spellID },
+        auraDataUnit = nil,
+        auraDataCached = nil,
+        PandemicIcon = nil,
+        active = false,
+    }
+    function item:GetCooldownInfo()
+        return self.info
+    end
+    if buffItem then
+        function item:IsActive()
+            return self.active
+        end
+        function item:GetApplicationsText()
+            return ""
+        end
+    end
+    return item
+end
+local moonfireIcon = fakeItem(8921, true)
+local moonfireEssential = fakeItem(8921, false)
+local sunfireIcon = fakeItem(93402, true)
+BuffIconCooldownViewer = { GetItemFrames = function()
+    return { moonfireIcon, sunfireIcon }
+end }
+EssentialCooldownViewer = { GetItemFrames = function()
+    return { moonfireEssential }
+end }
+-- The rule's Sound outputs browse the audio directory
+WowVision.audio = WowVision.audio or { directory = "Sound/WowVision" }
+loadAddonFile("retail/monitors/CdmAuraMonitor.lua")
+WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
+    ["frames match rules by spell name and read plain state"] = function(t)
+        local CdmAuraMonitor = WowVision.monitors.CdmAuraMonitor
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Moonfire, true)
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Sunfire, nil)
+        -- No aura: nothing shown
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireIcon, "target"), false)
+        -- A buff item needs IsActive besides the cached data
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached = "target", {}
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireIcon, "target"), false)
+        moonfireIcon.active = true
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireIcon, "target"), true)
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireIcon, "player"), false)
+        -- A cooldown item's cached data stands for the aura
+        moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = "target", {}
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireEssential, "target"), true)
+        moonfireIcon.active, moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached = false, nil, nil
+        moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = nil, nil
+    end,
+
+    ["a monitor walks its rule through applied, pandemic and missing"] = function(t)
+        local monitor = WowVision.monitors:create("CdmAura", { unit = "target" })
+        t:assertEqual(monitor:getLabel(), "Cooldown Manager Auras (Target)")
+        local rulesField = monitor.class:getField("rules")
+        rulesField:addElement(monitor, { type = "CdmAuraState", spell = 8921 })
+        local rule = monitor.rules[1]
+        t:assertEqual(rule:spellName(), "Moonfire")
+        t:assertEqual(rule:getLabel(), "Moonfire (8921)")
+
+        local fired = {}
+        for _, state in ipairs({ "applied", "pandemic", "missing" }) do
+            local alert = rule.class:getField(state):getAlert(rule)
+            alert:setEnabled(true)
+            for _, output in ipairs(alert.outputs) do
+                if output.key == "tts" then
+                    output:setEnabled(true)
+                    output.onFire = function(_, message)
+                        tinsert(fired, message.text)
+                    end
+                end
+            end
+        end
+
+        -- The first tick finds the frames and settles silently
+        monitor:update()
+        t:assertEqual(#rule._frames, 2)
+        t:assertEqual(#fired, 0)
+        t:assertEqual(rule:currentText("target"), "Moonfire, Missing")
+
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = "target", {}, true
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        moonfireIcon.PandemicIcon = {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        t:assertEqual(rule:currentText("target"), "Moonfire, Pandemic")
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = nil, nil, false, nil
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        t:assertEqual(#fired, 3)
+
+        -- Without a pandemic window (WoW: Forever) the marker means nothing
+        rule.class.hasPandemic = false
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        t:assertEqual(rule:currentText("target"), "Moonfire")
+        t:assertEqual(#rule:getStates(), 1)
+        rule.class.hasPandemic = true
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = nil, nil, false, nil
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        t:assertEqual(#fired, 5)
+
+        -- A target change holds the rule for two ticks, then announces when asked
+        monitor.announceOnUnitChange = true
+        monitor:onTargetChanged()
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = "target", {}, true
+        monitor:update()
+        monitor:update()
+        t:assertEqual(#fired, 5)
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
     end,
 })
 

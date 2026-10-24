@@ -30,6 +30,11 @@ local monitorsField = WowVision.classes.newField({
 -- Container object for the ComponentArray field to operate on
 local container = { monitors = {} }
 
+-- The monitors, for keys that read across them (retail/monitors).
+function module.getMonitors()
+    return container.monitors or {}
+end
+
 function module:getDefaultData()
     return { monitors = { _type = "array" } }
 end
