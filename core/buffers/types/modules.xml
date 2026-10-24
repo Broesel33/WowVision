@@ -5,5 +5,6 @@
   <Script file="MessageBuffer.lua" />
   <Script file="ChatTabBuffer.lua" />
   <Script file="TrackedBuffer.lua" />
+  <Script file="AuraBuffer.lua" />
 
 </Ui>

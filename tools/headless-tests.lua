@@ -261,6 +261,53 @@ loadAddonFile("core/buffers/types/TrackedBuffer.lua")
 loadAddonFile("core/MessageStore.lua")
 loadAddonFile("core/buffers/types/MessageBuffer.lua")
 loadAddonFile("core/buffers/types/ChatTabBuffer.lua")
+-- The aura buffer reads the game's aura list by index; a small fake one here.
+local fakeAuras = {
+    player = { HELPFUL = { { name = "Mark of the Wild", applications = 0, duration = 3600, dispelName = "Magic" } }, HARMFUL = {} },
+    target = {
+        HARMFUL = {
+            { name = "Moonfire", applications = 0, duration = 18, dispelName = "Magic" },
+            { name = "Sunfire", applications = 3, duration = 0, dispelName = "" },
+        },
+        HELPFUL = {},
+    },
+}
+local fakeUnits = { player = true, target = true }
+local fakeTooltips = {
+    Moonfire = { "Moonfire", "Burns the target.", "12 seconds remaining" },
+    Sunfire = { "Sunfire", "Burns." },
+    ["Mark of the Wild"] = { "Mark of the Wild", "59 minutes remaining" },
+}
+C_UnitAuras = C_UnitAuras or {}
+C_UnitAuras.GetAuraDataByIndex = function(unit, index, filter)
+    local base = filter:match("^(%u+)")
+    local list = fakeAuras[unit] and fakeAuras[unit][base]
+    return list and list[index] or nil
+end
+UnitExists = function(unit)
+    return fakeUnits[unit] == true
+end
+-- The game refuses the index read for restricted units; the tooltip still fills.
+local restrictedUnits = {}
+local fakeIndexRead = C_UnitAuras.GetAuraDataByIndex
+C_UnitAuras.GetAuraDataByIndex = function(unit, index, filter)
+    if restrictedUnits[unit] then
+        error("GetAuraDataByIndex(): Auras cannot be accessed when secret while tainted by 'WowVision'")
+    end
+    return fakeIndexRead(unit, index, filter)
+end
+loadAddonFile("core/buffers/types/AuraBuffer.lua")
+local scanLines = {}
+WowVision.buffers.AuraBuffer.scanner = {
+    fill = function(unit, index, filter)
+        local aura = fakeIndexRead(unit, index, filter)
+        scanLines = aura and fakeTooltips[aura.name] or {}
+        return #scanLines
+    end,
+    line = function(index)
+        return scanLines[index]
+    end,
+}
 WowVision.testing.testRunner:addSuite("BufferConstruction", {
     ["a static buffer constructs and persists through the root group"] = function(t)
         local db = { items = { _type = "array" } }
@@ -336,6 +383,66 @@ WowVision.testing.testRunner:addSuite("BufferConstruction", {
         again:setDB(db)
         t:assertEqual(#again.items[1].items[1].items, 1)
         t:assertEqual(again.items[1].items[1]:getFocus():getFocusString(), "other tab")
+    end,
+
+    ["an aura buffer lists its sources by index and speaks each aura afresh"] = function(t)
+        local db = { items = { _type = "array" } }
+        local root = WowVision.buffers.RootBufferGroup:new(db)
+        root:setDB(db)
+        local group = WowVision.buffers:create("Group", { label = "Combat" })
+        root:addBuffer(group)
+        local buffer = WowVision.buffers:create("Aura", { sources = { "target:HARMFUL", "player:HELPFUL", "focus:HARMFUL" } })
+        group:addBuffer(buffer)
+        t:assertEqual(db.items[1].items[1].type, "Aura")
+        t:assertEqual(#db.items[1].items[1].sources, 3)
+        t:assertEqual(buffer:getLabel(), "Auras")
+
+        -- Heading, two debuffs, heading, one buff, a missing unit
+        t:assertEqual(#buffer.items, 6)
+        t:assertEqual(buffer.items[1]:getFocusString(), "Target Debuffs, 2")
+        t:assertEqual(buffer.items[2]:getFocusString(), "Moonfire, 12 seconds remaining, of 18 seconds, Magic")
+        t:assertEqual(buffer.items[3]:getFocusString(), "Sunfire, 3 stacks")
+        t:assertEqual(buffer.items[4]:getFocusString(), "Player Buffs, 1")
+        t:assertEqual(buffer.items[5]:getFocusString(), "Mark of the Wild, 59 minutes remaining, of 3600 seconds")
+        t:assertEqual(buffer.items[6]:getFocusString(), "Focus Debuffs, no focus")
+
+        -- The game's list changed: the rebuild keeps the position
+        buffer:focusIndex(3)
+        table.remove(fakeAuras.target.HARMFUL, 1)
+        buffer:rebuild()
+        t:assertEqual(#buffer.items, 5)
+        t:assertEqual(buffer:getFocus():getFocusString(), "Player Buffs, 1")
+
+        -- Under restriction the index read is refused; the tooltip speaks
+        -- the name and the last line
+        restrictedUnits.target = true
+        buffer:rebuild()
+        t:assertEqual(#buffer.items, 5)
+        t:assertEqual(buffer.items[1]:getFocusString(), "Target Debuffs, 1")
+        t:assertEqual(buffer.items[2]:getFocusString(), "Sunfire, Burns.")
+        t:assertEqual(buffer.items[3]:getFocusString(), "Player Buffs, 1")
+        restrictedUnits.target = nil
+        buffer:rebuild()
+
+        -- Only my auras narrows the filter; a source change rebuilds
+        buffer.onlyMine = true
+        t:assertEqual(buffer.items[2]:getFocusString(), "Sunfire, 3 stacks")
+        buffer.sources = { "target:HARMFUL" }
+        t:assertEqual(#buffer.items, 2)
+        t:assertEqual(buffer:getLabel(), "Target Debuffs")
+
+        -- Restored from the saved config with its sources
+        local again = WowVision.buffers.RootBufferGroup:new(db)
+        again:setDB(db)
+        t:assertEqual(#again.items[1].items[1].sources, 1)
+        t:assertEqual(again.items[1].items[1].items[1]:getFocusString(), "Target Debuffs, 1")
+
+        -- A new buffer starts on the player's debuffs and buffs
+        local fresh = WowVision.buffers:create("Aura", {})
+        group:addBuffer(fresh)
+        t:assertEqual(#fresh.sources, 2)
+        t:assertEqual(#db.items[1].items[2].sources, 2)
+        fakeAuras.target.HARMFUL = { { name = "Moonfire", applications = 0, duration = 18, dispelName = "Magic" }, { name = "Sunfire", applications = 3, duration = 0, dispelName = "" } }
     end,
 })
 
