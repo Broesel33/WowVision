@@ -305,8 +305,10 @@ function AuraBuffer:filterFor(source)
     return source.filter
 end
 
--- A heading item per source ("Target Debuffs, 3"), then its auras in the
--- game's order. The focus keeps its position.
+-- The auras of each source in the game's order, with no heading in the
+-- way; a source with nothing to list says so instead ("Target Debuffs,
+-- none", "Focus Debuffs, no focus", or unavailable). The focus keeps its
+-- position.
 function AuraBuffer:rebuild()
     if C_UnitAuras == nil or C_UnitAuras.GetAuraDataByIndex == nil then
         return
@@ -316,23 +318,24 @@ function AuraBuffer:rebuild()
     for _, value in ipairs(self.sources or {}) do
         local source = SOURCE_BY_VALUE[value]
         if source ~= nil then
+            local message = nil
             if not UnitExists(source.unit) then
-                tinsert(self.items, WowVision.buffers.MessageItem:new({ data = source.label .. ", " .. source.missing }))
+                message = source.missing
             else
                 local filter = self:filterFor(source)
                 local count = countAuras(source.unit, filter)
-                local heading
                 if count == nil then
-                    heading = L["unavailable"]
+                    message = L["unavailable"]
                 elseif count == 0 then
-                    heading = L["none"]
+                    message = L["none"]
                 else
-                    heading = tostring(count)
+                    for i = 1, count do
+                        tinsert(self.items, AuraItem:new({ unit = source.unit, filter = filter, index = i, harmful = source.filter == "HARMFUL" }))
+                    end
                 end
-                tinsert(self.items, WowVision.buffers.MessageItem:new({ data = source.label .. ", " .. heading }))
-                for i = 1, count or 0 do
-                    tinsert(self.items, AuraItem:new({ unit = source.unit, filter = filter, index = i, harmful = source.filter == "HARMFUL" }))
-                end
+            end
+            if message ~= nil then
+                tinsert(self.items, WowVision.buffers.MessageItem:new({ data = source.label .. ", " .. message }))
             end
         end
     end

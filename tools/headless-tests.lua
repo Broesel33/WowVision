@@ -397,45 +397,50 @@ WowVision.testing.testRunner:addSuite("BufferConstruction", {
         t:assertEqual(#db.items[1].items[1].sources, 3)
         t:assertEqual(buffer:getLabel(), "Auras")
 
-        -- Heading, two debuffs, heading, one buff, a missing unit
-        t:assertEqual(#buffer.items, 6)
-        t:assertEqual(buffer.items[1]:getFocusString(), "Target Debuffs, 2")
-        t:assertEqual(buffer.items[2]:getFocusString(), "Moonfire, 12 seconds remaining, of 18 seconds, Magic")
-        t:assertEqual(buffer.items[3]:getFocusString(), "Sunfire, 3 stacks")
-        t:assertEqual(buffer.items[4]:getFocusString(), "Player Buffs, 1")
-        t:assertEqual(buffer.items[5]:getFocusString(), "Mark of the Wild, 59 minutes remaining, of 3600 seconds")
-        t:assertEqual(buffer.items[6]:getFocusString(), "Focus Debuffs, no focus")
+        -- Two debuffs, one buff, then a missing unit says so; no headings
+        t:assertEqual(#buffer.items, 4)
+        t:assertEqual(buffer.items[1]:getFocusString(), "Moonfire, 12 seconds remaining, of 18 seconds, Magic")
+        t:assertEqual(buffer.items[2]:getFocusString(), "Sunfire, 3 stacks")
+        t:assertEqual(buffer.items[3]:getFocusString(), "Mark of the Wild, 59 minutes remaining, of 3600 seconds")
+        t:assertEqual(buffer.items[4]:getFocusString(), "Focus Debuffs, no focus")
 
         -- The game's list changed: the rebuild keeps the position
-        buffer:focusIndex(3)
+        buffer:focusIndex(2)
         table.remove(fakeAuras.target.HARMFUL, 1)
         buffer:rebuild()
-        t:assertEqual(#buffer.items, 5)
-        t:assertEqual(buffer:getFocus():getFocusString(), "Player Buffs, 1")
+        t:assertEqual(#buffer.items, 3)
+        t:assertEqual(buffer:getFocus():getFocusString(), "Mark of the Wild, 59 minutes remaining, of 3600 seconds")
 
         -- Under restriction the index read is refused; the tooltip speaks
         -- the name and the last line
         restrictedUnits.target = true
         buffer:rebuild()
-        t:assertEqual(#buffer.items, 5)
-        t:assertEqual(buffer.items[1]:getFocusString(), "Target Debuffs, 1")
-        t:assertEqual(buffer.items[2]:getFocusString(), "Sunfire, Burns.")
-        t:assertEqual(buffer.items[3]:getFocusString(), "Player Buffs, 1")
+        t:assertEqual(#buffer.items, 3)
+        t:assertEqual(buffer.items[1]:getFocusString(), "Sunfire, Burns.")
+        t:assertEqual(buffer.items[2]:getFocusString(), "Mark of the Wild, 59 minutes remaining, of 3600 seconds")
         restrictedUnits.target = nil
         buffer:rebuild()
 
         -- Only my auras narrows the filter; a source change rebuilds
         buffer.onlyMine = true
-        t:assertEqual(buffer.items[2]:getFocusString(), "Sunfire, 3 stacks")
+        t:assertEqual(buffer.items[1]:getFocusString(), "Sunfire, 3 stacks")
         buffer.sources = { "target:HARMFUL" }
-        t:assertEqual(#buffer.items, 2)
+        t:assertEqual(#buffer.items, 1)
         t:assertEqual(buffer:getLabel(), "Target Debuffs")
+
+        -- A source with nothing to list says so
+        table.remove(fakeAuras.target.HARMFUL, 1)
+        buffer:rebuild()
+        t:assertEqual(#buffer.items, 1)
+        t:assertEqual(buffer.items[1]:getFocusString(), "Target Debuffs, none")
+        tinsert(fakeAuras.target.HARMFUL, { name = "Sunfire", applications = 3, duration = 0, dispelName = "" })
+        buffer:rebuild()
 
         -- Restored from the saved config with its sources
         local again = WowVision.buffers.RootBufferGroup:new(db)
         again:setDB(db)
         t:assertEqual(#again.items[1].items[1].sources, 1)
-        t:assertEqual(again.items[1].items[1].items[1]:getFocusString(), "Target Debuffs, 1")
+        t:assertEqual(again.items[1].items[1].items[1]:getFocusString(), "Sunfire, 3 stacks")
 
         -- A new buffer starts on the player's debuffs and buffs
         local fresh = WowVision.buffers:create("Aura", {})
