@@ -13,12 +13,16 @@ local secrets = WowVision.secrets
 -- The time left is drawn by the engine as the countdown text on the item's
 -- Cooldown widget, secret but speakable. This monitor polls those facts each
 -- tick for the item frames whose spell a rule names, and never touches an
--- aura value itself. Only spells the player put in the cooldown manager can
--- be tracked, and only on the player and the target, the two units the
--- viewers watch.
+-- aura value itself. Only auras in the cooldown manager's Tracked Buffs and
+-- Tracked Bars can be tracked (the game sorts each entry as a spell or an
+-- aura; the Essential and Utility viewers hold spells, whose item frames
+-- carry aura data only incidentally), and only on the player and the
+-- target, the two units the viewers watch.
 local monitors = WowVision.monitors
 
 local VIEWERS = { "BuffIconCooldownViewer", "BuffBarCooldownViewer", "EssentialCooldownViewer", "UtilityCooldownViewer" }
+-- The viewers that draw auras: Tracked Buffs and Tracked Bars.
+local AURA_VIEWERS = { "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
 -- Below this many seconds the countdown text shows one decimal ("8.7"), the
 -- finest the engine formats; Blizzard's own value is 0.
 local DECIMAL_BELOW_SECONDS = 600
@@ -57,19 +61,60 @@ local function spellNameOf(id)
     return nil
 end
 
--- The plain spell names an item frame stands for: its base spell and the
--- override and linked spells (the ids that turn secret while the aura is up
--- are skipped; the base id never does).
-local function frameSpellNames(frame)
-    local names = {}
+local function cooldownInfoOf(frame)
     if frame.GetCooldownInfo == nil then
-        return names
+        return nil
     end
     local ok, info = pcall(frame.GetCooldownInfo, frame)
-    if not ok or info == nil then
-        return names
+    if ok then
+        return info
     end
-    for _, key in ipairs({ "spellID", "overrideSpellID", "linkedSpellID", "overrideTooltipSpellID" }) do
+    return nil
+end
+
+-- The ids an entry goes by, in the order the cooldown manager itself names
+-- it (its GetSpellID): the linked spell, the tooltip override, the
+-- override, then the base spell. Two entries can share a base spell and
+-- differ only here (Eclipse (Lunar) and Eclipse (Solar) are both Eclipse).
+local ID_KEYS = { "linkedSpellID", "overrideTooltipSpellID", "overrideSpellID", "spellID" }
+
+-- The plain spell id the cooldown manager would show the entry under.
+local function displaySpellID(frame)
+    local info = cooldownInfoOf(frame)
+    if info == nil then
+        return nil
+    end
+    for _, key in ipairs(ID_KEYS) do
+        local id = info[key]
+        if id ~= nil and not secrets.isSecret(id) and id ~= 0 then
+            return id
+        end
+    end
+    return nil
+end
+
+-- The plain spell names an item frame stands for: its base spell and the
+-- override and linked spells. The ids that relate to an active aura turn
+-- secret while it is up, so names once seen plain are remembered for the
+-- frame until it is given another entry (the viewer pools its frames).
+local knownNames = setmetatable({}, { __mode = "k" })
+
+local function frameSpellNames(frame)
+    local info = cooldownInfoOf(frame)
+    if info == nil then
+        return {}
+    end
+    local cooldownID = info.cooldownID
+    if secrets.isSecret(cooldownID) then
+        cooldownID = nil
+    end
+    local known = knownNames[frame]
+    if known == nil or cooldownID == nil or known.cooldownID ~= cooldownID then
+        known = { cooldownID = cooldownID, names = {} }
+        knownNames[frame] = known
+    end
+    local names = known.names
+    for _, key in ipairs(ID_KEYS) do
         local name = spellNameOf(info[key])
         if name ~= nil then
             names[name] = true
@@ -84,6 +129,41 @@ local function frameSpellNames(frame)
         end
     end
     return names
+end
+
+-- One entry's ids and flags in words, for /wv cdmlog spells.
+local function describeEntry(frame, viewerTag)
+    local info = cooldownInfoOf(frame)
+    if info == nil then
+        return viewerTag(frame) .. ", no cooldown info"
+    end
+    local parts = { viewerTag(frame) }
+    for _, key in ipairs({ "cooldownID", "spellID", "overrideSpellID", "overrideTooltipSpellID", "linkedSpellID" }) do
+        local id = info[key]
+        if id ~= nil then
+            if secrets.isSecret(id) then
+                tinsert(parts, key .. " secret")
+            else
+                tinsert(parts, key .. " " .. tostring(id) .. " " .. (spellNameOf(id) or "unnamed"))
+            end
+        end
+    end
+    if type(info.linkedSpellIDs) == "table" and not secrets.isSecret(info.linkedSpellIDs) then
+        for _, id in ipairs(info.linkedSpellIDs) do
+            if secrets.isSecret(id) then
+                tinsert(parts, "linked secret")
+            else
+                tinsert(parts, "linked " .. tostring(id) .. " " .. (spellNameOf(id) or "unnamed"))
+            end
+        end
+    end
+    for _, key in ipairs({ "hasAura", "selfAura", "isKnown", "category" }) do
+        local value = info[key]
+        if value ~= nil then
+            tinsert(parts, key .. " " .. (secrets.isSecret(value) and "secret" or tostring(value)))
+        end
+    end
+    return table.concat(parts, ", ")
 end
 
 -- Whether a frame is drawn at all. A hidden viewer (one the player shows
@@ -167,10 +247,10 @@ local function stacksText(frame)
     return textOf(fontString)
 end
 
--- Every item frame of every viewer.
-local function viewerItemFrames()
+-- Every item frame of the given viewers.
+local function viewerItemFrames(viewerNames)
     local frames = {}
-    for _, name in ipairs(VIEWERS) do
+    for _, name in ipairs(viewerNames) do
         local viewer = _G[name]
         if viewer ~= nil and viewer.GetItemFrames ~= nil then
             local ok, list = pcall(viewer.GetItemFrames, viewer)
@@ -184,21 +264,19 @@ local function viewerItemFrames()
     return frames
 end
 
--- The spells in the cooldown manager layout, one entry per base spell id
--- (the plain one), sorted by name: what a rule can usefully name.
+-- The auras in the cooldown manager's Tracked Buffs and Tracked Bars, one
+-- entry per spell as the cooldown manager names them, sorted by name: what
+-- a rule can name.
 local function cdmSpells()
     local seen = {}
     local list = {}
-    for _, frame in ipairs(viewerItemFrames()) do
-        if frame.GetCooldownInfo ~= nil then
-            local ok, info = pcall(frame.GetCooldownInfo, frame)
-            local id = ok and info ~= nil and info.spellID or nil
-            if id ~= nil and not secrets.isSecret(id) and not seen[id] then
-                local name = spellNameOf(id)
-                if name ~= nil then
-                    seen[id] = true
-                    tinsert(list, { spellID = id, name = name })
-                end
+    for _, frame in ipairs(viewerItemFrames(AURA_VIEWERS)) do
+        local id = displaySpellID(frame)
+        if id ~= nil and not seen[id] then
+            local name = spellNameOf(id)
+            if name ~= nil then
+                seen[id] = true
+                tinsert(list, { spellID = id, name = name })
             end
         end
     end
@@ -223,7 +301,7 @@ classes.registerFieldType("CdmSpell", {
 local graph = WowVision.graph
 if graph ~= nil and graph.settings ~= nil and graph.settings.spellControl ~= nil then
     graph.settings.registerFieldControl("CdmSpell", function(field, owner)
-        return graph.settings.spellControl(field, owner, cdmSpells, L["No cooldown manager spells"])
+        return graph.settings.spellControl(field, owner, cdmSpells, L["No tracked buffs or bars"])
     end)
 end
 
@@ -603,6 +681,7 @@ CdmAuraMonitor:updateFields({
 
 CdmAuraMonitor.frameSpellNames = frameSpellNames
 CdmAuraMonitor.cdmSpells = cdmSpells
+CdmAuraMonitor.displaySpellID = displaySpellID
 CdmAuraMonitor.trace = trace
 CdmAuraMonitor.auraShown = auraShown
 CdmAuraMonitor.frameVisible = frameVisible
@@ -665,8 +744,9 @@ function CdmAuraMonitor:getTrackingFields()
     return { "unit", "decimalTimer" }
 end
 
+-- The item frames a rule may match: those of the aura viewers.
 function CdmAuraMonitor:itemFrames()
-    return viewerItemFrames()
+    return viewerItemFrames(AURA_VIEWERS)
 end
 
 function CdmAuraMonitor:applyTimer(frame)
@@ -774,11 +854,23 @@ if module ~= nil then
     if module.registerCommand ~= nil then
         module:registerCommand({
             name = "cdmlog",
-            description = "Show what the Cooldown Manager Auras rules saw ('clear' resets)",
+            description = "Show what the Cooldown Manager Auras rules saw ('clear' resets; 'spells' lists the tracked buff and bar entries)",
             func = function(args)
                 if args == "clear" then
                     clearTrace()
                     print("Cooldown manager log cleared")
+                    return
+                end
+                if args == "spells" then
+                    local lines = {}
+                    for _, frame in ipairs(viewerItemFrames(AURA_VIEWERS)) do
+                        tinsert(lines, describeEntry(frame, viewerTag))
+                    end
+                    if #lines == 0 then
+                        print("No tracked buffs or bars")
+                        return
+                    end
+                    WowVision.testing.showResults(table.concat(lines, string.char(10)))
                     return
                 end
                 if #trace == 0 then

@@ -487,7 +487,7 @@ WowVision.testing.testRunner:addSuite("MonitorConstruction", {
 
 -- The cooldown manager aura monitor reads Blizzard's item frames; fake ones here.
 C_Spell = C_Spell or {}
-local fakeSpellNames = { [8921] = "Moonfire", [164812] = "Moonfire", [93402] = "Sunfire" }
+local fakeSpellNames = { [8921] = "Moonfire", [164812] = "Moonfire", [93402] = "Sunfire", [78674] = "Starsurge", [79577] = "Eclipse", [48518] = "Eclipse (Lunar)", [48517] = "Eclipse (Solar)" }
 C_Spell.GetSpellName = C_Spell.GetSpellName or function(id)
     return fakeSpellNames[id]
 end
@@ -500,7 +500,7 @@ GetTime = GetTime or function()
 end
 local function fakeItem(spellID, buffItem)
     local item = {
-        info = { spellID = spellID },
+        info = { spellID = spellID, cooldownID = spellID },
         auraDataUnit = nil,
         auraDataCached = nil,
         PandemicIcon = nil,
@@ -531,11 +531,20 @@ end
 local moonfireIcon = fakeItem(8921, true)
 local moonfireEssential = fakeItem(8921, false)
 local sunfireIcon = fakeItem(93402, true)
+local starsurgeEssential = fakeItem(78674, false)
 BuffIconCooldownViewer = { GetItemFrames = function()
     return { moonfireIcon, sunfireIcon }
 end }
 EssentialCooldownViewer = { GetItemFrames = function()
-    return { moonfireEssential }
+    return { moonfireEssential, starsurgeEssential }
+end }
+-- Two bar entries sharing a base spell, told apart by their tooltip spell
+local eclipseLunar = fakeItem(79577, true)
+eclipseLunar.info.cooldownID, eclipseLunar.info.overrideTooltipSpellID = 1, 48518
+local eclipseSolar = fakeItem(79577, true)
+eclipseSolar.info.cooldownID, eclipseSolar.info.overrideTooltipSpellID = 2, 48517
+BuffBarCooldownViewer = { GetItemFrames = function()
+    return { eclipseLunar, eclipseSolar }
 end }
 -- The rule's Sound outputs browse the audio directory
 WowVision.audio = WowVision.audio or { directory = "Sound/WowVision" }
@@ -556,11 +565,27 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
         local CdmAuraMonitor = WowVision.monitors.CdmAuraMonitor
         t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Moonfire, true)
         t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Sunfire, nil)
+        -- Only the aura viewers count: Starsurge sits in Essential alone.
+        -- Entries are named as the cooldown manager names them, so the two
+        -- Eclipses are distinct
         local spells = CdmAuraMonitor.cdmSpells()
-        t:assertEqual(#spells, 2)
-        t:assertEqual(spells[1].name, "Moonfire")
-        t:assertEqual(spells[1].spellID, 8921)
-        t:assertEqual(spells[2].name, "Sunfire")
+        t:assertEqual(#spells, 4)
+        t:assertEqual(spells[1].name, "Eclipse (Lunar)")
+        t:assertEqual(spells[1].spellID, 48518)
+        t:assertEqual(spells[2].name, "Eclipse (Solar)")
+        t:assertEqual(spells[3].name, "Moonfire")
+        t:assertEqual(spells[3].spellID, 8921)
+        t:assertEqual(spells[4].name, "Sunfire")
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(eclipseLunar)["Eclipse (Lunar)"], true)
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(eclipseLunar)["Eclipse"], true)
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(eclipseLunar)["Eclipse (Solar)"], nil)
+        -- A name once seen plain stays with the frame while its entry does
+        -- (the id turns secret while the aura is up), and goes with it
+        eclipseLunar.info.overrideTooltipSpellID = nil
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(eclipseLunar)["Eclipse (Lunar)"], true)
+        eclipseLunar.info.cooldownID = 3
+        t:assertEqual(CdmAuraMonitor.frameSpellNames(eclipseLunar)["Eclipse (Lunar)"], nil)
+        eclipseLunar.info.cooldownID, eclipseLunar.info.overrideTooltipSpellID = 1, 48518
         t:assertEqual(WowVision.classes.fieldTypes.CdmSpell ~= nil, true)
         t:assertEqual(WowVision.monitors.CdmAuraStateRule:getField("spell").typeKey, "CdmSpell")
         -- No aura: nothing shown
@@ -607,7 +632,7 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
 
         -- The first tick finds the frames and settles silently
         monitor:update()
-        t:assertEqual(#rule._frames, 2)
+        t:assertEqual(#rule._frames, 1)
         t:assertEqual(#fired, 0)
         t:assertEqual(rule:currentText("target"), "Moonfire, Missing")
 
@@ -748,8 +773,7 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
         t:assertEqual(fired[#fired], "Moonfire Applied")
         count = #fired
         monitor:onTargetChanged()
-        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
-        moonfireEssential.visible = false
+        moonfireIcon.visible = false
         monitor:update()
         monitor:update()
         monitor:update()
@@ -758,8 +782,10 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
         local lastTrace = WowVision.monitors.CdmAuraMonitor.trace[#WowVision.monitors.CdmAuraMonitor.trace]
         t:assertTrue(lastTrace:find("hidden", 1, true) ~= nil, "trace marks the hidden frame")
         t:assertTrue(lastTrace:find("after target change", 1, true) ~= nil, "trace marks the target change")
-        moonfireEssential.visible = true
+        moonfireIcon.visible = true
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
         moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = nil, nil
+        monitor:update()
         moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
         monitor:update()
         t:assertEqual(fired[#fired], "Moonfire Pandemic")

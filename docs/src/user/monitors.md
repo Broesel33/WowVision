@@ -58,7 +58,7 @@ Cooldown rules also have event-based alerts for charge changes:
 
 ### Cooldown Manager Auras (Retail, WoW: Forever)
 
-On Retail the game closes its aura data to addons in combat and in instances, so the Aura Monitor cannot see your debuffs there. Blizzard's own cooldown manager (`/cdm`) can, and this monitor reads what it shows: for each spell you have placed in the cooldown manager, whether its aura is up on the unit and whether it is in its pandemic window. Only spells in your cooldown manager layout can be tracked, and only on yourself or your target, the two units the cooldown manager follows.
+On Retail the game closes its aura data to addons in combat and in instances, so the Aura Monitor cannot see your debuffs there. Blizzard's own cooldown manager (`/cdm`) can, and this monitor reads what it shows: for each aura in your Tracked Buffs and Tracked Bars, whether it is up on the unit and whether it is in its pandemic window. Only auras in those two lists of your cooldown manager layout can be tracked (the Essential and Utility lists hold spells), and only on yourself or your target, the two units the cooldown manager follows.
 
 | Setting | What It Does |
 |---|---|
@@ -66,7 +66,7 @@ On Retail the game closes its aura data to addons in combat and in instances, so
 | Announce on Target Change | Play the current state of every rule when you switch targets |
 | One Decimal Timer | The timer drawn on the tracked icons shows tenths of a second ("8.7"); this is what the Speak Tracked Auras key reads |
 
-**Cooldown Manager Aura Rules** name a spell and alert on its states. The Spell picker lists the spells in your cooldown manager layout, since those are the ones the monitor can track; you can still type any spell name or id.
+**Cooldown Manager Aura Rules** name a spell and alert on its states. The Spell picker lists the auras in your Tracked Buffs and Tracked Bars, since those are the ones the monitor can track; you can still type any spell name or id.
 
 | State | When It Fires |
 |---|---|
@@ -76,7 +76,7 @@ On Retail the game closes its aura data to addons in combat and in instances, so
 
 WoW: Forever has no pandemic window, so the Pandemic state does not exist there.
 
-A viewer you have set to show only in combat is read as empty while hidden, since the game stops updating it then. If an alert plays at the wrong moment, `/wv cdmlog` shows what each rule saw on the cooldown manager frames around every change, newest last, in a copyable window; `/wv cdmlog clear` empties it.
+A viewer you have set to show only in combat is read as empty while hidden, since the game stops updating it then. If an alert plays at the wrong moment, `/wv cdmlog` shows what each rule saw on the cooldown manager frames around every change, newest last, in a copyable window; `/wv cdmlog clear` empties it. `/wv cdmlog spells` lists every Tracked Buffs and Tracked Bars entry with its spell ids.
 
 The TTS alerts speak the spell and the state, "Moonfire Applied". The **Speak Tracked Auras** key (unbound by default, under Monitors in the keybinding window) reads every tracked aura as the cooldown manager draws it: the time left, the stacks, and Pandemic when it applies, or Missing.
 
