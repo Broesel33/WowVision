@@ -505,9 +505,18 @@ local function fakeItem(spellID, buffItem)
         auraDataCached = nil,
         PandemicIcon = nil,
         active = false,
+        visible = true,
     }
     function item:GetCooldownInfo()
         return self.info
+    end
+    function item:IsVisible()
+        return self.visible
+    end
+    function item:SetAuraInstanceInfo() end
+    item.Cooldown = {}
+    function item.Cooldown:HookScript(_, handler)
+        self.onDone = handler
     end
     if buffItem then
         function item:IsActive()
@@ -530,12 +539,30 @@ EssentialCooldownViewer = { GetItemFrames = function()
 end }
 -- The rule's Sound outputs browse the audio directory
 WowVision.audio = WowVision.audio or { directory = "Sound/WowVision" }
+-- The item frame hooks: a stand-in that wraps a table's method
+if hooksecurefunc == nil then
+    hooksecurefunc = function(target, name, hook)
+        local original = target[name]
+        target[name] = function(...)
+            local result = original(...)
+            hook(...)
+            return result
+        end
+    end
+end
 loadAddonFile("retail/monitors/CdmAuraMonitor.lua")
 WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
     ["frames match rules by spell name and read plain state"] = function(t)
         local CdmAuraMonitor = WowVision.monitors.CdmAuraMonitor
         t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Moonfire, true)
         t:assertEqual(CdmAuraMonitor.frameSpellNames(moonfireIcon).Sunfire, nil)
+        local spells = CdmAuraMonitor.cdmSpells()
+        t:assertEqual(#spells, 2)
+        t:assertEqual(spells[1].name, "Moonfire")
+        t:assertEqual(spells[1].spellID, 8921)
+        t:assertEqual(spells[2].name, "Sunfire")
+        t:assertEqual(WowVision.classes.fieldTypes.CdmSpell ~= nil, true)
+        t:assertEqual(WowVision.monitors.CdmAuraStateRule:getField("spell").typeKey, "CdmSpell")
         -- No aura: nothing shown
         t:assertEqual(CdmAuraMonitor.auraShown(moonfireIcon, "target"), false)
         -- A buff item needs IsActive besides the cached data
@@ -547,6 +574,10 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
         -- A cooldown item's cached data stands for the aura
         moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = "target", {}
         t:assertEqual(CdmAuraMonitor.auraShown(moonfireEssential, "target"), true)
+        -- A hidden frame shows nothing, whatever it last read
+        moonfireEssential.visible = false
+        t:assertEqual(CdmAuraMonitor.auraShown(moonfireEssential, "target"), false)
+        moonfireEssential.visible = true
         moonfireIcon.active, moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached = false, nil, nil
         moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = nil, nil
     end,
@@ -615,6 +646,141 @@ WowVision.testing.testRunner:addSuite("CdmAuraMonitor", {
         monitor:update()
         t:assertEqual(fired[#fired], "Moonfire Applied")
         moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        monitor.announceOnUnitChange = false
+
+        -- The pandemic marker goes at expiry before the aura data does: the
+        -- rule holds Pandemic across the gap and goes straight to Missing
+        local savedGetTime = GetTime
+        local now = 100
+        GetTime = function()
+            return now
+        end
+        local count = #fired
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        now = now + 0.1
+        moonfireIcon.PandemicIcon = nil
+        monitor:update()
+        t:assertEqual(#fired, count + 1)
+        t:assertEqual(rule:getCurrentState(), "pandemic")
+        now = now + 0.3
+        monitor:update()
+        t:assertEqual(#fired, count + 1)
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        t:assertEqual(#fired, count + 2)
+
+        -- A refresh in pandemic re-reads the aura, so Applied follows on
+        -- the second tick without the marker
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        now = now + 0.1
+        moonfireIcon:SetAuraInstanceInfo({})
+        moonfireIcon.PandemicIcon = nil
+        monitor:update()
+        t:assertEqual(rule:getCurrentState(), "pandemic")
+        now = now + 0.02
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        t:assertEqual(#fired, count + 4)
+
+        -- A one-tick marker glitch after a re-read changes nothing
+        moonfireIcon.PandemicIcon = {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        now = now + 0.1
+        moonfireIcon:SetAuraInstanceInfo({})
+        moonfireIcon.PandemicIcon = nil
+        monitor:update()
+        moonfireIcon.PandemicIcon = {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        t:assertEqual(#fired, count + 5)
+        count = count + 1
+
+        -- The trace recorded the hold
+        local traceText = table.concat(WowVision.monitors.CdmAuraMonitor.trace, "|")
+        t:assertTrue(traceText:find("hold starts", 1, true) ~= nil, "trace has the hold")
+        t:assertTrue(traceText:find("aura reread", 1, true) ~= nil, "trace has the reread")
+
+        -- At expiry the widget finishes first and the viewer's own refresh
+        -- re-reads the aura the game still lists: that re-read is no refresh
+        now = now + 0.1
+        moonfireIcon.PandemicIcon = {}
+        monitor:update()
+        t:assertEqual(rule:getCurrentState(), "pandemic")
+        now = now + 0.1
+        moonfireIcon.Cooldown.onDone(moonfireIcon.Cooldown)
+        moonfireIcon:SetAuraInstanceInfo({})
+        moonfireIcon.PandemicIcon = nil
+        monitor:update()
+        now = now + 0.02
+        monitor:update()
+        now = now + 0.02
+        monitor:update()
+        t:assertEqual(rule:getCurrentState(), "pandemic")
+        t:assertEqual(#fired, count + 4)
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        t:assertEqual(#fired, count + 5)
+        count = count + 1
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        t:assertEqual(#fired, count + 5)
+        count = count + 1
+
+        -- A target change: a hidden viewer's stale aura data does not keep
+        -- the rule in Applied on the new target
+        now = now + 0.1
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = nil, nil, false, nil
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = "target", {}, true
+        moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = "target", {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        count = #fired
+        monitor:onTargetChanged()
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
+        moonfireEssential.visible = false
+        monitor:update()
+        monitor:update()
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Missing")
+        t:assertEqual(#fired, count + 1)
+        local lastTrace = WowVision.monitors.CdmAuraMonitor.trace[#WowVision.monitors.CdmAuraMonitor.trace]
+        t:assertTrue(lastTrace:find("hidden", 1, true) ~= nil, "trace marks the hidden frame")
+        t:assertTrue(lastTrace:find("after target change", 1, true) ~= nil, "trace marks the target change")
+        moonfireEssential.visible = true
+        moonfireEssential.auraDataUnit, moonfireEssential.auraDataCached = nil, nil
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active, moonfireIcon.PandemicIcon = "target", {}, true, {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        count = #fired - 4
+
+        -- Without a re-read the hold runs out and Applied follows
+        now = now + 0.1
+        moonfireIcon.PandemicIcon = {}
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Pandemic")
+        now = now + 0.1
+        moonfireIcon.PandemicIcon = nil
+        monitor:update()
+        t:assertEqual(rule:getCurrentState(), "pandemic")
+        now = now + 1.1
+        monitor:update()
+        t:assertEqual(fired[#fired], "Moonfire Applied")
+        t:assertEqual(#fired, count + 5)
+        moonfireIcon.auraDataUnit, moonfireIcon.auraDataCached, moonfireIcon.active = nil, nil, false
+        monitor:update()
+        GetTime = savedGetTime
     end,
 })
 

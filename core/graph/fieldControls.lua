@@ -73,9 +73,11 @@ settings.registerFieldControl("TtsVoice", function(field, owner)
     })
 end)
 
--- Spell: typed entry resolving a name or id (the field's validate does the
--- lookup), plus the recent-spell history as quick picks.
-settings.registerFieldControl("Spell", function(field, owner)
+-- A spell picker: a button opening a screen with typed entry (a name or an
+-- id; the field's validate does the lookup) and a list of quick picks,
+-- `picks()` returning { spellID, name } entries in display order. With no
+-- picks, `emptyText` (when given) says so.
+local function spellControl(field, owner, picks, emptyText)
     local valueText = valueTextOf(owner, field)
     return nodes.button({
         label = field:getLabel(),
@@ -106,34 +108,49 @@ settings.registerFieldControl("Spell", function(field, owner)
                         end,
                     })
                 )
-                local history = WowVision.spellHistory
-                if history ~= nil then
-                    local sorted = {}
-                    for spellID, entry in pairs(history.spells) do
-                        tinsert(sorted, { spellID = spellID, name = entry.name })
-                    end
-                    table.sort(sorted, function(a, b)
-                        return a.name < b.name
-                    end)
-                    for _, spell in ipairs(sorted) do
-                        local spellID = spell.spellID
-                        builder:addItem(
-                            ControlId.structural("spell:" .. spellID),
-                            nodes.button({
-                                label = spell.name .. " (" .. spellID .. ")",
-                                onActivate = function()
-                                    field:set(owner, spellID)
-                                    local host = WowVision.graphHost
-                                    host:pop(host:focusedStack())
-                                end,
-                            })
-                        )
-                    end
+                local list = picks()
+                if #list == 0 and emptyText ~= nil then
+                    builder:addItem(ControlId.structural("empty"), nodes.text({ label = emptyText }))
+                end
+                for _, spell in ipairs(list) do
+                    local spellID = spell.spellID
+                    builder:addItem(
+                        ControlId.structural("spell:" .. spellID),
+                        nodes.button({
+                            label = spell.name .. " (" .. spellID .. ")",
+                            onActivate = function()
+                                field:set(owner, spellID)
+                                local host = WowVision.graphHost
+                                host:pop(host:focusedStack())
+                            end,
+                        })
+                    )
                 end
                 builder:popContext()
             end)
         end,
     })
+end
+settings.spellControl = spellControl
+
+-- The spells seen on this character (cast, or met as auras), by name.
+local function historyPicks()
+    local sorted = {}
+    local history = WowVision.spellHistory
+    if history ~= nil then
+        for spellID, entry in pairs(history.spells) do
+            tinsert(sorted, { spellID = spellID, name = entry.name })
+        end
+        table.sort(sorted, function(a, b)
+            return a.name < b.name
+        end)
+    end
+    return sorted
+end
+
+-- Spell: typed entry plus the recent-spell history as quick picks.
+settings.registerFieldControl("Spell", function(field, owner)
+    return spellControl(field, owner, historyPicks)
 end)
 
 -- Alert: its parameters are an InfoFrame; open them as a child screen.

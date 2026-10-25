@@ -66,7 +66,7 @@ On Retail the game closes its aura data to addons in combat and in instances, so
 | Announce on Target Change | Play the current state of every rule when you switch targets |
 | One Decimal Timer | The timer drawn on the tracked icons shows tenths of a second ("8.7"); this is what the Speak Tracked Auras key reads |
 
-**Cooldown Manager Aura Rules** name a spell and alert on its states:
+**Cooldown Manager Aura Rules** name a spell and alert on its states. The Spell picker lists the spells in your cooldown manager layout, since those are the ones the monitor can track; you can still type any spell name or id.
 
 | State | When It Fires |
 |---|---|
@@ -75,6 +75,8 @@ On Retail the game closes its aura data to addons in combat and in instances, so
 | Missing | The aura is not on the unit |
 
 WoW: Forever has no pandemic window, so the Pandemic state does not exist there.
+
+A viewer you have set to show only in combat is read as empty while hidden, since the game stops updating it then. If an alert plays at the wrong moment, `/wv cdmlog` shows what each rule saw on the cooldown manager frames around every change, newest last, in a copyable window; `/wv cdmlog clear` empties it.
 
 The TTS alerts speak the spell and the state, "Moonfire Applied". The **Speak Tracked Auras** key (unbound by default, under Monitors in the keybinding window) reads every tracked aura as the cooldown manager draws it: the time left, the stacks, and Pandemic when it applies, or Missing.
 

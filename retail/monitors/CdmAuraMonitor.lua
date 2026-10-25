@@ -25,6 +25,22 @@ local DECIMAL_BELOW_SECONDS = 600
 -- The viewers are looked over again this often, besides on their layout
 -- changes, in case a hook was missed.
 local RESCAN_SECONDS = 5
+-- How long a rule keeps saying Pandemic once the marker goes while the aura
+-- data stays. The viewer hides the marker the instant the aura's expiration
+-- time passes (its OnUpdate compares the clock), but clears the aura data
+-- only when the removal event arrives, a server round trip later; read
+-- plainly, that gap is an Applied between Pandemic and Missing. A refresh
+-- looks the same at first, and is told apart by the item re-reading a live
+-- aura (SetAuraInstanceInfo, hooked below), which ends the hold at once,
+-- unless the item's cooldown widget finished in the same breath: at expiry
+-- the widget's OnCooldownDone (hooked too) fires a frame before the clock
+-- comparison, marks the item dirty, and the refresh re-reads the aura the
+-- game still lists (measured in game, 2026-10-24). That re-read is the
+-- expiry itself, so it never ends the hold.
+local PANDEMIC_HOLD_SECONDS = 1
+-- A re-read ends the hold only once the marker has been gone this many
+-- ticks: a frame rebuilt by the viewer has its aura before its marker.
+local PANDEMIC_HOLD_MIN_TICKS = 2
 
 local stateOutputs = {
     { type = "Sound", key = "sound", label = L["Sound Alert"], enabled = false },
@@ -70,12 +86,27 @@ local function frameSpellNames(frame)
     return names
 end
 
+-- Whether a frame is drawn at all. A hidden viewer (one the player shows
+-- only in combat, say) unregisters its events, so its items keep whatever
+-- aura data they last read: stale, and no sighted player sees it either.
+local function frameVisible(frame)
+    if frame.IsVisible == nil then
+        return true
+    end
+    local ok, visible = pcall(frame.IsVisible, frame)
+    return ok and visible == true
+end
+
 -- Whether the frame shows its aura on the unit right now. A buff item (the
 -- Buff Icon and Buff Bar viewers) says so with IsActive; a cooldown item
 -- (Essential, Utility) is active whenever it has a cooldown, so there the
--- cached aura data stands for the aura.
+-- cached aura data stands for the aura. A frame that is not drawn shows
+-- nothing.
 local function auraShown(frame, unit)
     if frame.auraDataUnit ~= unit or frame.auraDataCached == nil then
+        return false
+    end
+    if not frameVisible(frame) then
         return false
     end
     if frame.GetApplicationsText ~= nil and frame.IsActive ~= nil then
@@ -136,13 +167,187 @@ local function stacksText(frame)
     return textOf(fontString)
 end
 
+-- Every item frame of every viewer.
+local function viewerItemFrames()
+    local frames = {}
+    for _, name in ipairs(VIEWERS) do
+        local viewer = _G[name]
+        if viewer ~= nil and viewer.GetItemFrames ~= nil then
+            local ok, list = pcall(viewer.GetItemFrames, viewer)
+            if ok and list ~= nil then
+                for _, frame in ipairs(list) do
+                    tinsert(frames, frame)
+                end
+            end
+        end
+    end
+    return frames
+end
+
+-- The spells in the cooldown manager layout, one entry per base spell id
+-- (the plain one), sorted by name: what a rule can usefully name.
+local function cdmSpells()
+    local seen = {}
+    local list = {}
+    for _, frame in ipairs(viewerItemFrames()) do
+        if frame.GetCooldownInfo ~= nil then
+            local ok, info = pcall(frame.GetCooldownInfo, frame)
+            local id = ok and info ~= nil and info.spellID or nil
+            if id ~= nil and not secrets.isSecret(id) and not seen[id] then
+                local name = spellNameOf(id)
+                if name ~= nil then
+                    seen[id] = true
+                    tinsert(list, { spellID = id, name = name })
+                end
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        return a.name < b.name
+    end)
+    return list
+end
+
+-- ---------------------------------------------------------------------------
+-- The spell field: a Spell whose quick picks are the cooldown manager's own
+-- spells rather than the cast history, since only those can be tracked.
+-- Typed entry still takes any name or id.
+-- ---------------------------------------------------------------------------
+local classes = WowVision.classes
+local spellType = classes.fieldTypes.Spell
+classes.registerFieldType("CdmSpell", {
+    validate = spellType.validate,
+    valueString = spellType.valueString,
+})
+
+local graph = WowVision.graph
+if graph ~= nil and graph.settings ~= nil and graph.settings.spellControl ~= nil then
+    graph.settings.registerFieldControl("CdmSpell", function(field, owner)
+        return graph.settings.spellControl(field, owner, cdmSpells, L["No cooldown manager spells"])
+    end)
+end
+
+-- When each item frame last re-read a live aura (the viewer calls
+-- SetAuraInstanceInfo on every refresh of an item that has one), and when
+-- its cooldown widget last finished.
+local refreshedAt = setmetatable({}, { __mode = "k" })
+local cooldownDoneAt = setmetatable({}, { __mode = "k" })
+local hookedFrames = setmetatable({}, { __mode = "k" })
+
+local function hookFrame(frame)
+    if hookedFrames[frame] or hooksecurefunc == nil or frame.SetAuraInstanceInfo == nil then
+        return
+    end
+    hookedFrames[frame] = true
+    hooksecurefunc(frame, "SetAuraInstanceInfo", function(item)
+        refreshedAt[item] = GetTime()
+    end)
+    local cooldown = frame.Cooldown
+    if cooldown ~= nil and cooldown.HookScript ~= nil then
+        pcall(cooldown.HookScript, cooldown, "OnCooldownDone", function()
+            cooldownDoneAt[frame] = GetTime()
+        end)
+    end
+end
+
+-- A short trace of what each rule saw, for /wv cdmlog: a line whenever a
+-- frame's plain facts change or the hold decides, oldest first. Plain words
+-- so it reads aloud.
+local TRACE_MAX = 80
+local trace = {}
+
+local function addTrace(line)
+    tinsert(trace, line)
+    if #trace > TRACE_MAX then
+        tremove(trace, 1)
+    end
+end
+
+local function clearTrace()
+    for i = #trace, 1, -1 do
+        trace[i] = nil
+    end
+end
+
+local function isActiveItem(frame)
+    if frame.IsActive == nil then
+        return nil
+    end
+    local ok, active = pcall(frame.IsActive, frame)
+    return ok and active == true
+end
+
+-- The plain facts of a frame as one number, for cheap change detection.
+local function frameCode(frame, unit)
+    local code = 0
+    if frame.auraDataCached ~= nil then
+        code = code + 1
+    end
+    if frame.auraDataUnit == unit then
+        code = code + 2
+    end
+    if isActiveItem(frame) then
+        code = code + 4
+    end
+    if frame.PandemicIcon ~= nil then
+        code = code + 8
+    end
+    if not frameVisible(frame) then
+        code = code + 16
+    end
+    return code
+end
+
+local function viewerTag(frame)
+    if frame.GetViewerFrame == nil then
+        return "item"
+    end
+    local ok, viewer = pcall(frame.GetViewerFrame, frame)
+    local name = ok and viewer ~= nil and viewer.GetName ~= nil and viewer:GetName() or nil
+    if name == nil then
+        return "item"
+    end
+    return (name:gsub("CooldownViewer", "")):lower()
+end
+
+local function describeFrame(frame, unit, since)
+    local text = viewerTag(frame)
+    if not frameVisible(frame) then
+        text = text .. " hidden"
+    end
+    if frame.auraDataCached ~= nil then
+        text = text .. " data"
+    end
+    if frame.auraDataUnit ~= nil then
+        text = text .. " " .. tostring(frame.auraDataUnit)
+    end
+    local active = isActiveItem(frame)
+    if active == true then
+        text = text .. " active"
+    elseif active == false then
+        text = text .. " inactive"
+    end
+    if frame.PandemicIcon ~= nil then
+        text = text .. " pandemic"
+    end
+    local at = refreshedAt[frame]
+    if at ~= nil and since ~= nil and at >= since then
+        text = text .. " reread"
+    end
+    at = cooldownDoneAt[frame]
+    if at ~= nil and since ~= nil and at >= since then
+        text = text .. " cooldown done"
+    end
+    return text
+end
+
 -- ---------------------------------------------------------------------------
 -- The rule: one spell of the cooldown manager, with alerts per state.
 -- ---------------------------------------------------------------------------
 local CdmAuraStateRule = monitors.ruleRegistry:createType({ key = "CdmAuraState", parent = "State" })
 
 CdmAuraStateRule:addFields({
-    { key = "spell", type = "Spell", persist = true, label = L["Spell"], sortPriority = 2 },
+    { key = "spell", type = "CdmSpell", persist = true, label = L["Spell"], sortPriority = 2 },
     {
         key = "applied",
         type = "Alert",
@@ -213,6 +418,46 @@ end
 
 function CdmAuraStateRule:setFrames(frames)
     self._frames = frames
+    for _, frame in ipairs(frames) do
+        hookFrame(frame)
+    end
+end
+
+-- Whether to keep saying Pandemic now that the marker has gone while the
+-- aura data stays: yes until the hold runs out, unless a frame re-read its
+-- aura since the tick before the marker went (a refresh, so Applied holds).
+function CdmAuraStateRule:holdingPandemic()
+    local now = GetTime()
+    local note = "held"
+    if self._holdSince == nil then
+        self._holdSince = self._lastTick or now
+        self._holdTicks = 0
+        note = "hold starts"
+    end
+    self._holdTicks = self._holdTicks + 1
+    local expired = false
+    for _, frame in ipairs(self._frames) do
+        local at = cooldownDoneAt[frame]
+        if at ~= nil and at >= self._holdSince then
+            expired = true
+        end
+    end
+    if expired then
+        note = note .. ", cooldown done"
+    elseif self._holdTicks >= PANDEMIC_HOLD_MIN_TICKS then
+        for _, frame in ipairs(self._frames) do
+            local at = refreshedAt[frame]
+            if at ~= nil and at >= self._holdSince then
+                self._holdSince = nil
+                return false, "hold ends, aura reread"
+            end
+        end
+    end
+    if now - self._holdSince >= PANDEMIC_HOLD_SECONDS then
+        self._holdSince = nil
+        return false, "hold ends, timed out"
+    end
+    return true, note
 end
 
 -- Spoken as "Moonfire Applied" rather than "applied".
@@ -225,7 +470,10 @@ end
 -- One tick: the state from the frames, then the transition.
 function CdmAuraStateRule:updateFromViewers(unit)
     local shown, pandemic = false, false
+    local codes, scale = 0, 1
     for _, frame in ipairs(self._frames) do
+        codes = codes + frameCode(frame, unit) * scale
+        scale = scale * 32
         if auraShown(frame, unit) then
             shown = true
             if self.class.hasPandemic and inPandemic(frame) then
@@ -233,22 +481,59 @@ function CdmAuraStateRule:updateFromViewers(unit)
             end
         end
     end
+    local changed = codes ~= self._lastCodes
+    self._lastCodes = codes
+    local before = self:getCurrentState()
+    local note = nil
+    local state
     if shown then
-        local state = pandemic and "pandemic" or "applied"
-        if state ~= self:getCurrentState() then
+        state = pandemic and "pandemic" or "applied"
+        if state == "applied" and before == "pandemic" then
+            local holding, why = self:holdingPandemic()
+            note = why
+            if holding then
+                state = "pandemic"
+            end
+        elseif state == "pandemic" then
+            self._holdSince = nil
+        end
+        if state ~= before then
             self:transitionTo(state)
         else
             self:updateResolved(state)
         end
-        return
-    end
-    local current = self:getCurrentState()
-    if current ~= "missing" and (current ~= nil or self._announceRequested) then
-        self:transitionTo("missing")
     else
-        self:updateResolved("missing")
+        state = "missing"
+        self._holdSince = nil
+        if before ~= "missing" and (before ~= nil or self._announceRequested) then
+            self:transitionTo("missing")
+        else
+            self:updateResolved("missing")
+        end
     end
     self._announceRequested = false
+    if self._traceNext ~= nil then
+        note = note and (note .. ", " .. self._traceNext) or self._traceNext
+        self._traceNext = nil
+    end
+    if changed or note ~= nil then
+        self:addTrace(unit, before, state, note)
+    end
+    self._lastTick = GetTime()
+end
+
+-- One trace line: the clock, the spell, each frame's facts, the states.
+function CdmAuraStateRule:addTrace(unit, before, after, note)
+    local parts = {}
+    for _, frame in ipairs(self._frames) do
+        tinsert(parts, describeFrame(frame, unit, self._lastTick))
+    end
+    local line = string.format("%.2f", GetTime()) .. " " .. (self:spellName() or self:getLabel()) .. ": " .. table.concat(parts, "; ")
+    line = line .. ". " .. tostring(before) .. " to " .. tostring(after)
+    if note ~= nil then
+        line = line .. ", " .. note
+    end
+    addTrace(line)
 end
 
 -- The aura now, as the game draws it: "Moonfire, 8.7, 3 stacks, Pandemic",
@@ -271,6 +556,7 @@ end
 
 function CdmAuraStateRule:reset()
     monitors.StateRule.reset(self)
+    self._holdSince = nil
 end
 
 function CdmAuraStateRule:getLabel()
@@ -316,7 +602,10 @@ CdmAuraMonitor:updateFields({
 })
 
 CdmAuraMonitor.frameSpellNames = frameSpellNames
+CdmAuraMonitor.cdmSpells = cdmSpells
+CdmAuraMonitor.trace = trace
 CdmAuraMonitor.auraShown = auraShown
+CdmAuraMonitor.frameVisible = frameVisible
 CdmAuraMonitor.inPandemic = inPandemic
 
 -- The live monitors, for the viewer hooks, the target change and the key.
@@ -376,21 +665,8 @@ function CdmAuraMonitor:getTrackingFields()
     return { "unit", "decimalTimer" }
 end
 
--- Every item frame of every viewer.
 function CdmAuraMonitor:itemFrames()
-    local frames = {}
-    for _, name in ipairs(VIEWERS) do
-        local viewer = _G[name]
-        if viewer ~= nil and viewer.GetItemFrames ~= nil then
-            local ok, list = pcall(viewer.GetItemFrames, viewer)
-            if ok and list ~= nil then
-                for _, frame in ipairs(list) do
-                    tinsert(frames, frame)
-                end
-            end
-        end
-    end
-    return frames
+    return viewerItemFrames()
 end
 
 function CdmAuraMonitor:applyTimer(frame)
@@ -430,12 +706,15 @@ function CdmAuraMonitor:onTargetChanged()
         return
     end
     self._skipTicks = 2
-    if self.announceOnUnitChange then
-        for _, rule in ipairs(self.rules or {}) do
+    for _, rule in ipairs(self.rules or {}) do
+        if self.announceOnUnitChange then
             if rule.reset then
                 rule:reset()
             end
             rule._announceRequested = true
+            rule._traceNext = "after target change, announcing"
+        else
+            rule._traceNext = "after target change"
         end
     end
 end
@@ -492,6 +771,25 @@ end
 -- them (time left, stacks, pandemic), target monitors first.
 local module = WowVision.base ~= nil and WowVision.base.monitors or nil
 if module ~= nil then
+    if module.registerCommand ~= nil then
+        module:registerCommand({
+            name = "cdmlog",
+            description = "Show what the Cooldown Manager Auras rules saw ('clear' resets)",
+            func = function(args)
+                if args == "clear" then
+                    clearTrace()
+                    print("Cooldown manager log cleared")
+                    return
+                end
+                if #trace == 0 then
+                    print("No cooldown manager log")
+                    return
+                end
+                WowVision.testing.showResults(table.concat(trace, string.char(10)))
+                WowVision:speak(trace[#trace])
+            end,
+        })
+    end
     module:registerBinding({
         type = "Function",
         key = "monitors/speakCdmAuras",
