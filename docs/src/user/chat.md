@@ -6,12 +6,35 @@ WowVision gives you access to your chat history and announces incoming messages 
 
 By default, WowVision speaks new chat messages as they arrive and plays a notification sound. You can configure or disable these alerts from the WowVision menu (`/wv`).
 
+## Chat Tabs
+
+WowVision follows the chat tabs you have in the game. Which messages and channels a tab receives is set in the game's own chat settings (right click a tab, or Backspace on it in the chat window, then Settings), exactly as for a sighted player. WowVision only decides how each tab is spoken.
+
+In the Chat module of `/wv`, every open tab has its own message alert, named like the tab. Each alert has a speech and a sound output, and a **Speak Messages** choice:
+
+- **When the Tab Is Shown** (the default): the tab speaks while it is the selected tab, or a window of its own on screen.
+- **Always**: the tab speaks everything it receives, selected or not.
+
+For example, make a tab in the game that receives only whispers, set its alert to Always, and give it a sound of its own: whispers then reach you whatever tab you are reading.
+
+A message that reaches several speaking tabs is spoken once.
+
+### Whisper Tabs
+
+When the game's whisper mode opens a new tab per conversation (Interface options, "New Whispers": in a new tab, or both), WowVision picks those tabs up, Battle.net whispers included, as soon as they open: the first whisper is not lost. All whisper tabs share one alert, **Whisper Tabs**, which speaks always by default, because in that mode a whisper is not shown in any other tab.
+
+Whisper tabs close when you close them or log out. Their lines are kept in one list, Whisper Tabs, which you can add to a buffer group (see Buffers).
+
+The game's own text to speech (chat settings, Text to Speech) speaks chat on its own; leave it off, or messages are spoken twice.
+
 ## The Chat Window
 
 Press **Shift+F3** to open the chat window. The window has two sections: your message history and your chat tabs.
 Use **Up** and **Down** to scroll through messages in the current tab. Each message is announced with its text and timestamp. **Home** and **End** jump to the oldest or most recent message.
 
-Your chat tabs are listed horizontally — use the arrow keys to switch between them. Each tab corresponds to one of your WoW chat frames, so whatever tab setup you have in-game carries over.
+**Left** and **Right** switch to the previous or next chat tab, in the order the game shows them, and read the tab's name and its newest message. At the first or last tab nothing happens.
+
+**Tab** moves to the row of chat tabs, where the arrow keys move between tabs and **Enter** selects one. **Backspace** on a tab opens the game's tab menu (settings, rename, new window, close). Each tab corresponds to one of your WoW chat frames, so whatever tab setup you have in-game carries over.
 
 ## Clicking Parts of a Message
 
@@ -23,7 +46,7 @@ On the selected part:
 
 - **Enter** is a left click. On a player it starts a whisper, on a channel it starts a message to that channel, and on an item, quest, or spell it reads the tooltip.
 - **Backspace** is a right click. On a player or channel this opens the game's own menu (whisper, invite, add friend, ignore, and so on), which WowVision reads like any other dropdown.
-- **Shift+Enter** is a shift click. On a link it puts the link into your chat box, opening it if needed. On a player it puts the name into an open chat box, or runs a who query if none is open.
+- **Shift+Enter** is a shift click. On a link it puts the link into your chat box, opening it if needed. On a player it puts the name into an open chat box, or runs a who query if none is open. On a channel it opens the chat channels window, as it does in the game.
 - **Space** and the **Shift+Arrow** tooltip keys read the tooltip of a selected link line by line.
 
 **Shift+F10** opens the context menu, which lists these clicks and adds **Copy Line**: WowVision says "Copy now" and the message sits selected as plain text in an edit box, where Ctrl+C copies it and Escape closes the box. Use this for web addresses or anything else you want outside the game.

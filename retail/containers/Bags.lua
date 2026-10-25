@@ -89,6 +89,7 @@ local function usableSlot(itemButton)
     return not (itemButton.IsExtended ~= nil and itemButton:IsExtended())
 end
 
+-- Slots ascending: the list shape reads them in this order.
 local function usableSlots(buttons)
     local list = {}
     for _, itemButton in ipairs(buttons or {}) do
@@ -96,6 +97,9 @@ local function usableSlots(buttons)
             tinsert(list, itemButton)
         end
     end
+    table.sort(list, function(a, b)
+        return a:GetID() < b:GetID()
+    end)
     return list
 end
 

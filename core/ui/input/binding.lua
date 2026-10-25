@@ -2,6 +2,9 @@ local ActivatedBinding = WowVision.Class("ActivatedBinding")
 
 function ActivatedBinding:initialize(binding, info)
     self.frames = {} --one frame per input
+    -- Controller inputs: the same frames, attached to the pad router
+    -- (core/ui/input/pad.lua) instead of bound to a key.
+    self.padTokens = {}
     self.binding = binding
     self.info = info
     self.activated = false
@@ -21,6 +24,18 @@ function ActivatedBinding:activate()
         SetOverrideBindingClick(frame, true, input, frame:GetName(), self.info.emulatedKey)
         tinsert(self.frames, frame)
     end
+    for _, input in ipairs(binding.padInputs or {}) do
+        local frame = WowVision.input:acquireFrame()
+        frame.binding = self.binding
+        if self.binding.onActivate then
+            self.binding:onActivate(frame, self.info)
+        end
+        tinsert(self.frames, frame)
+        local token = WowVision.pad.attach(input, frame, self.info.emulatedKey)
+        if token ~= nil then
+            tinsert(self.padTokens, token)
+        end
+    end
     self.activated = true
 end
 
@@ -28,6 +43,10 @@ function ActivatedBinding:deactivate()
     if not self.activated then
         return
     end
+    for _, token in ipairs(self.padTokens) do
+        WowVision.pad.detach(token)
+    end
+    self.padTokens = {}
     for _, frame in ipairs(self.frames) do
         if self.binding.onDeactivate then
             self.binding:onDeactivate(frame, self.info)
@@ -58,6 +77,15 @@ Binding:addFields({
             return {}
         end,
     },
+    -- Controller inputs (core/ui/input/padLogic.lua), kept apart from the
+    -- keyboard ones so a binding's saved keyboard keys never hide the
+    -- controller defaults. Same plain-field rule as inputs.
+    {
+        key = "padInputs",
+        default = function()
+            return {}
+        end,
+    },
     { key = "label" },
     { key = "emulatedKey" },
     {
@@ -78,6 +106,15 @@ function Binding:initialize(info)
     if info ~= nil and info.inputs ~= nil then
         self:setInputs(info.inputs)
     end
+    -- Declared controller inputs, or the defaults for this binding key.
+    local padInputs = info ~= nil and info.padInputs or nil
+    if padInputs == nil then
+        padInputs = WowVision.padLogic.defaultsFor(self.key)
+    end
+    self.padInputs = { _type = "array" }
+    for _, input in ipairs(padInputs) do
+        tinsert(self.padInputs, input)
+    end
 end
 
 function Binding:getLabel()
@@ -85,9 +122,12 @@ function Binding:getLabel()
 end
 
 function Binding:getDefaultDB()
-    local result = { inputs = { _type = "array" } }
+    local result = { inputs = { _type = "array" }, padInputs = { _type = "array" } }
     for i, input in ipairs(self.inputs) do
         tinsert(result.inputs, input)
+    end
+    for _, input in ipairs(self.padInputs) do
+        tinsert(result.padInputs, input)
     end
     return result
 end
@@ -95,6 +135,43 @@ end
 function Binding:setDB(db)
     self.db = db
     self.inputs = db.inputs
+    -- Saved before controller support: the declared controller defaults.
+    if db.padInputs == nil then
+        local padInputs = { _type = "array" }
+        for _, input in ipairs(self.padInputs) do
+            tinsert(padInputs, input)
+        end
+        db.padInputs = padInputs
+    end
+    self.padInputs = db.padInputs
+end
+
+function Binding:addPadInput(input)
+    tinsert(self.padInputs, input)
+end
+
+function Binding:removePadInput(input)
+    for i, bindingInput in ipairs(self.padInputs) do
+        if input == bindingInput then
+            table.remove(self.padInputs, i)
+            return
+        end
+    end
+end
+
+-- The binding that already has this controller input, or nil.
+function Binding:doesPadInputConflict(input)
+    if not self.inputManager then
+        return nil
+    end
+    for _, binding in ipairs(self.inputManager.bindings.orderedBindings) do
+        for _, bindingInput in ipairs(binding.padInputs or {}) do
+            if input == bindingInput then
+                return binding
+            end
+        end
+    end
+    return nil
 end
 
 function Binding:addInput(input)

@@ -1,11 +1,17 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
 
+  <!-- Controller input: the pure part (padLogic.lua) loads from
+       core/modules.xml ahead of the graph framework, whose keyCapture.lua
+       reads it at load; the game side comes after the activator. -->
   <Script file="input.lua" />
   <Script file="binding.lua" />
   <Script file="bindings.lua" />
   <Script file="actions.lua" />
+  <Script file="heldKeys.lua" />
+  <Script file="heldKeysTests.lua" />
   <Script file="activator.lua" />
+  <Script file="pad.lua" />
   <Script file="tests.lua" />
 
 </Ui>

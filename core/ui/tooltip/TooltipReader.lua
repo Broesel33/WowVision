@@ -14,18 +14,26 @@ function TooltipReader:getLine(frame, index)
     return left:GetText(), right:GetText()
 end
 
+-- Either side may be a secret string (hidden unit identities on Forever and
+-- Retail): no comparison on it, but concatenation carries it through and
+-- speech accepts the result.
 function TooltipReader:formatLine(left, right)
-    local result = ""
-    if left and left ~= "" then
-        result = result .. left
+    local hasText = WowVision.secrets.hasText
+    local hasLeft, hasRight = hasText(left), hasText(right)
+    if hasLeft and hasRight then
+        return left .. " " .. right
+    elseif hasLeft then
+        return left
+    elseif hasRight then
+        return right
     end
-    if right and right ~= "" then
-        if result ~= "" then
-            result = result .. " "
-        end
-        result = result .. right
-    end
-    return result
+    return ""
+end
+
+-- Joins lines with newlines by concatenation: table.concat refuses secret
+-- strings.
+function TooltipReader:joinLines(lines)
+    return WowVision.secrets.join(lines, "\n")
 end
 
 function TooltipReader:getText(frame, lineNumber)
@@ -42,7 +50,7 @@ function TooltipReader:getText(frame, lineNumber)
         local left, right = self:getLine(frame, lineNumber)
         tinsert(lines, self:formatLine(left, right))
     end
-    return table.concat(lines, "\n")
+    return self:joinLines(lines)
 end
 
 WowVision.TooltipReader = TooltipReader

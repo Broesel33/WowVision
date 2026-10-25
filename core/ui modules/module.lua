@@ -12,6 +12,33 @@ settings:add({
     default = false,
 })
 
+-- Chasing stuck movement keys with testers: prints when windows take, wait
+-- for and release the navigation keys, and what the held check saw.
+module:registerCommand({
+    name = "keylog",
+    description = "Toggle logging of when windows take and release the navigation keys",
+    func = function()
+        local host = WowVision.graphHost
+        host.keyLog = not host.keyLog
+        print("WowVision key log " .. (host.keyLog and "on" or "off"))
+    end,
+})
+
+-- Chasing controller problems with testers: the pad log (core/ui/input/
+-- pad.lua) runs by itself with the gamepad interface on; this starts it
+-- afresh.
+module:registerCommand({
+    name = "padlog",
+    description = "Start the controller log afresh",
+    func = function()
+        if WowVision.pad.restartLog() then
+            print("WowVision pad log started afresh")
+        else
+            print("WowVision pad log: only with the gamepad interface on")
+        end
+    end,
+})
+
 module:registerBindings({
     {
         type = "Virtual",
@@ -169,5 +196,27 @@ module:registerBindings({
         label = L["Context Menu"],
         inputs = { "SHIFT-F10" },
         func = function() end,
+    },
+    -- The controller's Escape (B) where Escape stays with the game; no
+    -- keyboard input, the keyboard's Escape is the game's own.
+    {
+        type = "Function",
+        key = "gameClose",
+        dorment = true,
+        label = L["Close (Controller)"],
+        inputs = {},
+        func = function() end,
+    },
+    -- Opens the WowVision menu, which otherwise needs /wv typed: the
+    -- controller's way in (the shortcut layer).
+    {
+        type = "Function",
+        key = "wowvision/menu",
+        label = L["WowVision Menu"],
+        inputs = {},
+        interruptSpeech = true,
+        func = function()
+            WowVision.graph.settings.openMenu()
+        end,
     },
 })

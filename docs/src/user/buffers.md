@@ -14,9 +14,16 @@ Out of the box, WowVision comes with a General group containing one buffer that 
 
 - **Health** — your current and maximum health
 - **Power** — your current resource (mana, energy, rage, etc.)
-- **XP** — your experience and progress to the next level
+- **XP** — your experience and progress to the next level, plus your rested XP when you have some
 - **Money** — your gold, silver, and copper
+- **Bags** — free slots in your normal bags (quivers and other special bags are not counted)
+- **Durability** — the percent of your most worn item, and how many items are broken
+- **Mail** — whether unread mail is waiting, and who sent it when the game knows
+- **Hearthstone** — ready or its cooldown, and where it takes you
+- **Time** — the game clock, following your clock settings (realm or local time, 12 or 24 hours)
 - **PvP Status** — whether you're flagged for PvP
+
+Characters made before these lines existed get the new ones added to their General buffer once, before the PvP line. Lines you remove afterwards stay removed.
 
 ## Navigating Buffers
 
@@ -34,7 +41,12 @@ These are the types of game state you can track in a buffer:
 | Power | A specific resource type for a unit | "50/100 Energy" |
 | Aura | A buff or debuff on a unit | "Blessing of Protection, 1 stack, 11s remaining" |
 | Money | Your total gold | "5g 23s 45c" |
-| XP | Experience progress | "XP: 45% (12500 of 25000)" |
+| XP | Experience progress and rested XP | "XP: 45% (12500 of 25000 to level 31), rested 3000" |
+| Bags | Free slots in normal bags | "Free Bag Slots: 12" |
+| Durability | Most worn item and broken items | "Durability: lowest item 45%, 1 broken" |
+| Mail | Unread mail and its senders | "Mail from Thrall, Jaina" |
+| Hearthstone | Cooldown and bind location | "Hearthstone: 20 minutes, Goldshire" |
+| Clock | The game clock | "Time: 8:05 PM" |
 | PvP | PvP flag status | "PVP: Enabled" |
 
 Unit-based objects (Health, Power, Aura) can be configured to track any unit — yourself, your target, a party member, and so on.
@@ -46,6 +58,10 @@ There are two main kinds of buffers:
 **Static buffers** contain a fixed list of objects that you choose. The default General buffer is a static buffer — you decide what goes in it and in what order.
 
 **Tracked buffers** automatically populate based on a rule. For example, a tracked buffer set to follow your auras will automatically add and remove items as buffs and debuffs come and go. You don't manage the contents manually.
+
+**Chat tab buffers** hold the messages of one of your chat tabs, the same lines the chat window (Shift+F3) shows for that tab, so you can read them with the buffer keys without opening it. Choose the tab in the buffer's settings: any open chat tab by name, or Whisper Tabs for the lines of all whisper tabs together. Which messages a tab receives is set in the game's chat settings (see Chat). The buffer opens on the newest line and follows new lines as they arrive; once you move back into older lines it stays where you are until you return to the end.
+
+**Aura buffers** list the buffs and debuffs on a unit, every one the game knows about and not only those drawn on screen. The Sources setting picks what the buffer holds and in which order: player debuffs, player buffs, target debuffs, target buffs, and the same for your focus and pet, in any combination. A new aura buffer starts with your own debuffs and buffs. The auras follow one another with no headings in the way; a source with nothing to list says so ("Target Debuffs, none", or that the unit is missing). Each aura reads the name, the stack count when above one, the time remaining and the total duration, and for debuffs the dispel type. Only My Auras keeps just the ones you cast, which is handy on a target. The list refreshes as auras come and go and keeps your place; an aura is read afresh each time you land on it. On Retail the game closes its aura list to addons in combat and in instances; the buffer then reads each aura from its tooltip instead, the name and the time remaining (or the description of an aura with no duration), without the stack count or dispel type, and never computes anything itself, which is why it keeps working where other tools go quiet.
 
 ## Configuring Buffers
 

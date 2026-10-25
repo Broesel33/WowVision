@@ -18,6 +18,11 @@ local announcer = graph.announcer
 -- rebuilds never churn secure frames. Override bindings cannot change during
 -- combat lockdown: all handles release on PLAYER_REGEN_DISABLED (the last
 -- pre-lockdown window) and re-engage on the first update after combat.
+-- Nothing engages while a key it would take is physically held: the engine
+-- gives a key's release to whoever owns the key at that moment, so an
+-- override landing on a held arrow left the player turning in circles
+-- (windows open on their own in a party, and combat ends mid-run). The
+-- engage is retried every tick until the keys are up (core/ui/input/heldKeys.lua).
 --
 -- Coexistence caveat: while a graph stack and an old-framework window are open
 -- at the same time, both navigators hold the same navigation keys and the
@@ -52,6 +57,12 @@ function GraphHost:initialize()
     self._focusNodeId = nil
     self._focusNode = nil
     self._bindingsDirty = false
+    -- The focused node's bindings are waiting for a held key to be released.
+    self._engageDeferred = false
+    -- /wv keylog: print when the navigation keys are taken, waited for and
+    -- released, with what the held check saw, for chasing stuck keys.
+    self.keyLog = false
+    self._navWaitLogged = false
 
     self.frame = CreateFrame("Frame")
     self.frame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -139,6 +150,9 @@ end
 
 function GraphHost:update()
     if #self.stacks == 0 then
+        if #self._navHandles > 0 then
+            self:_logKeys("released the navigation keys")
+        end
         self:_releaseNavBindings()
         self:_dropNodeFocus()
         return
@@ -147,7 +161,16 @@ function GraphHost:update()
         return
     end
     if #self._navHandles == 0 then
-        self:_engageNavBindings()
+        if WowVision.inputActivator:anyInputHeld(NAV_KEYMAPS) then
+            if not self._navWaitLogged then
+                self:_logKeys("waiting for a held key before taking the navigation keys")
+                self._navWaitLogged = true
+            end
+        else
+            self:_engageNavBindings()
+            self:_logKeys("took the navigation keys")
+            self._navWaitLogged = false
+        end
     end
     self:_syncCloseKey()
 
@@ -217,6 +240,13 @@ function GraphHost:_speak(text)
     end
 end
 
+function GraphHost:_logKeys(what)
+    if not self.keyLog then
+        return
+    end
+    print("WowVision keys: " .. what .. ". " .. WowVision.inputActivator:describeInputs(NAV_KEYMAPS))
+end
+
 -- ---- focused-node lifecycle: onFocus/onUnfocus + per-node bindings ----
 
 function GraphHost:_syncNodeFocus(screen)
@@ -235,23 +265,41 @@ function GraphHost:_syncNodeFocus(screen)
         return
     end
 
-    local previous = self._focusNode
-    if previous ~= nil and previous.vtable.onUnfocus ~= nil and (newId == nil or self._focusNodeId ~= newId) then
-        pcall(previous.vtable.onUnfocus, previous)
-    end
-    self:_releaseNodeHandles()
-    self._focusNodeId = newId
-    self._focusNode = node
-    self._bindingsDirty = false
-    if node ~= nil then
+    -- A retry: the node is already focused and announced; only its bindings
+    -- are still waiting for a held key to come up.
+    local retry = self._engageDeferred and newId ~= nil and self._focusNodeId == newId
+    if not retry then
+        local previous = self._focusNode
+        if previous ~= nil and previous.vtable.onUnfocus ~= nil and (newId == nil or self._focusNodeId ~= newId) then
+            pcall(previous.vtable.onUnfocus, previous)
+        end
+        self:_releaseNodeHandles()
+        self._focusNodeId = newId
+        self._focusNode = node
         -- onFocus runs first: scroll adapters materialize the row frame here,
         -- and binding targets may resolve lazily against it at engage.
-        if node.vtable.onFocus ~= nil then
+        if node ~= nil and node.vtable.onFocus ~= nil then
             pcall(node.vtable.onFocus, node)
         end
-        self:_engageNodeBindings(node)
     end
-    self:_setTooltipFor(node)
+    self._bindingsDirty = false
+    self._engageDeferred = false
+    if node ~= nil then
+        local specs = self:_nodeBindingSpecs(node)
+        local keymaps = {}
+        for _, spec in ipairs(specs) do
+            tinsert(keymaps, spec.binding)
+        end
+        if WowVision.inputActivator:anyInputHeld(keymaps) then
+            self._engageDeferred = true
+            self._bindingsDirty = true
+        else
+            self:_engageNodeBindings(node, specs)
+        end
+    end
+    if not retry then
+        self:_setTooltipFor(node)
+    end
 end
 
 -- Point the tooltip reader (SPACE and the shift-arrow line keys) at the
@@ -296,9 +344,12 @@ function GraphHost:_dropNodeFocus()
     self:_releaseNodeHandles()
     self._focusNodeId = nil
     self._focusNode = nil
+    self._engageDeferred = false
 end
 
-function GraphHost:_engageNodeBindings(node)
+-- The binding specs a focused node asks for: its own declarations plus the
+-- defaults for activate, secondary and tooltip.
+function GraphHost:_nodeBindingSpecs(node)
     local specs = {}
     local has = {}
     if node.vtable.bindings ~= nil then
@@ -337,6 +388,10 @@ function GraphHost:_engageNodeBindings(node)
             end,
         })
     end
+    return specs
+end
+
+function GraphHost:_engageNodeBindings(node, specs)
     for _, spec in ipairs(specs) do
         tinsert(self._nodeHandles, WowVision.inputActivator:activate(spec))
     end
@@ -393,6 +448,10 @@ function GraphHost:_releaseNavBindings()
         self._closeHandle:release()
         self._closeHandle = nil
     end
+    if self._gameCloseHandle ~= nil then
+        self._gameCloseHandle:release()
+        self._gameCloseHandle = nil
+    end
 end
 
 -- The close key (Escape) engages only when the focused stack owns something
@@ -403,7 +462,7 @@ function GraphHost:_syncCloseKey()
     local stack = self:focusedStack()
     local wants = stack ~= nil
         and (#stack.screens > 1 or (stack.config ~= nil and stack.config.captureClose == true))
-    if wants and self._closeHandle == nil then
+    if wants and self._closeHandle == nil and not WowVision.inputActivator:anyInputHeld({ "close" }) then
         self._closeHandle = WowVision.inputActivator:activate({
             binding = "close",
             type = "Function",
@@ -415,6 +474,20 @@ function GraphHost:_syncCloseKey()
     elseif not wants and self._closeHandle ~= nil then
         self._closeHandle:release()
         self._closeHandle = nil
+    end
+    -- The controller has no Escape key: where Escape stays with the game, the
+    -- B button runs the game's own Escape command (gameClose keymap, no
+    -- keyboard input), so the game closes its frame with its own sounds.
+    local wantsGame = stack ~= nil and not wants
+    if wantsGame and self._gameCloseHandle == nil and not WowVision.inputActivator:anyInputHeld({ "gameClose" }) then
+        self._gameCloseHandle = WowVision.inputActivator:activate({
+            binding = "gameClose",
+            type = "Command",
+            command = "TOGGLEGAMEMENU",
+        })
+    elseif not wantsGame and self._gameCloseHandle ~= nil then
+        self._gameCloseHandle:release()
+        self._gameCloseHandle = nil
     end
 end
 

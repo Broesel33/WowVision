@@ -105,6 +105,41 @@ function nodes.attachScrollFrame(vtable, scrollFrame, regionOrFunction)
     return vtable
 end
 
+-- Display text as speech: color codes (the hex form and the named |cn...:
+-- form), textures and atlas icons out, trimmed; nil when nothing is left.
+-- A secret string cannot be processed and passes through as it is (speech
+-- takes secrets).
+function nodes.plainText(text)
+    if text == nil then
+        return nil
+    end
+    if WowVision.secrets ~= nil and WowVision.secrets.isSecret(text) then
+        return text
+    end
+    text = tostring(text)
+        :gsub("|c%x%x%x%x%x%x%x%x", "")
+        :gsub("|cn[^:]+:", "")
+        :gsub("|r", "")
+        :gsub("|T.-|t", "")
+        :gsub("|A.-|a", "")
+    text = text:match("^%s*(.-)%s*$")
+    if text == "" then
+        return nil
+    end
+    return text
+end
+
+-- A live label function for a font string (frameText walks regions, which
+-- font strings do not have).
+function nodes.fontText(fontString)
+    return function()
+        if fontString == nil then
+            return nil
+        end
+        return nodes.plainText(fontString:GetText())
+    end
+end
+
 -- A live label function for a Blizzard frame: its own text, else the first
 -- text region (dropdown-style buttons keep their text on a region).
 function nodes.frameText(frame)
@@ -566,8 +601,9 @@ function nodes.proxyCheckButton(config)
     return vtable
 end
 
--- A text value: Enter opens typed entry; arriving by TAB (not arrows)
--- opens it immediately so typing just works, matching real edit boxes.
+-- A text value: Enter opens typed entry; arriving by TAB (not arrows), or
+-- a new screen landing on it, opens it immediately so typing just works,
+-- matching real edit boxes.
 -- config: { label, get, set, valueText = function?, autoInput = false? }
 function nodes.textInput(config)
     if config.label == nil or config.get == nil or config.set == nil then
@@ -602,6 +638,7 @@ function nodes.textInput(config)
     }
     if config.autoInput ~= false then
         vtable.onTabFocus = openEntry
+        vtable.onOpenFocus = openEntry
     end
     return vtable
 end

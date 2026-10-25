@@ -242,6 +242,19 @@ local function render(builder, screen)
         )
     end
 
+    -- The service filter (Available, Unavailable, Already Known), a dropdown
+    -- of checkboxes on every client. The game hides unavailable services by
+    -- default on WoW: Forever, so without this a low level character hears
+    -- one service and nothing of what comes later.
+    local filter = ClassTrainerFrame.FilterDropdown
+    if filter ~= nil and filter:IsShown() then
+        builder:beginStop("filter")
+        builder:addItem(
+            ControlId.forObject(filter),
+            nodes.proxyDropdown({ target = filter, label = L["Filter"] })
+        )
+    end
+
     builder:beginStop("services")
     if ClassTrainerFrame.ScrollBox ~= nil then
         nodes.scrollBoxList(builder, {

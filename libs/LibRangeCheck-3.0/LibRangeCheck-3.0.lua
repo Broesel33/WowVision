@@ -4096,7 +4096,9 @@ local function getCachedRange(unit, noItems, maxCacheAge)
   -- compose cache key out of unit guid and noItems
   local guid = UnitGUID(unit)
   -- unfortunately, caching on GUID is not possible due to secrets, using unit instead
-  local cacheKey = (isMidnight and issecretvalue(guid) and unit or guid) .. (noItems and "-1" or "-0")
+  -- WowVision: WoW Forever hands out secret GUIDs under its own project id,
+  -- so the client is asked for the helper instead of the version checked.
+  local cacheKey = ((issecretvalue ~= nil and issecretvalue(guid)) and unit or guid) .. (noItems and "-1" or "-0")
   local cacheItem = rangeCache[cacheKey] or nil
 
   local currentTime = GetTime()

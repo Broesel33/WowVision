@@ -116,11 +116,13 @@ function announcer.leafText(node, omitLabel)
     end
     local parts = announcer.effectiveAnnouncements(node)
     local label = omitLabel and node.vtable.announcements and node.vtable.announcements[1] or nil
+    -- A part's text can be a secret string (a hidden unit's name): no
+    -- comparing or measuring it, but it joins and speaks as it is.
     local out = {}
     for _, part in ipairs(parts) do
         if not (label ~= nil and rawequal(part, label)) then
             local text = resolveText(part)
-            if text ~= nil and text ~= "" then
+            if WowVision.secrets.hasText(text) then
                 tinsert(out, text)
             end
         end
@@ -149,7 +151,7 @@ function announcer.leafText(node, omitLabel)
     if #out == 0 then
         return nil
     end
-    return table.concat(out, ", ")
+    return WowVision.secrets.join(out, ", ")
 end
 
 -- The first announcement part's text (the label) -- for path dedupe.
@@ -168,6 +170,10 @@ end
 -- is redundant and stays silent), else nil.
 local function duplicatesNext(label, nextText)
     if type(label) ~= "string" or type(nextText) ~= "string" then
+        return nil
+    end
+    -- A secret label cannot be inspected: no relation is claimed.
+    if WowVision.secrets.isSecret(label) or WowVision.secrets.isSecret(nextText) then
         return nil
     end
     if nextText:sub(1, #label) ~= label then
@@ -212,7 +218,7 @@ function announcer.compose(from, to, transitionLabel)
     end
 
     local parts = {}
-    if transitionLabel ~= nil and transitionLabel ~= "" then
+    if WowVision.secrets.hasText(transitionLabel) then
         tinsert(parts, transitionLabel)
     end
 
@@ -251,7 +257,7 @@ function announcer.compose(from, to, transitionLabel)
     if #parts == 0 then
         return nil
     end
-    return table.concat(parts, ", ")
+    return WowVision.secrets.join(parts, ", ")
 end
 
 -- The full readout for a landing with no prior focus (screen entry, restore).

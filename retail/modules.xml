@@ -4,15 +4,29 @@
   <Script file="speech.lua" />
   <Script file="QuestLog.lua" />
   <Script file="cooldownManager.lua" />
+  <Include file="monitors/modules.xml" />
+  <!-- Retail's auction house is the same Blizzard_AuctionHouseUI as Mists
+       (also on WoW: Forever, which loads these modules too). -->
+  <Script file="..\mists\auction.lua" />
+  <!-- Shared by the windows built on the modern talent frame (on WoW:
+       Forever, the class talents in camelot/); no retail window uses it
+       yet. -->
   <!-- Shared by the windows built on the modern talent frame and spell
        search box (on WoW: Forever, the class talents and the Legacy trees
        in camelot/); no retail window uses them yet. -->
   <Script file="talentTree.lua" />
   <Script file="spellSearch.lua" />
-  <!-- Retail's auction house is the same Blizzard_AuctionHouseUI as Mists
-       (also on WoW: Forever, which loads these modules too). -->
-  <Script file="..\mists\auction.lua" />
   <Script file="pitchLock.lua" />
+  <!-- The chat channels window: the same Blizzard_Channels on Retail and
+       WoW: Forever. -->
+  <Script file="channels.lua" />
+  <!-- The Social window (Blizzard_SocialUI on Retail and WoW: Forever),
+       which the friends key opens where the server turns it on (Forever
+       does, and turns the old character friend list off): friends,
+       requests, recent allies, quick join, raid, its side windows, and Add
+       Friend. Tested on Forever; Retail ships the same window with small
+       differences. -->
+  <Script file="socialUI.lua" />
   <Include file="containers/modules.xml" />
 
 </Ui>

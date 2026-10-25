@@ -22,6 +22,8 @@ BufferGroup:addFields({
         availableTypes = {
             { key = "Static", label = L["Static Buffer"] },
             { key = "Tracked", label = L["Tracked Buffer"] },
+            { key = "ChatTab", label = L["Chat Tab Buffer"] },
+            { key = "Aura", label = L["Aura Buffer"] },
         },
     },
 })

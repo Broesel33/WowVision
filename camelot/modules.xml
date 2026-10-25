@@ -30,5 +30,12 @@
        Blizzard addon; lfg.lua adds what that build changed. -->
   <Script file="..\tbc\lfg.lua" />
   <Script file="lfg.lua" />
+  <!-- WoW: Forever has no pandemic window: the cooldown manager aura rule
+       drops its Pandemic state. -->
+  <Script file="cdmAuras.lua" />
+  <!-- The gamepad action bars in the bars window (controller support). -->
+  <Script file="gamepadBars.lua" />
+  <!-- Blizzard's gamepad main menu (the wheel) as a window. -->
+  <Script file="gamepadRadial.lua" />
 
 </Ui>

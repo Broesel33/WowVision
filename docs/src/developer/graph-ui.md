@@ -62,7 +62,7 @@ Value controls take get and set functions (plus optional `valueText`); the setti
 - `nodes.toggle({ label, get, set })` — Enter flips it; speaks Checked/Unchecked, live while focused.
 - `nodes.number({ label, get, set, step, largeStep })` — left/right adjust, Enter opens typed entry through the host's shared edit box. Clamping belongs to the setter (Field validation handles it on settings).
 - `nodes.choice({ label, get, set, choices })` — Enter opens a child screen of the options, landing on the current pick; choosing sets and returns. `choices` is a list or function returning `{ label, value }` entries.
-- `nodes.textInput({ label, get, set })` — Enter opens typed entry.
+- `nodes.textInput({ label, get, set, autoInput? })` — Enter opens typed entry; so does a tab arrival (`onTabFocus`) or a new screen landing on it (`onOpenFocus`), like a real edit box. `autoInput = false` leaves only Enter.
 - `nodes.proxyDropdown({ target = frame })` — a real dropdown button (WowStyle filter dropdowns): plain clicks do not open these menus, so Enter calls the frame's `OpenMenu`; the opened menu becomes its own stack via the dropdown watcher.
 - `nodes.proxyEditBox({ editBox, label, autoInput?, hookTab?, fixAutoFocus? })` — a real Blizzard edit box. Tabbing to it hands it keyboard focus so typing starts immediately (the `onTabFocus` vtable hook, fired only on tab-pair arrivals — arrows just read it); Enter does the same; Tab from inside leaves the box and moves on. `fixAutoFocus` disables Blizzard's autofocus for boxes that re-grab the keyboard on their own refreshes.
 
@@ -80,7 +80,7 @@ The module menu: `graph.settings.renderModuleInto(builder, module)` mirrors the 
 
 Component arrays: ComponentArray fields render as a button reading "Label (N)" that opens a list screen — one button per component (identity follows the instance), plus Add when the field declares available types. A component's editor renders its class fields through `settings.renderObjectInto` (a component may take over by defining `renderGraphSettings(builder)`) plus a Remove button; Add goes through a type selector and drops you straight into the new component's editor. Nested component arrays (buffer groups containing buffers) recurse naturally.
 
-Every field type now has a control (`core/graph/fieldControls.lua`): Time (a Number speaking formatted durations), VoicePack (a choice over registered packs), Spell (typed name-or-id entry plus recent-spell quick picks), Alert (opens its parameters InfoFrame), Template (registered templates plus a Custom format entry), Object (type choice plus parameter fields through the params proxy), TrackingConfig (type choice plus a copy-edit parameters screen validated on Save), and Array (element-editor rows with Remove, and Add). Opener buttons carry their current value as a live value part.
+Every field type now has a control (`core/graph/fieldControls.lua`): Time (a Number speaking formatted durations), VoicePack (a choice over registered packs), TtsVoice (a choice over the game's text-to-speech voices), Spell (typed name-or-id entry plus recent-spell quick picks), Alert (opens its parameters InfoFrame), Template (registered templates plus a Custom format entry), Object (type choice plus parameter fields through the params proxy), TrackingConfig (type choice plus a copy-edit parameters screen validated on Save), and Array (element-editor rows with Remove, and Add). Opener buttons carry their current value as a live value part.
 
 Rules the render function must follow:
 

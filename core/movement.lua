@@ -19,7 +19,19 @@ local movement = {
         descend = false,
         autorun = false,
         following = false,
+        pitchUp = false,
+        pitchDown = false,
+        moveAndSteer = false,
     },
+    -- GetTime() of the last translation command (a movement key going down,
+    -- autorun). The game reports PLAYER_STARTED_MOVING before the key's Start
+    -- function runs, in the same frame, so a start with no flag set can still
+    -- be the player's own: compare against this.
+    lastCommandAt = 0,
+    -- The game's own turning state (PLAYER_STARTED_TURNING and
+    -- PLAYER_STOPPED_TURNING): the ground truth behind the turn flags, as
+    -- IsPlayerMoving is behind the movement flags.
+    turning = false,
 }
 WowVision.movement = movement
 
@@ -31,8 +43,21 @@ function movement:isTranslating()
         or flags.moveBackward
         or flags.strafeLeft
         or flags.strafeRight
+        or flags.moveAndSteer
         or flags.autorun
         or flags.following
+end
+
+-- Whether the player is moving by any means: a commanded movement, or the
+-- game moving them with no key held (autorun, the interact key walking to
+-- its target, click to move). The game's moving state is the ground truth:
+-- it stays on while the player pushes against something (and while stunned
+-- with a key held), turning has a state of its own (PLAYER_STARTED_TURNING),
+-- and it stays off when a flag above went stale (a key release that never
+-- reached its Stop function). Falls without a key are left out: a fall
+-- straight down has no sideways movement to judge.
+function movement:isMoving()
+    return IsPlayerMoving() and (self:isTranslating() or not IsFalling())
 end
 
 local function flagSetter(key, value)
@@ -62,8 +87,59 @@ hooksecurefunc("StopAutoRun", flagSetter("autorun", false))
 hooksecurefunc("ToggleAutoRun", function()
     movement.flags.autorun = not movement.flags.autorun
 end)
+local function noteCommand()
+    movement.lastCommandAt = GetTime()
+end
+for _, name in ipairs({
+    "MoveForwardStart",
+    "MoveBackwardStart",
+    "StrafeLeftStart",
+    "StrafeRightStart",
+    "StartAutoRun",
+    "ToggleAutoRun",
+}) do
+    hooksecurefunc(name, noteCommand)
+end
 hooksecurefunc("FollowUnit", flagSetter("following", true))
+
+-- Pitch and move-and-steer are held commands too (the key takeover guard in
+-- core/ui/input/heldKeys.lua asks for them); their functions are not on
+-- every client.
+local function hookIfPresent(name, func)
+    if type(_G[name]) == "function" then
+        hooksecurefunc(name, func)
+    end
+end
+hookIfPresent("PitchUpStart", flagSetter("pitchUp", true))
+hookIfPresent("PitchUpStop", flagSetter("pitchUp", false))
+hookIfPresent("PitchDownStart", flagSetter("pitchDown", true))
+hookIfPresent("PitchDownStop", flagSetter("pitchDown", false))
+hookIfPresent("MoveAndSteerStart", flagSetter("moveAndSteer", true))
+hookIfPresent("MoveAndSteerStop", flagSetter("moveAndSteer", false))
 -- Any manual movement command ends follow.
 hooksecurefunc("MoveForwardStart", flagSetter("following", false))
 hooksecurefunc("MoveBackwardStart", flagSetter("following", false))
 hooksecurefunc("StartAutoRun", flagSetter("following", false))
+
+-- The game ends some movement without calling the hooked functions: a
+-- movement key cancels autorun without StopAutoRun, so the flag would stay
+-- on and the next ToggleAutoRun would invert it; follow ends on its own when
+-- the leader gets out of range. Stopping is the ground truth for autorun
+-- (pushing against a wall does not count as stopping), AUTOFOLLOW_END for
+-- follow.
+local frame = CreateFrame("Frame")
+frame:RegisterEvent("PLAYER_STOPPED_MOVING")
+frame:RegisterEvent("AUTOFOLLOW_END")
+frame:RegisterEvent("PLAYER_STARTED_TURNING")
+frame:RegisterEvent("PLAYER_STOPPED_TURNING")
+frame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_STOPPED_MOVING" then
+        movement.flags.autorun = false
+    elseif event == "AUTOFOLLOW_END" then
+        movement.flags.following = false
+    elseif event == "PLAYER_STARTED_TURNING" then
+        movement.turning = true
+    elseif event == "PLAYER_STOPPED_TURNING" then
+        movement.turning = false
+    end
+end)

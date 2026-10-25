@@ -202,14 +202,28 @@ end
 -- Emit a bag's item slots in the configured shape. Grid rows share the
 -- "grid" row key, so up and down follow POSITION in the row rather than
 -- the screen column: the combined bag fills from the bottom-right and a
--- short top row would otherwise strand its cells. Returns the row count.
+-- short top row would otherwise strand its cells. The list reads the slots
+-- in SLOT order (the order the buttons are given in: slot 1 first), the way
+-- older addons do; screen order would start at the top-left cell, which is
+-- the LAST slot, and read the bag backwards. Returns the visual row count.
 function module.renderSlots(builder, buttons)
     local rows = module.visualRows(buttons)
     local grid = module.settings.shape == "grid"
-    for _, row in ipairs(rows) do
-        if grid then
-            builder:startRow("grid")
+    if not grid then
+        for _, itemButton in ipairs(buttons) do
+            if itemButton:IsShown() then
+                builder:addItem(
+                    ControlId.forObject(itemButton),
+                    module.itemSlotNode(itemButton, function()
+                        return module.getBagItemLabel(itemButton)
+                    end, module.itemClickLabels(itemButton))
+                )
+            end
         end
+        return #rows
+    end
+    for _, row in ipairs(rows) do
+        builder:startRow("grid")
         for _, itemButton in ipairs(row) do
             builder:addItem(
                 ControlId.forObject(itemButton),
@@ -218,9 +232,7 @@ function module.renderSlots(builder, buttons)
                 end, module.itemClickLabels(itemButton))
             )
         end
-        if grid then
-            builder:endRow()
-        end
+        builder:endRow()
     end
     return #rows
 end

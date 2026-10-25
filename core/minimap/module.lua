@@ -85,9 +85,10 @@ local dotAlert = module:addAlert({
     key = "newDot",
     label = L["New Minimap Dot Alert"],
 })
--- For the moment the walking announcements speak with game voice 0, not
--- the player's speech voice: with an NVDA SAPI voice there they were cut
--- off by the screen reader's own speech.
+-- The walking announcements speak with a game voice (voice 0 unless the
+-- alert's Voice setting picks another), not the player's speech voice:
+-- with an NVDA SAPI voice there they were cut off by the screen reader's
+-- own speech.
 dotAlert:addOutput({
     type = "TTS",
     key = "tts",
@@ -488,8 +489,10 @@ function module:scanBody(task)
         Engine.centreCursor()
     end
     Engine.wait()
-    if not Engine.cursorOverWorld() then
-        Engine.abort(canceled(L["window"]))
+    local overWorld, blocker = Engine.cursorOverWorld()
+    if not overWorld then
+        task.stats.blocker = blocker
+        Engine.abort(canceled(L["window"]) .. ": " .. blocker)
     end
     task.cursorX, task.cursorY = GetCursorPosition()
     task.rotating = GetCVar("rotateMinimap") == "1"
@@ -515,6 +518,7 @@ function module:scanBody(task)
     local mapId = C_Map.GetBestMapForUnit("player")
     Minimap:SetZoom(0)
     Engine.shrink(task.cursorX, task.cursorY)
+    Engine.softCursor()
     Engine.wait()
     local viewRadius = C_Minimap.GetViewRadius()
 
@@ -956,6 +960,7 @@ function module:walkCheck()
         end)
         Minimap:SetZoom(0)
         Engine.shrink(x, y)
+        Engine.softCursor()
         Engine.wait(2)
         local dots = Engine.readDots()
         local indoors = IsIndoors ~= nil and IsIndoors() or false
@@ -1352,6 +1357,7 @@ function module:rawRead()
         end)
         Minimap:SetZoom(0)
         Engine.shrink(x, y)
+        Engine.softCursor()
         -- Half a second of reads; every read that differs from the one
         -- before is kept, so late dots show up.
         task.reads = {}
@@ -1369,6 +1375,24 @@ function module:rawRead()
             end
         end
         readFrames("Your tracking")
+        -- What the client says about the mouse while the shrunk minimap
+        -- sits under the parked cursor.
+        local function flag(fn)
+            if fn == nil then
+                return "unknown"
+            end
+            local ok, value = pcall(fn)
+            return ok and tostring(value) or "error"
+        end
+        task.facts = string.format(
+            "Mouse over the minimap %s, minimap mouse enabled %s, using mouse %s, cursor visible %s, hybrid minimap %s, soft cursor mode %s",
+            tostring(Minimap:IsMouseOver()),
+            tostring(Minimap:IsMouseEnabled()),
+            flag(IsUsingMouse),
+            flag(IsCursorVisible),
+            flag(C_Minimap.ShouldUseHybridMinimap),
+            Minimap.SetUsingSoftCursor ~= nil and "on" or "not on this client"
+        )
         -- The scan's baseline: every tracking filter off, spells as they
         -- are (town arrows, vendors and the like gone).
         local filters = {}
@@ -1402,6 +1426,9 @@ function module:rawRead()
             return
         end
         local lines = { "WowVision minimap raw read, cursor over the game world: " .. tostring(task.overWorld) }
+        if task.facts ~= nil then
+            tinsert(lines, task.facts)
+        end
         for _, read in ipairs(task.reads) do
             tinsert(lines, read.label)
             for _, line in ipairs(Scan.rawLines(read.data, WowVision.isSecret)) do

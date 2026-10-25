@@ -20,11 +20,22 @@ function Handle:initialize(inputManager, action, spec)
     self.action = action
     self.spec = spec
     self.frames = {}
+    self.padTokens = {}
     self.active = false
 end
 
-function Handle:_engage(inputs, emulatedKey)
+-- One pooled frame per input, configured with the action. A keyboard input
+-- binds its key to the frame; a controller input attaches the frame to the
+-- pad router (core/ui/input/pad.lua), or, for a game command, the command.
+function Handle:_engage(inputs, padInputs, emulatedKey)
+    local all = {}
     for _, input in ipairs(inputs) do
+        tinsert(all, input)
+    end
+    for _, input in ipairs(padInputs or {}) do
+        tinsert(all, input)
+    end
+    for _, input in ipairs(all) do
         local frame = self.inputManager:acquireFrame()
         self.action.configure(frame, self.spec, emulatedKey)
         -- spec.postClick: insecure follow-up on the SAME keypress, run after
@@ -41,7 +52,18 @@ function Handle:_engage(inputs, emulatedKey)
         end
         -- Actions that are not a secure click of the frame bind the input
         -- themselves (a game binding command, for example).
-        if self.action.bind ~= nil then
+        local pad = WowVision.pad
+        if pad.isPadInput(input) then
+            local token
+            if self.action.bind ~= nil then
+                token = pad.attachCommand(input, self.spec.command)
+            else
+                token = pad.attach(input, frame, emulatedKey)
+            end
+            if token ~= nil then
+                tinsert(self.padTokens, token)
+            end
+        elseif self.action.bind ~= nil then
             self.action.bind(frame, self.spec, input)
         else
             SetOverrideBindingClick(frame, true, input, frame:GetName(), emulatedKey)
@@ -55,6 +77,10 @@ function Handle:release()
     if not self.active then
         return
     end
+    for _, token in ipairs(self.padTokens) do
+        WowVision.pad.detach(token)
+    end
+    self.padTokens = {}
     for _, frame in ipairs(self.frames) do
         self.action.clear(frame, self.spec)
         frame:SetScript("PostClick", nil)
@@ -97,8 +123,46 @@ function Activator:activate(spec)
         end
     end
 
-    handle:_engage(keymap.inputs, spec.emulatedKey or keymap.emulatedKey)
+    handle:_engage(keymap.inputs, keymap.padInputs, spec.emulatedKey or keymap.emulatedKey)
     return handle
+end
+
+-- Whether a key any of these keymaps would take is physically held. An
+-- override set on a held key eats its release and leaves the game's command
+-- (a turn, a move) running; callers wait a tick and ask again.
+function Activator:anyInputHeld(keymapKeys)
+    local inputs = {}
+    for _, key in ipairs(keymapKeys) do
+        local keymap = self.inputManager:getBinding(key)
+        if keymap ~= nil then
+            for _, input in ipairs(keymap.inputs) do
+                tinsert(inputs, input)
+            end
+            for _, input in ipairs(keymap.padInputs or {}) do
+                tinsert(inputs, input)
+            end
+        end
+    end
+    local heldKeys = WowVision.heldKeys
+    return heldKeys.anyHeld(inputs, heldKeys.gameEnv())
+end
+
+-- One plain line on what the held check sees for these keymaps (the key log).
+function Activator:describeInputs(keymapKeys)
+    local inputs = {}
+    for _, key in ipairs(keymapKeys) do
+        local keymap = self.inputManager:getBinding(key)
+        if keymap ~= nil then
+            for _, input in ipairs(keymap.inputs) do
+                tinsert(inputs, input)
+            end
+            for _, input in ipairs(keymap.padInputs or {}) do
+                tinsert(inputs, input)
+            end
+        end
+    end
+    local heldKeys = WowVision.heldKeys
+    return heldKeys.describe(inputs, heldKeys.gameEnv())
 end
 
 WowVision.inputActivator = Activator:new(WowVision.input, WowVision.inputActions)

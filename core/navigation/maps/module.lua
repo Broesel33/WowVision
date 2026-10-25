@@ -227,6 +227,22 @@ function module:beaconTo(wx, wy, label, onArrive)
     end
 end
 
+-- Open the navigation window aimed at a world position: the scanner's
+-- Enter. The window snapshots the network, adds the position as a
+-- destination of its own (a waypoint without links, so the route ends with
+-- a straight last leg), preselects the closest entry point, and lands on
+-- that destination; Enter there routes. Without map data on this continent
+-- there is nothing to route through, so a straight beacon is set instead.
+function module:openNavigationTo(wx, wy, label, onArrive)
+    if next(self:currentWaypoints()) == nil then
+        self:beaconTo(wx, wy, label, onArrive)
+        return false
+    end
+    self.pendingTarget = { x = wx, y = wy, label = label, onArrive = onArrive }
+    WowVision.UIHost:openWindow("atlas")
+    return true
+end
+
 -- Map-percentage coordinates ("50.5 30.4") on the current zone map, the
 -- numbers quest guides use: converted to a world position, then a straight
 -- beacon. GetWorldPosFromMapPos returns coordinates in UnitPosition's
@@ -248,7 +264,8 @@ function module:beaconToMapCoords(xPercent, yPercent)
 end
 
 -- Route to a waypoint through the link graph and follow it with the beacon.
--- opts passes through to the router (entryId for a user-chosen entry point).
+-- opts passes through to the router (entryId for a user-chosen entry point);
+-- opts.onArrive runs after "Arrived" is spoken.
 function module:navigateTo(waypointId, waypoints, opts)
     local px, py = UnitPosition("player")
     if px == nil then
@@ -269,6 +286,9 @@ function module:navigateTo(waypointId, waypoints, opts)
         self.path = nil
         local last = route.waypoints[#route.waypoints]
         WowVision:speak(L["Arrived"] .. (last.n ~= nil and (" " .. last.n) or ""))
+        if opts ~= nil and opts.onArrive ~= nil then
+            opts.onArrive()
+        end
     end)
     self:pathfind(path)
     local text = string.format("%d %s, %d %s", #route.waypoints, L["waypoints"], route.distance, L["yards"])
